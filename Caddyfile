@@ -1,0 +1,21 @@
+{
+    email {$ADMIN_EMAIL}
+}
+
+{$DOMAIN} {
+    reverse_proxy app:3000 {
+        header_up X-Real-IP {remote_host}
+    }
+
+    encode gzip zstd
+
+    # 客户端上传大小限制（压缩后应该很小，这里给 20M 余量）
+    request_body {
+        max_size 20MB
+    }
+
+    log {
+        output stdout
+        format console
+    }
+}
