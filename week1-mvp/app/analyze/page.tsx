@@ -1,8 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 type AnalyzeResult = Record<string, string | string[]>;
+type AiModel = {
+  id: number;
+  model_id: string;
+  label: string;
+  description: string | null;
+  badge: string | null;
+  is_default: 0 | 1;
+};
 
 /**
  * 客户端压缩图片：长边最大 1024 像素，JPEG 质量 0.9
@@ -36,6 +44,22 @@ export default function AnalyzePage() {
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState<number | null>(null);
 
+  // 模型选择
+  const [aiModels, setAiModels] = useState<AiModel[]>([]);
+  const [model, setModel] = useState<string>("");
+
+  useEffect(() => {
+    fetch("/api/ai-models?category=vision")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list: AiModel[]) => {
+        setAiModels(list);
+        const def =
+          list.find((m) => m.is_default === 1)?.model_id || list[0]?.model_id;
+        if (def) setModel(def);
+      })
+      .catch(() => setAiModels([]));
+  }, []);
+
   function onPickFiles(list: FileList | null) {
     if (!list) return;
     const picked = Array.from(list).slice(0, 2);
@@ -61,6 +85,7 @@ export default function AnalyzePage() {
         const blob = await resizeImage(files[i], 1024);
         formData.append(`image${i}`, blob, `image${i}.jpg`);
       }
+      if (model) formData.append("model", model);
 
       const res = await fetch("/api/analyze", {
         method: "POST",
@@ -90,6 +115,59 @@ export default function AnalyzePage() {
       </header>
 
       <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        {/* 模型选择 */}
+        <div className="mb-5">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            选择解析模型
+          </label>
+          {aiModels.length === 0 ? (
+            <div className="text-xs text-gray-500 p-3 bg-gray-50 rounded border border-dashed border-gray-300">
+              暂无可用模型，请让管理员在
+              <a href="/admin/ai-models" className="text-blue-600 underline">
+                AI 模型管理
+              </a>
+              中启用至少一个 vision 模型
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              {aiModels.map((m) => {
+                const active = model === m.model_id;
+                return (
+                  <button
+                    key={m.model_id}
+                    type="button"
+                    onClick={() => setModel(m.model_id)}
+                    className={`text-left p-3 rounded-md border transition ${
+                      active
+                        ? "border-blue-500 bg-blue-50 ring-1 ring-blue-500"
+                        : "border-gray-300 hover:border-gray-400"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-gray-900">
+                        {m.label}
+                      </span>
+                      {m.badge && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-600 text-white">
+                          {m.badge}
+                        </span>
+                      )}
+                    </div>
+                    {m.description && (
+                      <div className="text-xs text-gray-500 mt-1">
+                        {m.description}
+                      </div>
+                    )}
+                    <div className="text-[10px] text-gray-400 font-mono mt-1">
+                      {m.model_id}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
         <div className="mb-4">
           <label className="block text-sm font-medium text-gray-700 mb-2">
             上传服装图（最多 2 张）
@@ -163,19 +241,21 @@ export default function AnalyzePage() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {Object.entries(result).map(([key, value]) => (
-                <div
-                  key={key}
-                  className="p-3 bg-gray-50 border border-gray-200 rounded"
-                >
-                  <div className="text-xs font-medium text-gray-500 mb-1">
-                    {key}
+              {Object.entries(result)
+                .filter(([key]) => !key.startsWith("_"))
+                .map(([key, value]) => (
+                  <div
+                    key={key}
+                    className="p-3 bg-gray-50 border border-gray-200 rounded"
+                  >
+                    <div className="text-xs font-medium text-gray-500 mb-1">
+                      {key}
+                    </div>
+                    <div className="text-sm text-gray-900">
+                      {Array.isArray(value) ? value.join("、") : String(value)}
+                    </div>
                   </div>
-                  <div className="text-sm text-gray-900">
-                    {Array.isArray(value) ? value.join("、") : String(value)}
-                  </div>
-                </div>
-              ))}
+                ))}
             </div>
 
             <details className="mt-4">

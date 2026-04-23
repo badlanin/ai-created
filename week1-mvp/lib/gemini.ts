@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import { resolveModelId } from "./ai-models";
 
 /**
  * 服装属性结构化 schema
@@ -59,16 +60,21 @@ const SYSTEM_PROMPT = `你是一位专业的服装视觉分析师，专注于伴
 不要猜测图片里看不到的部分（比如只给了正面就不要强行描述后背，填"未提供"即可）。`;
 
 /**
- * 调用 Vertex AI 的 Gemini 2.5 Flash 做视觉解析，返回结构化 JSON
+ * 调用 Vertex AI Gemini 做视觉解析，返回结构化 JSON
  *
  * 鉴权方式：Application Default Credentials (ADC)
  * - 在 GCP VM 上运行：自动使用 VM 绑定的 Service Account（通过 metadata 服务器）
  * - 本地开发：先执行 `gcloud auth application-default login`
  * - 需要 VM 的 Service Account 拥有 "Vertex AI User" 角色
+ *
+ * @param images  图片列表
+ * @param modelOverride  调用方指定模型 ID（会经白名单校验）。不传则走 DB 默认
  */
 export async function analyzeGarment(
   images: { buffer: Buffer; mimeType: string }[],
+  modelOverride?: string,
 ) {
+  const MODEL = resolveModelId("vision", modelOverride);
   const project = process.env.GCP_PROJECT_ID;
   const location = process.env.GCP_LOCATION || "asia-southeast1";
 
@@ -99,7 +105,7 @@ export async function analyzeGarment(
   ];
 
   const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
+    model: MODEL,
     contents: [{ role: "user", parts }],
     config: {
       systemInstruction: SYSTEM_PROMPT,

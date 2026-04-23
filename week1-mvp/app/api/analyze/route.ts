@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { analyzeGarment } from "@/lib/gemini";
+import { resolveModelId } from "@/lib/ai-models";
 
 // 强制 Node.js 运行时（因为用到 Buffer 和长超时）
 export const runtime = "nodejs";
@@ -19,6 +20,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const modelRaw = formData.get("model");
+    const model = resolveModelId(
+      "vision",
+      typeof modelRaw === "string" ? modelRaw : undefined,
+    );
+
     if (images.length === 0) {
       return NextResponse.json(
         { error: "请至少上传一张服装图" },
@@ -32,8 +39,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const result = await analyzeGarment(images);
-    return NextResponse.json(result);
+    const result = await analyzeGarment(images, model);
+    return NextResponse.json({ ...result, _model: model });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[/api/analyze] 失败:", msg);

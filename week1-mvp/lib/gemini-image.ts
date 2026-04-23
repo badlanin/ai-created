@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import { resolveImageModel } from "./image-models";
+import { resolveModelId } from "./ai-models";
 
 /**
  * Nano Banana (Gemini * Image) 调用封装
@@ -10,10 +10,11 @@ import { resolveImageModel } from "./image-models";
  *
  * 鉴权：Vertex AI + ADC（沿用 lib/gemini.ts 的配置）
  *
- * 可选模型见 lib/image-models.ts。默认走 gemini-3-pro-image-preview
- * （Nano Banana Pro）。也可以：
- *   1) 在 .env 中配 GEMINI_IMAGE_MODEL 改全局默认
- *   2) 调用时传 modelOverride，按次指定（前端表单选的那种）
+ * 可用模型由 ai_models 表动态维护（/admin/ai-models 管理）。
+ * 默认走该表 image_gen 分类下 is_default=1 的那条。
+ * 也可以：
+ *   1) 前端调用时传 modelOverride（来自页面上用户选的那张卡片）
+ *   2) 管理员在后台把默认模型切到另一个
  */
 
 export interface GenImageInput {
@@ -33,14 +34,14 @@ export interface GenImageResult {
  *
  * @param images 参考图列表（如产品正面/背面、模特图、场景图）
  * @param prompt 文本指令
- * @param modelOverride 单次调用的模型 ID（会经 resolveImageModel 白名单校验）
+ * @param modelOverride 单次调用的模型 ID（会经 resolveModelId 白名单校验）
  */
 export async function generateImage(
   images: GenImageInput[],
   prompt: string,
   modelOverride?: string,
 ): Promise<GenImageResult> {
-  const MODEL = resolveImageModel(modelOverride);
+  const MODEL = resolveModelId("image_gen", modelOverride);
   const project = process.env.GCP_PROJECT_ID;
   const location = process.env.GCP_LOCATION || "asia-southeast1";
 

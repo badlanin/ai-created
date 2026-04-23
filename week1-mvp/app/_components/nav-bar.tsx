@@ -23,6 +23,7 @@ const ADMIN_ITEMS = [
   { href: "/admin/models", label: "模特库" },
   { href: "/admin/scenes", label: "场景库" },
   { href: "/admin/prompts", label: "Prompt 库" },
+  { href: "/admin/ai-models", label: "AI 模型" },
   { href: "/admin/users", label: "用户" },
 ] as const;
 

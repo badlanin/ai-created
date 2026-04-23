@@ -54,6 +54,12 @@ const ADMIN_FEATURES = [
     emoji: "📝",
   },
   {
+    href: "/admin/ai-models",
+    title: "AI 模型管理",
+    desc: "控制哪些 Gemini 模型可见 / 哪个默认，新模型可随时录入",
+    emoji: "🤖",
+  },
+  {
     href: "/admin/users",
     title: "用户管理",
     desc: "团队成员账号增删",

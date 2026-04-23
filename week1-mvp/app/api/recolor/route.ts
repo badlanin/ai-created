@@ -8,7 +8,7 @@ import {
   generateImage,
   type GenImageInput,
 } from "@/lib/gemini-image";
-import { resolveImageModel } from "@/lib/image-models";
+import { resolveModelId } from "@/lib/ai-models";
 
 export const runtime = "nodejs";
 // 换色每张约 5-15 秒，批量时要给足时间
@@ -51,7 +51,8 @@ export async function POST(req: NextRequest) {
     const colorIdsRaw = formData.get("color_ids");
     const customColorsRaw = formData.get("custom_colors");
     const modelRaw = formData.get("model");
-    const model = resolveImageModel(
+    const model = resolveModelId(
+      "image_gen",
       typeof modelRaw === "string" ? modelRaw : undefined,
     );
 

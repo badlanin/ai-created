@@ -115,7 +115,107 @@ function migrate(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_colors_sort ON colors(sort_order);
     CREATE INDEX IF NOT EXISTS idx_scenes_sort ON scenes(sort_order);
     CREATE INDEX IF NOT EXISTS idx_prompts_kind ON prompt_templates(kind, sort_order);
+
+    -- AI 模型（可配置模型库）
+    -- category='vision'    : 视觉理解（/analyze 解析图片）
+    -- category='image_gen' : 图像生成（/recolor 换色、/on-model 换模特）
+    CREATE TABLE IF NOT EXISTS ai_models (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      model_id    TEXT NOT NULL,               -- Vertex AI 模型 ID，如 'gemini-3.1-flash-image-preview'
+      label       TEXT NOT NULL,               -- 展示名，如 'Nano Banana 2'
+      description TEXT,                        -- 说明
+      category    TEXT NOT NULL,               -- 'vision' | 'image_gen'
+      enabled     INTEGER NOT NULL DEFAULT 1,
+      is_default  INTEGER NOT NULL DEFAULT 0,
+      badge       TEXT,                        -- 可选角标，如 '推荐'
+      sort_order  INTEGER NOT NULL DEFAULT 0,
+      created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
+      UNIQUE(model_id, category)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ai_models_cat ON ai_models(category, enabled, sort_order);
   `);
+
+  seedAiModels(db);
+}
+
+/**
+ * 首次启动时 seed 已知模型。
+ * 用 INSERT OR IGNORE，不会覆盖用户后续在管理页的修改。
+ */
+function seedAiModels(db: Database.Database) {
+  const seeds: Array<{
+    model_id: string;
+    label: string;
+    description: string;
+    category: "vision" | "image_gen";
+    is_default: 0 | 1;
+    badge?: string;
+    sort_order: number;
+  }> = [
+    // ----- 视觉理解（analyze 用）-----
+    {
+      model_id: "gemini-2.5-flash",
+      label: "Gemini 2.5 Flash",
+      description: "视觉解析首选 · 性价比高、速度快、JSON 输出稳",
+      category: "vision",
+      is_default: 1,
+      badge: "推荐",
+      sort_order: 10,
+    },
+    {
+      model_id: "gemini-2.5-pro",
+      label: "Gemini 2.5 Pro",
+      description: "细节识别更强（蕾丝/亮片/刺绣），贵约 20x",
+      category: "vision",
+      is_default: 0,
+      sort_order: 20,
+    },
+    {
+      model_id: "gemini-3-pro-preview",
+      label: "Gemini 3 Pro (Preview)",
+      description: "最强视觉理解，用于高难度案例",
+      category: "vision",
+      is_default: 0,
+      sort_order: 30,
+    },
+
+    // ----- 图像生成（recolor / on-model 用）-----
+    {
+      model_id: "gemini-3.1-flash-image-preview",
+      label: "Nano Banana 2",
+      description: "Gemini 3.1 Flash Image · 速度快质量高，日常首选",
+      category: "image_gen",
+      is_default: 1,
+      badge: "推荐",
+      sort_order: 10,
+    },
+    {
+      model_id: "gemini-3-pro-image-preview",
+      label: "Nano Banana Pro",
+      description: "Gemini 3 Pro Image · 旗舰，复杂改动效果更稳",
+      category: "image_gen",
+      is_default: 0,
+      sort_order: 20,
+    },
+    {
+      model_id: "gemini-2.5-flash-image-preview",
+      label: "Nano Banana (旧版)",
+      description: "Gemini 2.5 Flash Image Preview · 初代预览，备用",
+      category: "image_gen",
+      is_default: 0,
+      sort_order: 30,
+    },
+  ];
+
+  const stmt = db.prepare(
+    `INSERT OR IGNORE INTO ai_models
+       (model_id, label, description, category, enabled, is_default, badge, sort_order)
+     VALUES (@model_id, @label, @description, @category, 1, @is_default, @badge, @sort_order)`,
+  );
+  const tx = db.transaction(() => {
+    for (const s of seeds) stmt.run({ badge: null, ...s });
+  });
+  tx();
 }
 
 export const DATA_DIR_PATH = DATA_DIR;
