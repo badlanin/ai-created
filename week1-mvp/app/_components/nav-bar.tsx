@@ -19,10 +19,12 @@ const NAV_ITEMS = [
 ] as const;
 
 const ADMIN_ITEMS = [
-  { href: "/admin/colors", label: "颜色库" },
-  { href: "/admin/models", label: "模特库" },
-  { href: "/admin/scenes", label: "场景库" },
-  { href: "/admin/prompts", label: "Prompt 库" },
+  { href: "/admin/colors", label: "颜色" },
+  { href: "/admin/models", label: "模特" },
+  { href: "/admin/scenes", label: "场景" },
+  { href: "/admin/poses", label: "姿势" },
+  { href: "/admin/photography", label: "摄影参数" },
+  { href: "/admin/prompts", label: "Prompt" },
   { href: "/admin/ai-models", label: "AI 模型" },
   { href: "/admin/users", label: "用户" },
 ] as const;

@@ -48,9 +48,21 @@ const ADMIN_FEATURES = [
     emoji: "🏛️",
   },
   {
+    href: "/admin/poses",
+    title: "姿势库",
+    desc: "管理姿势文字描述（全身/半身/特写）",
+    emoji: "🧍",
+  },
+  {
+    href: "/admin/photography",
+    title: "摄影参数库",
+    desc: "镜头/光圈/角度/色调等摄影指令预设",
+    emoji: "📷",
+  },
+  {
     href: "/admin/prompts",
     title: "Prompt 库",
-    desc: "管理生成指令模板，可插入变量",
+    desc: "管理生成指令模板，支持占位符",
     emoji: "📝",
   },
   {
