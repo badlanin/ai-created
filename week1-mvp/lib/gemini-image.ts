@@ -43,10 +43,16 @@ export interface GenImageResult {
  * @param prompt 文本指令
  * @param modelOverride 单次调用的模型 ID（会经 resolveModelId 白名单校验）
  */
+export interface GenImageOptions {
+  /** 输出图片比例，如 '3:4' '2:3' '1:1' '16:9' 等。默认由模型决定（通常 1:1） */
+  aspectRatio?: string;
+}
+
 export async function generateImage(
   images: GenImageInput[],
   prompt: string,
   modelOverride?: string,
+  options: GenImageOptions = {},
 ): Promise<GenImageResult> {
   const MODEL = resolveModelId("image_gen", modelOverride);
   const ai = buildGenaiClient();
@@ -76,6 +82,11 @@ export async function generateImage(
     // 限定 Pro Image 的思考预算：2048 tokens 足够一般换色/简单合成场景
     // （不设置的话默认可能是 -1 动态无上限，容易拖到几分钟）
     configBase.thinkingConfig = { thinkingBudget: 2048 };
+  }
+  if (options.aspectRatio) {
+    // imageConfig.aspectRatio 让模型按指定比例输出
+    // 支持的值：1:1, 3:2, 2:3, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9
+    configBase.imageConfig = { aspectRatio: options.aspectRatio };
   }
 
   // 加 timeout wrapper：超过 CALL_TIMEOUT_MS 就抛 TimeoutError，

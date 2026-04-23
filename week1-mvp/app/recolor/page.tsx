@@ -30,12 +30,18 @@ type RecolorResult = {
   color_id: number;
   color_name: string;
   hex: string;
+  image_index: number;
+  image_label: string;
   success: boolean;
   image_url?: string;
   error?: string;
 };
 
-async function resizeImage(file: File, maxSize = 1280): Promise<Blob> {
+/**
+ * 客户端压缩：长边 2048，JPEG 质量 0.95（比之前更好的保留）
+ * 比例选 3:4 / 2:3 等时，原图会保持原比例，模型会按目标比例输出
+ */
+async function resizeImage(file: File, maxSize = 2048): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
@@ -45,11 +51,14 @@ async function resizeImage(file: File, maxSize = 1280): Promise<Blob> {
       canvas.height = Math.round(img.height * ratio);
       const ctx = canvas.getContext("2d");
       if (!ctx) return reject(new Error("canvas 不可用"));
+      // 高质量缩放
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       canvas.toBlob(
         (blob) => (blob ? resolve(blob) : reject(new Error("压缩失败"))),
         "image/jpeg",
-        0.92,
+        0.95,
       );
     };
     img.onerror = () => reject(new Error("图片读取失败"));
@@ -57,14 +66,26 @@ async function resizeImage(file: File, maxSize = 1280): Promise<Blob> {
   });
 }
 
-export default function RecolorPage() {
-  // Step 1: Image
-  const [file, setFile] = useState<File | null>(null);
-  const [compressedBlob, setCompressedBlob] = useState<Blob | null>(null);
+const ASPECT_RATIOS = [
+  { value: "3:4", label: "3:4 竖（推荐）" },
+  { value: "2:3", label: "2:3 竖" },
+  { value: "4:5", label: "4:5 竖" },
+  { value: "1:1", label: "1:1 方" },
+  { value: "4:3", label: "4:3 横" },
+  { value: "16:9", label: "16:9 横" },
+] as const;
 
-  // Step 2: Analysis
+export default function RecolorPage() {
+  // Step 1: Images (多图)
+  const [files, setFiles] = useState<File[]>([]);
+  const [compressedBlobs, setCompressedBlobs] = useState<Blob[]>([]);
+
+  // Step 2: Analysis（只对第一张做解析，节省成本和时间）
   const [analyzing, setAnalyzing] = useState(false);
   const [garmentAttrs, setGarmentAttrs] = useState<GarmentAttrs | null>(null);
+
+  // 输出比例
+  const [aspectRatio, setAspectRatio] = useState<string>("3:4");
 
   // Step 3: Materials
   const [allMaterials, setAllMaterials] = useState<Material[]>([]);
@@ -128,21 +149,31 @@ export default function RecolorPage() {
       .catch(() => setRealisms([]));
   }, []);
 
-  // 文件选中后：压缩 + 触发解析
-  async function onPickFile(f: File | null) {
-    setFile(f);
-    setCompressedBlob(null);
+  // 文件选中后：压缩所有 + 对第一张触发解析
+  async function onPickFiles(fileList: FileList | null) {
+    if (!fileList || fileList.length === 0) {
+      setFiles([]);
+      setCompressedBlobs([]);
+      setGarmentAttrs(null);
+      setSelectedMaterialIds([]);
+      setResults(null);
+      setError(null);
+      return;
+    }
+
+    const picked = Array.from(fileList).slice(0, 5); // 最多 5 张
+    setFiles(picked);
+    setCompressedBlobs([]);
     setGarmentAttrs(null);
     setSelectedMaterialIds([]);
     setResults(null);
     setError(null);
 
-    if (!f) return;
-
     try {
-      const blob = await resizeImage(f, 1280);
-      setCompressedBlob(blob);
-      await runAnalyze(blob, f.name);
+      const blobs = await Promise.all(picked.map((f) => resizeImage(f, 2048)));
+      setCompressedBlobs(blobs);
+      // 只对第一张做解析（同款不同角度，解析一次即可代表）
+      await runAnalyze(blobs[0], picked[0].name);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -209,12 +240,13 @@ export default function RecolorPage() {
   );
 
   async function handleSubmit() {
-    if (!compressedBlob || !file) {
+    if (compressedBlobs.length === 0 || files.length === 0) {
       setError("请先上传产品图");
       return;
     }
     const useCustom = customName.trim().length > 0;
-    if (selectedColorIds.size === 0 && !useCustom) {
+    const colorCount = selectedColorIds.size + (useCustom ? 1 : 0);
+    if (colorCount === 0) {
       setError("请至少选择一个颜色，或填一个临时颜色");
       return;
     }
@@ -227,7 +259,10 @@ export default function RecolorPage() {
 
     try {
       const formData = new FormData();
-      formData.append("image", compressedBlob, file.name);
+      // 多图：image0, image1, ...
+      compressedBlobs.forEach((blob, i) => {
+        formData.append(`image${i}`, blob, files[i].name);
+      });
       if (selectedColorIds.size > 0) {
         formData.append("color_ids", JSON.stringify([...selectedColorIds]));
       }
@@ -238,6 +273,7 @@ export default function RecolorPage() {
         );
       }
       formData.append("model", model);
+      if (aspectRatio) formData.append("aspect_ratio", aspectRatio);
       if (selectedMaterialIds.length > 0) {
         formData.append("material_ids", JSON.stringify(selectedMaterialIds));
       }
@@ -266,6 +302,13 @@ export default function RecolorPage() {
     }
   }
 
+  /** 总任务数 = 图数 × 颜色数 */
+  const totalCount = (() => {
+    const useCustom = customName.trim().length > 0;
+    const colors = selectedColorIds.size + (useCustom ? 1 : 0);
+    return files.length * colors;
+  })();
+
   return (
     <main className="max-w-5xl mx-auto p-4 md:p-8">
       <header className="mb-6">
@@ -276,15 +319,19 @@ export default function RecolorPage() {
       </header>
 
       <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-        {/* Step 1: 上传 */}
+        {/* Step 1: 上传（支持多图） */}
         <div className="mb-6">
           <label className="block text-sm font-medium text-gray-700 mb-2">
             1. 上传产品图
+            <span className="ml-2 text-xs text-gray-500 font-normal">
+              可一次选多张同款不同角度（最多 5 张，有助于色差一致性）
+            </span>
           </label>
           <input
             type="file"
             accept="image/*"
-            onChange={(e) => onPickFile(e.target.files?.[0] || null)}
+            multiple
+            onChange={(e) => onPickFiles(e.target.files)}
             className="block w-full text-sm text-gray-600
               file:mr-4 file:py-2 file:px-4
               file:rounded-md file:border-0
@@ -292,22 +339,32 @@ export default function RecolorPage() {
               file:bg-blue-50 file:text-blue-700
               hover:file:bg-blue-100"
           />
-          {file && (
-            <div className="mt-3 flex items-start gap-4">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={URL.createObjectURL(file)}
-                alt="原图预览"
-                className="w-40 h-40 object-cover rounded-md border border-gray-200"
-              />
-              <div className="flex-1 text-xs text-gray-600">
-                {analyzing && (
-                  <div className="flex items-center gap-2 text-blue-600">
-                    <span className="inline-block w-3 h-3 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                    正在解析款式...
+          {files.length > 0 && (
+            <div className="mt-3">
+              <div className="flex flex-wrap gap-2">
+                {files.map((f, i) => (
+                  <div key={i} className="relative">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={URL.createObjectURL(f)}
+                      alt={`原图 ${i + 1}`}
+                      className="w-28 h-28 object-cover rounded-md border border-gray-200"
+                    />
+                    <div className="absolute top-1 left-1 bg-black/60 text-white text-[10px] px-1.5 rounded">
+                      #{i + 1}
+                    </div>
+                    <div className="mt-1 text-[10px] text-gray-500 truncate w-28">
+                      {f.name}
+                    </div>
                   </div>
-                )}
+                ))}
               </div>
+              {analyzing && (
+                <div className="mt-2 flex items-center gap-2 text-xs text-blue-600">
+                  <span className="inline-block w-3 h-3 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                  正在对第 1 张做款式解析（同款只需解析一次）...
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -589,10 +646,42 @@ export default function RecolorPage() {
           </div>
         </div>
 
-        {/* Step 7: 自定义指令（可选） */}
+        {/* Step 7: 输出比例 */}
         <div className="mb-6">
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            7. 额外指令（可选）
+            7. 输出比例
+            <span className="ml-2 text-xs text-gray-500 font-normal">
+              （伴娘服推荐 3:4 竖。原图不会被裁剪，模型按此比例输出新图）
+            </span>
+          </label>
+          <div className="flex flex-wrap gap-2">
+            {ASPECT_RATIOS.map((r) => {
+              const active = aspectRatio === r.value;
+              return (
+                <button
+                  key={r.value}
+                  type="button"
+                  onClick={() => setAspectRatio(r.value)}
+                  className={`px-3 py-1.5 rounded-md border text-sm transition ${
+                    active
+                      ? "border-blue-500 bg-blue-50 text-blue-800"
+                      : "border-gray-300 hover:border-gray-400"
+                  }`}
+                >
+                  {r.label}
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-xs text-gray-500">
+            注：Nano Banana 原生输出约 1024-2048 分辨率（非真 4K），需要 4K 级可再接 upscale 工具处理
+          </p>
+        </div>
+
+        {/* Step 8: 自定义指令（可选） */}
+        <div className="mb-6">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            8. 额外指令（可选）
           </label>
           <textarea
             value={userSeed}
@@ -605,18 +694,18 @@ export default function RecolorPage() {
 
         <button
           onClick={handleSubmit}
-          disabled={loading || !file || analyzing}
+          disabled={loading || files.length === 0 || analyzing || totalCount === 0}
           className="inline-flex items-center px-6 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {loading ? (
             <>
               <span className="inline-block w-4 h-4 mr-2 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              生成中（每张约 10-15 秒 / Pro 约 2-3 分钟）...
+              生成中（每张 Flash 约 10-20 秒 / Pro 约 2-3 分钟）...
             </>
           ) : (
-            `开始换色 (${
+            `开始换色 · 共 ${totalCount} 张 (${files.length} 图 × ${
               selectedColorIds.size + (customName.trim() ? 1 : 0)
-            } 张)`
+            } 色)`
           )}
         </button>
 
@@ -628,65 +717,104 @@ export default function RecolorPage() {
         )}
       </section>
 
-      {results && (
-        <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-900">生成结果</h2>
-            {elapsed !== null && (
-              <span className="text-xs text-gray-500">
-                总耗时 {(elapsed / 1000).toFixed(1)}s · 共 {results.length} 张
-              </span>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {results.map((r, i) => (
-              <div
-                key={i}
-                className="border border-gray-200 rounded-md overflow-hidden"
-              >
-                <div className="aspect-square bg-gray-100 flex items-center justify-center">
-                  {r.success && r.image_url ? (
-                    /* eslint-disable-next-line @next/next/no-img-element */
-                    <img
-                      src={r.image_url}
-                      alt={r.color_name}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="text-xs text-red-600 p-4 text-center">
-                      失败：{r.error || "未知错误"}
-                    </div>
-                  )}
-                </div>
-                <div className="p-3 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="w-4 h-4 rounded border border-gray-200"
-                      style={{ backgroundColor: r.hex }}
-                    />
-                    <span className="text-sm text-gray-900">
-                      {r.color_name}
-                    </span>
-                    <span className="text-xs text-gray-500 font-mono">
-                      {r.hex}
-                    </span>
-                  </div>
-                  {r.success && r.image_url && (
-                    <a
-                      href={r.image_url}
-                      download={`recolor_${r.color_name}.png`}
-                      className="text-xs text-blue-600 hover:underline"
-                    >
-                      下载
-                    </a>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
+      {results && <ResultsView results={results} elapsed={elapsed} />}
     </main>
+  );
+}
+
+function ResultsView({
+  results,
+  elapsed,
+}: {
+  results: RecolorResult[];
+  elapsed: number | null;
+}) {
+  // 按颜色分组展示，每组内按图片 index 排序
+  const groups = new Map<
+    number,
+    { color_name: string; hex: string; items: RecolorResult[] }
+  >();
+  for (const r of results) {
+    if (!groups.has(r.color_id)) {
+      groups.set(r.color_id, {
+        color_name: r.color_name,
+        hex: r.hex,
+        items: [],
+      });
+    }
+    groups.get(r.color_id)!.items.push(r);
+  }
+  for (const g of groups.values()) {
+    g.items.sort((a, b) => a.image_index - b.image_index);
+  }
+
+  return (
+    <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-semibold text-gray-900">生成结果</h2>
+        {elapsed !== null && (
+          <span className="text-xs text-gray-500">
+            总耗时 {(elapsed / 1000).toFixed(1)}s · 共 {results.length} 张
+          </span>
+        )}
+      </div>
+
+      <div className="space-y-6">
+        {Array.from(groups.values()).map((g) => (
+          <div key={g.color_name} className="border-t border-gray-200 pt-4">
+            <div className="flex items-center gap-2 mb-3">
+              <span
+                className="w-5 h-5 rounded border border-gray-300"
+                style={{ backgroundColor: g.hex }}
+              />
+              <span className="text-sm font-semibold text-gray-900">
+                {g.color_name}
+              </span>
+              <span className="text-xs text-gray-500 font-mono">{g.hex}</span>
+              <span className="text-xs text-gray-400">
+                · {g.items.length} 张
+              </span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+              {g.items.map((r, i) => (
+                <div
+                  key={i}
+                  className="border border-gray-200 rounded-md overflow-hidden"
+                >
+                  <div className="aspect-[3/4] bg-gray-100 flex items-center justify-center">
+                    {r.success && r.image_url ? (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                      <img
+                        src={r.image_url}
+                        alt={r.image_label}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="text-xs text-red-600 p-4 text-center">
+                        失败：{r.error || "未知错误"}
+                      </div>
+                    )}
+                  </div>
+                  <div className="p-2 flex items-center justify-between text-xs">
+                    <span className="text-gray-500 truncate">
+                      #{r.image_index + 1} {r.image_label}
+                    </span>
+                    {r.success && r.image_url && (
+                      <a
+                        href={r.image_url}
+                        download={`recolor_${g.color_name}_${r.image_index + 1}.png`}
+                        className="text-blue-600 hover:underline shrink-0 ml-2"
+                      >
+                        下载
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }

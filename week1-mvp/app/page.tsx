@@ -15,9 +15,9 @@ const FEATURES = [
     emoji: "🎨",
   },
   {
-    href: "/on-model",
-    title: "模特换装",
-    desc: "产品图 + 选择模特形象和姿势，生成模特穿着图",
+    href: "/batch-photo",
+    title: "批量摄影图",
+    desc: "上传产品图 → 自动解析款式 → 选模特/场景/姿势 → 批量出模特摄影图",
     emoji: "👗",
   },
   {

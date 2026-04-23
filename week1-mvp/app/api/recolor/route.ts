@@ -28,6 +28,8 @@ interface RecolorResult {
   color_id: number;
   color_name: string;
   hex: string;
+  image_index: number; // 对应第几张原图（0-based）
+  image_label: string; // 原图文件名，方便用户对照
   success: boolean;
   image_url?: string; // 生成图的 URL（/assets/outputs/xxx.png）
   error?: string;
@@ -48,10 +50,27 @@ export async function POST(req: NextRequest) {
     const db = getDb();
 
     const formData = await req.formData();
-    const imageFile = formData.get("image");
-    if (!(imageFile instanceof File)) {
+
+    // 多图上传：支持 image / image0 / image1 ... imageN 多种命名
+    const uploadedFiles: File[] = [];
+    // 旧兼容：单张 "image"
+    const legacyImage = formData.get("image");
+    if (legacyImage instanceof File) uploadedFiles.push(legacyImage);
+    // 新：image0, image1, image2 ...
+    for (const [key, value] of formData.entries()) {
+      if (/^image\d+$/.test(key) && value instanceof File) {
+        uploadedFiles.push(value);
+      }
+    }
+    if (uploadedFiles.length === 0) {
       return NextResponse.json(
-        { error: "请上传原始产品图" },
+        { error: "请上传至少一张产品图" },
+        { status: 400 },
+      );
+    }
+    if (uploadedFiles.length > 5) {
+      return NextResponse.json(
+        { error: "一次最多上传 5 张图片" },
         { status: 400 },
       );
     }
@@ -101,6 +120,25 @@ export async function POST(req: NextRequest) {
       typeof formData.get("user_seed") === "string"
         ? String(formData.get("user_seed")).trim()
         : "";
+
+    // 新：输出比例
+    const aspectRatioRaw = formData.get("aspect_ratio");
+    const ALLOWED_RATIOS = [
+      "1:1",
+      "3:2",
+      "2:3",
+      "3:4",
+      "4:3",
+      "4:5",
+      "5:4",
+      "9:16",
+      "16:9",
+    ];
+    const aspectRatio =
+      typeof aspectRatioRaw === "string" &&
+      ALLOWED_RATIOS.includes(aspectRatioRaw)
+        ? aspectRatioRaw
+        : undefined;
 
     // 读材质 + 真实感
     const materials = getMaterialsByIds(materialIds);
@@ -155,51 +193,77 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const inputBuffer = Buffer.from(await imageFile.arrayBuffer());
-    const inputMime = imageFile.type || "image/jpeg";
-    const inputImage: GenImageInput = {
-      buffer: inputBuffer,
-      mimeType: inputMime,
-    };
+    // 把所有上传图读为 Buffer
+    const inputImages: GenImageInput[] = [];
+    const imageLabels: string[] = [];
+    for (const f of uploadedFiles) {
+      const buffer = Buffer.from(await f.arrayBuffer());
+      inputImages.push({ buffer, mimeType: f.type || "image/jpeg" });
+      imageLabels.push(f.name || `image${inputImages.length}`);
+    }
 
     // 确保输出目录存在
     const outputsDir = path.join(DATA_DIR_PATH, "outputs");
     await fs.mkdir(outputsDir, { recursive: true });
 
-    // 串行调用（Nano Banana 同时并发容易 429，先串行保证稳定）
+    // 串行调用：外层遍历颜色，内层遍历每张图
+    // 每次调用把所有上传图作为参考传入，target 是第 i 张
+    // prompt 里明确"请修改第 N 张图，其他作为同款参考"
     const results: RecolorResult[] = [];
     for (const c of colorsToApply) {
-      try {
-        const prompt = buildRecolorPrompt(c.name, c.hex, {
-          garmentAttrs: garmentAttrsText || undefined,
-          materialDetails: materialDetailsText || undefined,
-          realismConstraints: realismConstraintsText || undefined,
-          userSeed: userSeed || undefined,
-        });
-        const gen = await generateImage([inputImage], prompt, model);
+      for (let imgIdx = 0; imgIdx < inputImages.length; imgIdx++) {
+        const label = imageLabels[imgIdx];
+        try {
+          // 把目标图放第一位（Nano Banana 最关注第一张），其余作为参考
+          const reordered: GenImageInput[] = [
+            inputImages[imgIdx],
+            ...inputImages.filter((_, i) => i !== imgIdx),
+          ];
 
-        const ext = gen.mimeType.includes("png") ? "png" : "jpg";
-        const filename = `recolor_${user.id}_${Date.now()}_${Math.random()
-          .toString(36)
-          .slice(2, 8)}.${ext}`;
-        const filePath = path.join(outputsDir, filename);
-        await fs.writeFile(filePath, gen.data);
+          const multiImageHint =
+            inputImages.length > 1
+              ? `\n【多图说明】这是同一款产品的 ${inputImages.length} 张不同视角图。请仅修改第 1 张的颜色，其他图作为参考帮你理解产品结构、面料、装饰。所有图输出时必须是一模一样的目标色（保持批次色差一致）。`
+              : "";
 
-        results.push({
-          color_id: c.id,
-          color_name: c.name,
-          hex: c.hex,
-          success: true,
-          image_url: `/assets/outputs/${filename}`,
-        });
-      } catch (e) {
-        results.push({
-          color_id: c.id,
-          color_name: c.name,
-          hex: c.hex,
-          success: false,
-          error: e instanceof Error ? e.message : String(e),
-        });
+          const prompt =
+            buildRecolorPrompt(c.name, c.hex, {
+              garmentAttrs: garmentAttrsText || undefined,
+              materialDetails: materialDetailsText || undefined,
+              realismConstraints: realismConstraintsText || undefined,
+              userSeed: userSeed || undefined,
+            }) + multiImageHint;
+
+          const gen = await generateImage(reordered, prompt, model, {
+            aspectRatio,
+          });
+
+          const ext = gen.mimeType.includes("png") ? "png" : "jpg";
+          const filename = `recolor_${user.id}_${Date.now()}_${Math.random()
+            .toString(36)
+            .slice(2, 8)}.${ext}`;
+          const filePath = path.join(outputsDir, filename);
+          await fs.writeFile(filePath, gen.data);
+
+          results.push({
+            color_id: c.id,
+            color_name: c.name,
+            hex: c.hex,
+            image_index: imgIdx,
+            image_label: label,
+            success: true,
+            image_url: `/assets/outputs/${filename}`,
+          });
+        } catch (e) {
+          results.push({
+            color_id: c.id,
+            color_name: c.name,
+            hex: c.hex,
+            image_index: imgIdx,
+            image_label: label,
+            success: false,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
       }
     }
 
@@ -213,6 +277,9 @@ export async function POST(req: NextRequest) {
       JSON.stringify(results.filter((r) => r.success).map((r) => r.image_url)),
       JSON.stringify({
         model,
+        aspect_ratio: aspectRatio || null,
+        image_count: inputImages.length,
+        image_labels: imageLabels,
         colors: colorsToApply.map((c) => ({
           id: c.id,
           name: c.name,

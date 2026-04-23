@@ -14,7 +14,7 @@ const NAV_ITEMS = [
   { href: "/", label: "首页" },
   { href: "/analyze", label: "服饰解析" },
   { href: "/recolor", label: "换色" },
-  { href: "/on-model", label: "模特换装" },
+  { href: "/batch-photo", label: "批量摄影图" },
   { href: "/history", label: "历史" },
 ] as const;
 
