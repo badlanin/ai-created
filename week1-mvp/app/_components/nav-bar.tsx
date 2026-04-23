@@ -1,0 +1,103 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+
+type NavUser = {
+  id: number;
+  username: string;
+  display_name: string | null;
+  role: "admin" | "user";
+};
+
+const NAV_ITEMS = [
+  { href: "/", label: "首页" },
+  { href: "/analyze", label: "服饰解析" },
+  { href: "/recolor", label: "换色" },
+  { href: "/on-model", label: "模特换装" },
+  { href: "/history", label: "历史" },
+] as const;
+
+const ADMIN_ITEMS = [
+  { href: "/admin/colors", label: "颜色库" },
+  { href: "/admin/models", label: "模特库" },
+  { href: "/admin/scenes", label: "场景库" },
+  { href: "/admin/prompts", label: "Prompt 库" },
+  { href: "/admin/users", label: "用户" },
+] as const;
+
+export function NavBar({ user }: { user: NavUser }) {
+  const pathname = usePathname();
+  const router = useRouter();
+
+  async function handleLogout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/login");
+    router.refresh();
+  }
+
+  function isActive(href: string) {
+    if (href === "/") return pathname === "/";
+    return pathname === href || pathname?.startsWith(href + "/");
+  }
+
+  return (
+    <nav className="bg-white border-b border-gray-200 sticky top-0 z-10">
+      <div className="max-w-6xl mx-auto px-4">
+        <div className="flex items-center justify-between h-14">
+          <div className="flex items-center gap-1 overflow-x-auto">
+            <Link href="/" className="font-semibold text-gray-900 mr-4 whitespace-nowrap">
+              伴娘服 AI
+            </Link>
+            {NAV_ITEMS.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`px-3 py-1.5 text-sm rounded-md whitespace-nowrap ${
+                  isActive(item.href)
+                    ? "bg-blue-50 text-blue-700 font-medium"
+                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+                }`}
+              >
+                {item.label}
+              </Link>
+            ))}
+            {user.role === "admin" && (
+              <>
+                <span className="mx-2 text-gray-300">|</span>
+                {ADMIN_ITEMS.map((item) => (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={`px-3 py-1.5 text-sm rounded-md whitespace-nowrap ${
+                      isActive(item.href)
+                        ? "bg-amber-50 text-amber-800 font-medium"
+                        : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+                    }`}
+                  >
+                    {item.label}
+                  </Link>
+                ))}
+              </>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3 text-sm text-gray-600 whitespace-nowrap">
+            <span className="hidden md:inline">
+              {user.display_name || user.username}
+              {user.role === "admin" && (
+                <span className="ml-1 text-xs text-amber-700">(管理员)</span>
+              )}
+            </span>
+            <button
+              onClick={handleLogout}
+              className="text-gray-500 hover:text-gray-900"
+            >
+              退出
+            </button>
+          </div>
+        </div>
+      </div>
+    </nav>
+  );
+}
