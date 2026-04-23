@@ -16,6 +16,8 @@ import {
   getMaterialsByIds,
   getRealismPreset,
 } from "@/lib/materials";
+import { retryWithBackoff } from "@/lib/retry";
+import { runWithConcurrency, recommendConcurrency } from "@/lib/concurrency";
 
 export const runtime = "nodejs";
 // 换色每张：Flash Image 5-15 秒，Pro Image 带 Thinking 可达 3-5 分钟
@@ -213,67 +215,97 @@ export async function POST(req: NextRequest) {
     const outputsDir = path.join(DATA_DIR_PATH, "outputs");
     await fs.mkdir(outputsDir, { recursive: true });
 
-    // 串行调用：外层遍历颜色，内层遍历每张图
-    // 每次调用把所有上传图作为参考传入，target 是第 i 张
-    // prompt 里明确"请修改第 N 张图，其他作为同款参考"
-    const results: RecolorResult[] = [];
+    // 构造任务列表：每个 (颜色 × 图) 一个任务
+    type Task = {
+      color: ColorRow;
+      imgIdx: number;
+      label: string;
+    };
+    const tasks: Task[] = [];
     for (const c of colorsToApply) {
       for (let imgIdx = 0; imgIdx < inputImages.length; imgIdx++) {
-        const label = imageLabels[imgIdx];
-        try {
-          // 把目标图放第一位（Nano Banana 最关注第一张），其余作为参考
-          const reordered: GenImageInput[] = [
-            inputImages[imgIdx],
-            ...inputImages.filter((_, i) => i !== imgIdx),
-          ];
-
-          const multiImageHint =
-            inputImages.length > 1
-              ? `\n【多图说明】这是同一款产品的 ${inputImages.length} 张不同视角图。请仅修改第 1 张的颜色，其他图作为参考帮你理解产品结构、面料、装饰。所有图输出时必须是一模一样的目标色（保持批次色差一致）。`
-              : "";
-
-          const prompt =
-            buildRecolorPrompt(c.name, c.hex, {
-              garmentAttrs: garmentAttrsText || undefined,
-              materialDetails: materialDetailsText || undefined,
-              realismConstraints: realismConstraintsText || undefined,
-              userSeed: userSeed || undefined,
-              qualityLevel,
-            }) + multiImageHint;
-
-          const gen = await generateImage(reordered, prompt, model, {
-            aspectRatio,
-          });
-
-          const ext = gen.mimeType.includes("png") ? "png" : "jpg";
-          const filename = `recolor_${user.id}_${Date.now()}_${Math.random()
-            .toString(36)
-            .slice(2, 8)}.${ext}`;
-          const filePath = path.join(outputsDir, filename);
-          await fs.writeFile(filePath, gen.data);
-
-          results.push({
-            color_id: c.id,
-            color_name: c.name,
-            hex: c.hex,
-            image_index: imgIdx,
-            image_label: label,
-            success: true,
-            image_url: `/assets/outputs/${filename}`,
-          });
-        } catch (e) {
-          results.push({
-            color_id: c.id,
-            color_name: c.name,
-            hex: c.hex,
-            image_index: imgIdx,
-            image_label: label,
-            success: false,
-            error: e instanceof Error ? e.message : String(e),
-          });
-        }
+        tasks.push({ color: c, imgIdx, label: imageLabels[imgIdx] });
       }
     }
+
+    // 并发 + 重试：429 自动指数退避重试
+    const concurrency = recommendConcurrency(model);
+    console.log(
+      `[/api/recolor] 开始生成 ${tasks.length} 张，模型 ${model}，并发 ${concurrency}`,
+    );
+
+    const outcomes = await runWithConcurrency(tasks, concurrency, async (task) => {
+      const { color: c, imgIdx, label } = task;
+      const reordered: GenImageInput[] = [
+        inputImages[imgIdx],
+        ...inputImages.filter((_, i) => i !== imgIdx),
+      ];
+      const multiImageHint =
+        inputImages.length > 1
+          ? `\n【多图说明】这是同一款产品的 ${inputImages.length} 张不同视角图。请仅修改第 1 张的颜色，其他图作为参考帮你理解产品结构、面料、装饰。所有图输出时必须是一模一样的目标色（保持批次色差一致）。`
+          : "";
+      const prompt =
+        buildRecolorPrompt(c.name, c.hex, {
+          garmentAttrs: garmentAttrsText || undefined,
+          materialDetails: materialDetailsText || undefined,
+          realismConstraints: realismConstraintsText || undefined,
+          userSeed: userSeed || undefined,
+          qualityLevel,
+        }) + multiImageHint;
+
+      const gen = await retryWithBackoff(
+        () => generateImage(reordered, prompt, model, { aspectRatio }),
+        {
+          onRetry: (e, attempt, delay) => {
+            console.warn(
+              `[recolor retry] color=${c.name} img#${imgIdx + 1} attempt=${attempt} delay=${Math.round(delay)}ms: ${
+                e instanceof Error ? e.message.slice(0, 100) : String(e)
+              }`,
+            );
+          },
+        },
+      );
+
+      const ext = gen.mimeType.includes("png") ? "png" : "jpg";
+      const filename = `recolor_${user.id}_${Date.now()}_${Math.random()
+        .toString(36)
+        .slice(2, 8)}.${ext}`;
+      const filePath = path.join(outputsDir, filename);
+      await fs.writeFile(filePath, gen.data);
+
+      return {
+        filename,
+        label,
+        imgIdx,
+        color: c,
+      };
+    });
+
+    const results: RecolorResult[] = outcomes.map((o, i) => {
+      const task = tasks[i];
+      const { color: c, imgIdx, label } = task;
+      if (o.error) {
+        return {
+          color_id: c.id,
+          color_name: c.name,
+          hex: c.hex,
+          image_index: imgIdx,
+          image_label: label,
+          success: false,
+          error:
+            o.error instanceof Error ? o.error.message : String(o.error),
+        };
+      }
+      return {
+        color_id: c.id,
+        color_name: c.name,
+        hex: c.hex,
+        image_index: imgIdx,
+        image_label: label,
+        success: true,
+        image_url: `/assets/outputs/${o.value!.filename}`,
+      };
+    });
 
     // 记录生成历史
     const successCount = results.filter((r) => r.success).length;

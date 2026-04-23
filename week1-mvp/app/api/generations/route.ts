@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
       conditions.push("g.user_id = ?");
       values.push(user.id);
     }
-    if (kind && ["analyze", "recolor", "on_model"].includes(kind)) {
+    if (kind && ["recolor", "on_model"].includes(kind)) {
       conditions.push("g.kind = ?");
       values.push(kind);
     }

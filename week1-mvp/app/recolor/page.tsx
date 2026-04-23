@@ -174,7 +174,7 @@ export default function RecolorPage() {
       .catch(() => setRealisms([]));
   }, []);
 
-  // 文件选中后：压缩所有 + 对第一张触发解析
+  // 文件选中后：只压缩，不自动解析
   async function onPickFiles(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) {
       setFiles([]);
@@ -186,7 +186,7 @@ export default function RecolorPage() {
       return;
     }
 
-    const picked = Array.from(fileList).slice(0, 5); // 最多 5 张
+    const picked = Array.from(fileList).slice(0, 5);
     setFiles(picked);
     setCompressedBlobs([]);
     setGarmentAttrs(null);
@@ -197,43 +197,63 @@ export default function RecolorPage() {
     try {
       const blobs = await Promise.all(picked.map((f) => resizeImage(f, 2048)));
       setCompressedBlobs(blobs);
-      // 只对第一张做解析（同款不同角度，解析一次即可代表）
-      await runAnalyze(blobs[0], picked[0].name);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   }
 
-  async function runAnalyze(blob: Blob, filename: string) {
+  // 手动触发款式解析（用户点按钮）
+  async function handleAnalyze() {
+    if (compressedBlobs.length === 0 || files.length === 0) {
+      setError("请先上传图片");
+      return;
+    }
     setAnalyzing(true);
+    setError(null);
     try {
       const fd = new FormData();
-      fd.append("image0", blob, filename);
+      fd.append("image0", compressedBlobs[0], files[0].name);
       const res = await fetch("/api/analyze", { method: "POST", body: fd });
       if (!res.ok) {
         throw new Error((await res.json()).error || res.statusText);
       }
       const attrs = (await res.json()) as GarmentAttrs;
       setGarmentAttrs(attrs);
-
-      // 自动匹配材质
-      const materialText = String(attrs["面料材质"] || "");
-      if (materialText) {
-        const mRes = await fetch("/api/materials/match", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: materialText }),
-        });
-        if (mRes.ok) {
-          const body = (await mRes.json()) as { matched: Material[] };
-          setSelectedMaterialIds(body.matched.map((m) => m.id));
-        }
-      }
+      await rematchMaterials(String(attrs["面料材质"] || ""));
     } catch (e) {
       setError("款式解析失败：" + (e instanceof Error ? e.message : String(e)));
     } finally {
       setAnalyzing(false);
     }
+  }
+
+  // 根据面料材质文本重新匹配材质库（用户编辑"面料材质"字段后可手动触发）
+  async function rematchMaterials(materialText: string) {
+    if (!materialText) {
+      setSelectedMaterialIds([]);
+      return;
+    }
+    try {
+      const mRes = await fetch("/api/materials/match", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: materialText }),
+      });
+      if (mRes.ok) {
+        const body = (await mRes.json()) as { matched: Material[] };
+        setSelectedMaterialIds(body.matched.map((m) => m.id));
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // 用户编辑了某个解析字段
+  function updateGarmentAttr(key: string, value: string) {
+    setGarmentAttrs((prev) => {
+      if (!prev) return prev;
+      return { ...prev, [key]: value };
+    });
   }
 
   function toggleColor(id: number) {
@@ -385,37 +405,45 @@ export default function RecolorPage() {
                   </div>
                 ))}
               </div>
-              {analyzing && (
-                <div className="mt-2 flex items-center gap-2 text-xs text-blue-600">
-                  <span className="inline-block w-3 h-3 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                  正在对第 1 张做款式解析（同款只需解析一次）...
-                </div>
-              )}
             </div>
           )}
         </div>
 
-        {/* Step 2: 款式解析结果 */}
-        {garmentAttrs && (
+        {/* Step 2: 款式解析（手动触发 + 可编辑） */}
+        {files.length > 0 && (
           <div className="mb-6">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              2. 款式解析结果
-            </label>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-              {Object.entries(garmentAttrs)
-                .filter(([key]) => !key.startsWith("_"))
-                .map(([key, value]) => (
-                  <div
-                    key={key}
-                    className="p-2 bg-gray-50 border border-gray-200 rounded"
-                  >
-                    <div className="text-gray-500">{key}</div>
-                    <div className="text-gray-900 mt-0.5">
-                      {Array.isArray(value) ? value.join("、") : String(value)}
-                    </div>
-                  </div>
-                ))}
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-sm font-medium text-gray-700">
+                2. 款式解析
+                <span className="ml-2 text-xs text-gray-500 font-normal">
+                  （可选。解析结果可编辑，不解析也能生成）
+                </span>
+              </label>
+              <button
+                type="button"
+                onClick={handleAnalyze}
+                disabled={analyzing || compressedBlobs.length === 0}
+                className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+              >
+                {analyzing ? (
+                  <span className="flex items-center gap-1">
+                    <span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    解析中...
+                  </span>
+                ) : garmentAttrs ? (
+                  "重新解析"
+                ) : (
+                  "解析款式"
+                )}
+              </button>
             </div>
+            {garmentAttrs && (
+              <GarmentAttrsEditor
+                attrs={garmentAttrs}
+                onChange={updateGarmentAttr}
+                onMaterialTextBlur={rematchMaterials}
+              />
+            )}
           </div>
         )}
 
@@ -774,6 +802,56 @@ export default function RecolorPage() {
 
       {results && <ResultsView results={results} elapsed={elapsed} />}
     </main>
+  );
+}
+
+/**
+ * 解析结果可编辑编辑器
+ * - 每个字段是一个 input
+ * - 特别的"面料材质"字段在失焦时触发重新匹配材质
+ * - "装饰细节"如果是数组，用逗号拼接编辑，保存时还原回数组
+ */
+function GarmentAttrsEditor({
+  attrs,
+  onChange,
+  onMaterialTextBlur,
+}: {
+  attrs: GarmentAttrs;
+  onChange: (key: string, value: string) => void;
+  onMaterialTextBlur: (value: string) => void;
+}) {
+  const entries = Object.entries(attrs).filter(
+    ([key]) => !key.startsWith("_"),
+  );
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+      {entries.map(([key, value]) => {
+        const strValue = Array.isArray(value) ? value.join("、") : String(value);
+        const isMaterial = key === "面料材质";
+        return (
+          <div
+            key={key}
+            className="p-2 bg-gray-50 border border-gray-200 rounded"
+          >
+            <div className="text-xs text-gray-500 mb-1">
+              {key}
+              {isMaterial && (
+                <span className="ml-1 text-[10px] text-blue-500">
+                  （失焦会重新匹配材质）
+                </span>
+              )}
+            </div>
+            <input
+              type="text"
+              value={strValue}
+              onChange={(e) => onChange(key, e.target.value)}
+              onBlur={isMaterial ? (e) => onMaterialTextBlur(e.target.value) : undefined}
+              className="w-full px-2 py-1 text-sm border border-gray-300 rounded bg-white focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

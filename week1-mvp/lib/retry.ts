@@ -1,0 +1,72 @@
+/**
+ * 通用的重试 + 指数退避工具
+ *
+ * 典型用途：Nano Banana 调用偶尔会返回 429 (RESOURCE_EXHAUSTED)
+ * 或 503，加个退避重试就能救回来。
+ */
+
+export interface RetryOptions {
+  /** 最大重试次数（不含首次调用）。默认 5 */
+  maxRetries?: number;
+  /** 首次退避时长（毫秒）。默认 2000ms */
+  initialDelayMs?: number;
+  /** 退避上限。默认 60000ms */
+  maxDelayMs?: number;
+  /** 退避倍数。默认 2 */
+  factor?: number;
+  /** 判断错误是否可重试。默认识别 429/503/网络错误 */
+  shouldRetry?: (error: unknown) => boolean;
+  /** 每次重试前的回调（用于记日志） */
+  onRetry?: (error: unknown, attempt: number, delayMs: number) => void;
+}
+
+/** 默认的重试判定 */
+export function defaultShouldRetry(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return (
+    /429/.test(msg) ||
+    /RESOURCE_EXHAUSTED/i.test(msg) ||
+    /503/.test(msg) ||
+    /UNAVAILABLE/i.test(msg) ||
+    /fetch failed/i.test(msg) ||
+    /ECONNRESET/i.test(msg) ||
+    /ETIMEDOUT/i.test(msg) ||
+    /socket hang up/i.test(msg)
+  );
+}
+
+/**
+ * 跑一个异步函数，失败且可重试时按指数退避重试
+ */
+export async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  options: RetryOptions = {},
+): Promise<T> {
+  const {
+    maxRetries = 5,
+    initialDelayMs = 2000,
+    maxDelayMs = 60_000,
+    factor = 2,
+    shouldRetry = defaultShouldRetry,
+    onRetry,
+  } = options;
+
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastError = e;
+      if (attempt === maxRetries || !shouldRetry(e)) {
+        throw e;
+      }
+      // 指数退避 + ~0-1s 抖动，避免所有请求同时重发
+      const exp = initialDelayMs * Math.pow(factor, attempt);
+      const jitter = Math.random() * 1000;
+      const delay = Math.min(exp + jitter, maxDelayMs);
+      onRetry?.(e, attempt + 1, delay);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastError;
+}

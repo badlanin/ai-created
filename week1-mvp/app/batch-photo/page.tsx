@@ -205,7 +205,7 @@ export default function BatchPhotoPage() {
       .catch(() => {});
   }, []);
 
-  // ==== File upload + analyze ====
+  // ==== File upload (不自动解析) ====
   async function onPickFiles(fl: FileList | null) {
     if (!fl || fl.length === 0) {
       setFiles([]);
@@ -227,39 +227,56 @@ export default function BatchPhotoPage() {
     try {
       const blobs = await Promise.all(picked.map((f) => resizeImage(f, 2048)));
       setCompressedBlobs(blobs);
-      await runAnalyze(blobs[0], picked[0].name);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   }
 
-  async function runAnalyze(blob: Blob, filename: string) {
+  async function handleAnalyze() {
+    if (compressedBlobs.length === 0 || files.length === 0) {
+      setError("请先上传图片");
+      return;
+    }
     setAnalyzing(true);
+    setError(null);
     try {
       const fd = new FormData();
-      fd.append("image0", blob, filename);
+      fd.append("image0", compressedBlobs[0], files[0].name);
       const res = await fetch("/api/analyze", { method: "POST", body: fd });
       if (!res.ok) throw new Error((await res.json()).error || res.statusText);
       const attrs = (await res.json()) as GarmentAttrs;
       setGarmentAttrs(attrs);
-
-      const materialText = String(attrs["面料材质"] || "");
-      if (materialText) {
-        const mRes = await fetch("/api/materials/match", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: materialText }),
-        });
-        if (mRes.ok) {
-          const body = (await mRes.json()) as { matched: Material[] };
-          setSelectedMaterialIds(body.matched.map((m) => m.id));
-        }
-      }
+      await rematchMaterials(String(attrs["面料材质"] || ""));
     } catch (e) {
       setError("款式解析失败：" + (e instanceof Error ? e.message : String(e)));
     } finally {
       setAnalyzing(false);
     }
+  }
+
+  async function rematchMaterials(materialText: string) {
+    if (!materialText) {
+      setSelectedMaterialIds([]);
+      return;
+    }
+    try {
+      const mRes = await fetch("/api/materials/match", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: materialText }),
+      });
+      if (mRes.ok) {
+        const body = (await mRes.json()) as { matched: Material[] };
+        setSelectedMaterialIds(body.matched.map((m) => m.id));
+      }
+    } catch {}
+  }
+
+  function updateGarmentAttr(key: string, value: string) {
+    setGarmentAttrs((prev) => {
+      if (!prev) return prev;
+      return { ...prev, [key]: value };
+    });
   }
 
   // ==== Derived ====
@@ -392,34 +409,43 @@ export default function BatchPhotoPage() {
               ))}
             </div>
           )}
-          {analyzing && (
-            <div className="mt-2 flex items-center gap-2 text-xs text-blue-600">
-              <span className="inline-block w-3 h-3 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-              正在解析款式...
-            </div>
-          )}
         </StepBlock>
 
-        {/* === Step 2: 解析结果 + 材质 === */}
-        {garmentAttrs && (
-          <StepBlock step={2} title="款式解析 + 服装材质">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs mb-3">
-              {Object.entries(garmentAttrs)
-                .filter(([k]) => !k.startsWith("_"))
-                .map(([key, value]) => (
-                  <div
-                    key={key}
-                    className="p-2 bg-gray-50 border border-gray-200 rounded"
-                  >
-                    <div className="text-gray-500">{key}</div>
-                    <div className="text-gray-900 mt-0.5">
-                      {Array.isArray(value) ? value.join("、") : String(value)}
-                    </div>
-                  </div>
-                ))}
+        {/* === Step 2: 款式解析（手动触发 + 可编辑） === */}
+        {files.length > 0 && (
+          <StepBlock
+            step={2}
+            title="款式解析 + 服装材质（可选，不解析也能生成）"
+          >
+            <div className="mb-3">
+              <button
+                type="button"
+                onClick={handleAnalyze}
+                disabled={analyzing || compressedBlobs.length === 0}
+                className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+              >
+                {analyzing ? (
+                  <span className="flex items-center gap-1">
+                    <span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    解析中...
+                  </span>
+                ) : garmentAttrs ? (
+                  "重新解析"
+                ) : (
+                  "解析款式"
+                )}
+              </button>
             </div>
-            <div className="flex flex-wrap gap-2 items-center">
-              <span className="text-xs text-gray-500">匹配材质：</span>
+            {garmentAttrs && (
+              <GarmentAttrsEditor
+                attrs={garmentAttrs}
+                onChange={updateGarmentAttr}
+                onMaterialTextBlur={rematchMaterials}
+              />
+            )}
+            {garmentAttrs && (
+              <div className="mt-3 flex flex-wrap gap-2 items-center">
+                <span className="text-xs text-gray-500">匹配材质：</span>
               {selectedMaterials.map((m) => (
                 <span
                   key={m.id}
@@ -474,8 +500,9 @@ export default function BatchPhotoPage() {
                     )}
                   </div>
                 )}
+                </div>
               </div>
-            </div>
+            )}
           </StepBlock>
         )}
 
@@ -913,5 +940,56 @@ function ResultsView({
         ))}
       </div>
     </section>
+  );
+}
+
+/**
+ * 解析结果可编辑编辑器（与 /recolor 共享设计）
+ */
+function GarmentAttrsEditor({
+  attrs,
+  onChange,
+  onMaterialTextBlur,
+}: {
+  attrs: GarmentAttrs;
+  onChange: (key: string, value: string) => void;
+  onMaterialTextBlur: (value: string) => void;
+}) {
+  const entries = Object.entries(attrs).filter(
+    ([key]) => !key.startsWith("_"),
+  );
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+      {entries.map(([key, value]) => {
+        const strValue = Array.isArray(value) ? value.join("、") : String(value);
+        const isMaterial = key === "面料材质";
+        return (
+          <div
+            key={key}
+            className="p-2 bg-gray-50 border border-gray-200 rounded"
+          >
+            <div className="text-xs text-gray-500 mb-1">
+              {key}
+              {isMaterial && (
+                <span className="ml-1 text-[10px] text-blue-500">
+                  （失焦会重新匹配材质）
+                </span>
+              )}
+            </div>
+            <input
+              type="text"
+              value={strValue}
+              onChange={(e) => onChange(key, e.target.value)}
+              onBlur={
+                isMaterial
+                  ? (e) => onMaterialTextBlur(e.target.value)
+                  : undefined
+              }
+              className="w-full px-2 py-1 text-sm border border-gray-300 rounded bg-white focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+        );
+      })}
+    </div>
   );
 }

@@ -24,7 +24,6 @@ type Me = {
 };
 
 const KIND_LABEL: Record<string, { label: string; emoji: string; color: string }> = {
-  analyze: { label: "服饰解析", emoji: "🔍", color: "bg-purple-100 text-purple-700" },
   recolor: { label: "换色", emoji: "🎨", color: "bg-blue-100 text-blue-700" },
   on_model: { label: "批量摄影图", emoji: "👗", color: "bg-pink-100 text-pink-700" },
 };
@@ -116,7 +115,6 @@ export default function HistoryPage() {
               className="px-2 py-1 border border-gray-300 rounded text-sm"
             >
               <option value="">全部</option>
-              <option value="analyze">服饰解析</option>
               <option value="recolor">换色</option>
               <option value="on_model">批量摄影图</option>
             </select>

@@ -15,6 +15,8 @@ import {
   getMaterialsByIds,
   getRealismPreset,
 } from "@/lib/materials";
+import { retryWithBackoff } from "@/lib/retry";
+import { runWithConcurrency, recommendConcurrency } from "@/lib/concurrency";
 
 export const runtime = "nodejs";
 // 批量摄影图：Pro + N 个姿势时可能累计 15-30 分钟，留足
@@ -287,67 +289,83 @@ export async function POST(req: NextRequest) {
     const outputsDir = path.join(DATA_DIR_PATH, "outputs");
     await fs.mkdir(outputsDir, { recursive: true });
 
-    // ---------- 串行调用，每个姿势出 1 张图 ----------
-    const results: BatchResult[] = [];
-    for (const pose of poses) {
+    // ---------- 并发 + 重试生成 ----------
+    const concurrency = recommendConcurrency(model);
+    console.log(
+      `[/api/batch-photo] 开始生成 ${poses.length} 张，模型 ${model}，并发 ${concurrency}`,
+    );
+
+    const outcomes = await runWithConcurrency(poses, concurrency, async (pose) => {
       const poseStartedAt = Date.now();
-      try {
-        const promptVars: Record<string, string> = {
-          n: "1",
-          garment_attrs: garmentAttrsText,
-          material_details: materialDetailsText,
-          pose: `${pose.name}：${pose.text}`,
-          photography_params: photographyParamsText,
-          realism_constraints: realismConstraintsText,
-          user_seed: userSeed
-            ? `【用户补充指令】${userSeed}`
-            : "",
-          identity_name: identity.name,
-          scene_name: scene.name,
-        };
-        const filledTemplate = fillTemplate(template.template, promptVars);
+      const promptVars: Record<string, string> = {
+        n: "1",
+        garment_attrs: garmentAttrsText,
+        material_details: materialDetailsText,
+        pose: `${pose.name}：${pose.text}`,
+        photography_params: photographyParamsText,
+        realism_constraints: realismConstraintsText,
+        user_seed: userSeed ? `【用户补充指令】${userSeed}` : "",
+        identity_name: identity.name,
+        scene_name: scene.name,
+      };
+      const filledTemplate = fillTemplate(template.template, promptVars);
+      const finalPrompt = `${filledTemplate}\n\n${qualityHintText}`;
+      const parts: GenImageInput[] = [
+        ...productInputs,
+        identityInput,
+        sceneInput,
+      ];
 
-        // 最后追加质量指令（可保证即使模板忘了加也有）
-        const finalPrompt = `${filledTemplate}\n\n${qualityHintText}`;
+      const gen = await retryWithBackoff(
+        () =>
+          generateImage(parts, finalPrompt, model, {
+            aspectRatio,
+          }),
+        {
+          onRetry: (e, attempt, delay) => {
+            console.warn(
+              `[batch-photo retry] pose=${pose.name} attempt=${attempt} delay=${Math.round(delay)}ms: ${
+                e instanceof Error ? e.message.slice(0, 100) : String(e)
+              }`,
+            );
+          },
+        },
+      );
 
-        // 图片顺序：产品图（正/背/细节） → 模特 → 场景
-        // Prompt 里明确指代"参考图 1-2 是产品 / 参考图 3 是模特 / 参考图 4 是场景"
-        const parts: GenImageInput[] = [
-          ...productInputs,
-          identityInput,
-          sceneInput,
-        ];
+      const ext = gen.mimeType.includes("png") ? "png" : "jpg";
+      const filename = `batch_${user.id}_${Date.now()}_${Math.random()
+        .toString(36)
+        .slice(2, 8)}.${ext}`;
+      const filePath = path.join(outputsDir, filename);
+      await fs.writeFile(filePath, gen.data);
 
-        const gen = await generateImage(parts, finalPrompt, model, {
-          aspectRatio,
-        });
+      return {
+        filename,
+        duration_ms: Date.now() - poseStartedAt,
+      };
+    });
 
-        const ext = gen.mimeType.includes("png") ? "png" : "jpg";
-        const filename = `batch_${user.id}_${Date.now()}_${Math.random()
-          .toString(36)
-          .slice(2, 8)}.${ext}`;
-        const filePath = path.join(outputsDir, filename);
-        await fs.writeFile(filePath, gen.data);
-
-        results.push({
-          pose_id: pose.id,
-          pose_name: pose.name,
-          pose_type: pose.type,
-          success: true,
-          image_url: `/assets/outputs/${filename}`,
-          duration_ms: Date.now() - poseStartedAt,
-        });
-      } catch (e) {
-        results.push({
+    const results: BatchResult[] = outcomes.map((o, i) => {
+      const pose = poses[i];
+      if (o.error) {
+        return {
           pose_id: pose.id,
           pose_name: pose.name,
           pose_type: pose.type,
           success: false,
-          error: e instanceof Error ? e.message : String(e),
-          duration_ms: Date.now() - poseStartedAt,
-        });
+          error:
+            o.error instanceof Error ? o.error.message : String(o.error),
+        };
       }
-    }
+      return {
+        pose_id: pose.id,
+        pose_name: pose.name,
+        pose_type: pose.type,
+        success: true,
+        image_url: `/assets/outputs/${o.value!.filename}`,
+        duration_ms: o.value!.duration_ms,
+      };
+    });
 
     // ---------- 记录生成历史 ----------
     db.prepare(

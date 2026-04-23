@@ -3,12 +3,6 @@ import { getCurrentUser } from "@/lib/auth";
 
 const FEATURES = [
   {
-    href: "/analyze",
-    title: "服饰解析",
-    desc: "上传产品图，AI 提取主色调、版型、领口、袖型、面料等结构化属性",
-    emoji: "🔍",
-  },
-  {
     href: "/recolor",
     title: "HEX 精准换色",
     desc: "一张产品图 + 多个颜色预设，批量生成同款不同颜色，保留蕾丝珠片纹理",
@@ -17,7 +11,7 @@ const FEATURES = [
   {
     href: "/batch-photo",
     title: "批量摄影图",
-    desc: "上传产品图 → 自动解析款式 → 选模特/场景/姿势 → 批量出模特摄影图",
+    desc: "上传产品图 → 解析款式 → 选模特/场景/姿势 → 批量出模特摄影图",
     emoji: "👗",
   },
   {
