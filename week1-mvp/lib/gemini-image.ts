@@ -10,7 +10,18 @@ import { GoogleGenAI } from "@google/genai";
  * 鉴权：Vertex AI + ADC（沿用 lib/gemini.ts 的配置）
  */
 
-const MODEL = "gemini-2.5-flash-image";
+/**
+ * Nano Banana 在 Vertex AI 上的默认模型 ID
+ *
+ * 注意：模型名会随 Google 的版本迭代变化。如果报 404（模型不存在），
+ * 可以在 .env 里用 GEMINI_IMAGE_MODEL 环境变量覆盖，无需改代码。
+ *
+ * 常见候选（按稳定性排序）：
+ *   - gemini-2.5-flash-image-preview  （当前 preview）
+ *   - gemini-2.5-flash-image           （GA 版本，视区域而定）
+ *   - gemini-2.0-flash-exp-image       （更老的实验版）
+ */
+const MODEL = process.env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image-preview";
 
 export interface GenImageInput {
   buffer: Buffer;
