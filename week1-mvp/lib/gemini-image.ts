@@ -141,28 +141,87 @@ export async function generateImage(
 
 /**
  * 构造换色 prompt
+ *
  * 关键原则：
  * 1. 明确说"只改颜色"
  * 2. 要求保留面料纹理、装饰、廓形
  * 3. 给出目标颜色的自然语言描述 + HEX 色号辅助
+ * 4. 按可用信息逐层叠加：材质/款式/真实感/用户种子
  */
-export function buildRecolorPrompt(colorName: string, hex: string): string {
-  return `请严格按照以下要求修改图片：
+export interface RecolorPromptOptions {
+  /** 款式解析出的结构化属性（格式化后的一段文本） */
+  garmentAttrs?: string;
+  /** 材质库匹配后拼成的详细段落（formatMaterialDetails 的输出） */
+  materialDetails?: string;
+  /** 真实感预设的约束文本（formatRealismConstraints 的输出） */
+  realismConstraints?: string;
+  /** 用户自定义追加指令 */
+  userSeed?: string;
+}
 
-【目标】把这件服装的主色调改为「${colorName}」（对应色号 ${hex}）。
+export function buildRecolorPrompt(
+  colorName: string,
+  hex: string,
+  options: RecolorPromptOptions = {},
+): string {
+  const parts: string[] = [
+    `你是一位专业的服装电商修图师。请严格按照以下要求修改这件服装的颜色。`,
+    ``,
+    `【目标 / Target】把这件服装的主色调改为「${colorName}」（对应色号 ${hex}）。`,
+  ];
 
-【必须保留】
-- 服装的廓形、版型、长度、剪裁细节
-- 面料质感（如缎面、雪纺、蕾丝、网纱的光泽和透明度）
-- 所有装饰细节（蕾丝、刺绣、珠片、褶皱、蝴蝶结、系带等）完全不动
-- 模特（如有）的姿势、面部、发型、肤色、背景
+  if (options.garmentAttrs) {
+    parts.push("", "【款式信息 / Garment Info】", options.garmentAttrs);
+  }
 
-【只改】服装主体的主色调
-- 改后的颜色要自然地覆盖所有大面积的布料
-- 蕾丝、刺绣等装饰保持与主色协调（比如白色蕾丝不变，同色蕾丝要跟着变）
-- 阴影和高光要符合新颜色的光泽特性
+  if (options.materialDetails) {
+    parts.push("", options.materialDetails);
+  }
 
-【质量要求】输出图要清晰、真实，保持商品摄影级质感，不要添加水印或任何额外元素。
+  parts.push(
+    "",
+    `【必须保留 / Must Preserve】`,
+    `- 服装的廓形、版型、长度、剪裁细节`,
+    `- 面料质感：必须严格按上述材质规则渲染（不同材质的光泽/透光/纹理差异绝不能混淆）`,
+    `- 所有装饰细节（蕾丝、刺绣、珠片、褶皱、蝴蝶结、系带等）完全不动`,
+    `- 模特（如有）的姿势、面部、发型、肤色、背景`,
+    ``,
+    `【只改 / Only Change】服装主体的主色调`,
+    `- 改后的颜色要自然地覆盖所有大面积的布料`,
+    `- 蕾丝、刺绣等装饰保持与主色协调（比如白色蕾丝不变，同色蕾丝要跟着变）`,
+    `- 阴影和高光要符合新颜色在该材质下的光泽特性（缎面有强反光，雪纺无强反光等）`,
+  );
 
-请输出一张修改后的产品图片。`;
+  if (options.realismConstraints) {
+    parts.push("", options.realismConstraints);
+  }
+
+  parts.push(
+    "",
+    `【质量要求】输出图要清晰、真实，保持商品摄影级质感，不要添加水印、logo、文字等任何额外元素。`,
+  );
+
+  if (options.userSeed?.trim()) {
+    parts.push("", `【补充指令】${options.userSeed.trim()}`);
+  }
+
+  parts.push("", `请输出一张修改后的产品图片。`);
+  return parts.join("\n");
+}
+
+/**
+ * 把款式解析的 JSON 对象格式化成 Prompt 里的"款式信息"段
+ */
+export function formatGarmentAttrs(
+  attrs: Record<string, string | string[]> | null | undefined,
+): string {
+  if (!attrs) return "";
+  const lines: string[] = [];
+  for (const [key, value] of Object.entries(attrs)) {
+    if (key.startsWith("_")) continue; // skip meta fields like _model
+    const v = Array.isArray(value) ? value.join("、") : String(value || "").trim();
+    if (!v || v === "未提供") continue;
+    lines.push(`- ${key}：${v}`);
+  }
+  return lines.join("\n");
 }

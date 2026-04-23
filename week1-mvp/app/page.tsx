@@ -60,6 +60,18 @@ const ADMIN_FEATURES = [
     emoji: "📷",
   },
   {
+    href: "/admin/realism",
+    title: "真实感预设库",
+    desc: "控制皮肤/发丝真实度，避免 AI 磨皮塑料感",
+    emoji: "✨",
+  },
+  {
+    href: "/admin/materials",
+    title: "材质库",
+    desc: "面料材质详细描述，自动匹配款式解析结果",
+    emoji: "🧵",
+  },
+  {
     href: "/admin/prompts",
     title: "Prompt 库",
     desc: "管理生成指令模板，支持占位符",

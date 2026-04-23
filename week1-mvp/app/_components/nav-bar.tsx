@@ -20,10 +20,12 @@ const NAV_ITEMS = [
 
 const ADMIN_ITEMS = [
   { href: "/admin/colors", label: "颜色" },
+  { href: "/admin/materials", label: "材质" },
   { href: "/admin/models", label: "模特" },
   { href: "/admin/scenes", label: "场景" },
   { href: "/admin/poses", label: "姿势" },
-  { href: "/admin/photography", label: "摄影参数" },
+  { href: "/admin/photography", label: "摄影" },
+  { href: "/admin/realism", label: "真实感" },
   { href: "/admin/prompts", label: "Prompt" },
   { href: "/admin/ai-models", label: "AI 模型" },
   { href: "/admin/users", label: "用户" },

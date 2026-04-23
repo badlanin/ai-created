@@ -147,6 +147,40 @@ function migrate(db: Database.Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_photography_sort ON photography_params(sort_order);
 
+    -- ==========================================
+    -- M2: 真实感预设库（控制磨皮/AI 感/皮肤毛发真实度）
+    -- ==========================================
+    CREATE TABLE IF NOT EXISTS realism_presets (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      name              TEXT NOT NULL,            -- "自然真实" 等
+      description       TEXT,                      -- UI 简短说明
+      constraints_text  TEXT NOT NULL,             -- 完整约束文本，注入 prompt 的 {{realism_constraints}}
+      is_default        INTEGER NOT NULL DEFAULT 0,
+      sort_order        INTEGER NOT NULL DEFAULT 0,
+      created_at        INTEGER NOT NULL DEFAULT (unixepoch()),
+      created_by        INTEGER REFERENCES users(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_realism_sort ON realism_presets(sort_order);
+
+    -- ==========================================
+    -- M2: 面料材质库（服装材质细节 + 自动匹配）
+    -- ==========================================
+    CREATE TABLE IF NOT EXISTS materials (
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      name               TEXT NOT NULL,            -- "雪纺"
+      english_name       TEXT,                      -- "chiffon"
+      aliases            TEXT,                      -- 逗号分隔，自动匹配用（"雪纺,纱,chiffon,georgette"）
+      description        TEXT,                      -- 给管理员看的简短说明
+      visual_traits      TEXT,                      -- 视觉特征（注入 prompt）
+      light_behavior     TEXT,                      -- 光线特性
+      texture_rules      TEXT,                      -- 纹理/编织规则
+      dont_confuse_with  TEXT,                      -- 容易画错的反向约束
+      sort_order         INTEGER NOT NULL DEFAULT 0,
+      created_at         INTEGER NOT NULL DEFAULT (unixepoch()),
+      created_by         INTEGER REFERENCES users(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_materials_sort ON materials(sort_order);
+
     -- AI 模型（可配置模型库）
     -- category='vision'    : 视觉理解（/analyze 解析图片）
     -- category='image_gen' : 图像生成（/recolor 换色、/on-model 换模特）
@@ -170,6 +204,8 @@ function migrate(db: Database.Database) {
   seedPoses(db);
   seedPhotographyParams(db);
   seedPromptTemplates(db);
+  seedRealismPresets(db);
+  seedMaterials(db);
 }
 
 /**
@@ -615,6 +651,334 @@ function seedPromptTemplates(db: Database.Database) {
   );
   const tx = db.transaction(() => {
     for (const t of templates) stmt.run(t);
+  });
+  tx();
+}
+
+/**
+ * 真实感预设库种子
+ * 目的：在生成图片时明确告诉模型"要像真实人像摄影，不要 AI 磨皮感"
+ */
+function seedRealismPresets(db: Database.Database) {
+  const exists = db
+    .prepare(`SELECT COUNT(*) AS c FROM realism_presets`)
+    .get() as { c: number };
+  if (exists.c > 0) return;
+
+  const presets: Array<{
+    name: string;
+    description: string;
+    constraints_text: string;
+    is_default: 0 | 1;
+    sort_order: number;
+  }> = [
+    {
+      name: "自然真实（标准）",
+      description: "日常商品图标配 · 柔和的真实感",
+      is_default: 1,
+      sort_order: 10,
+      constraints_text: `【真实感约束 / Realism】
+要求 (Required):
+- 皮肤呈现真实摄影质感：保留可见的毛孔、细小肌理、自然的光影过渡 (visible pores, natural texture)
+- 肤色有自然变化：面颊微微泛红、鼻尖略深、颈部和下颌有自然阴影
+- 发丝可见层次：根根分明的发丝、自然飞发、分缕清晰
+- 保留少量自然瑕疵：浅痘印、细纹、雀斑等真实人类皮肤特征（避免完美无瑕）
+- 皮肤不同部位有不同的油光/干燥/柔软度变化，像真实人像摄影
+
+禁止 (Forbidden):
+- 磨皮、美颜滤镜效果 (no beauty filter, no skin smoothing)
+- 塑料感、橡胶质感、假人感 (no plastic / rubber / mannequin feel)
+- AI 绘画感、数字插画感、3D 渲染感 (no AI art / 3D render / illustration style)
+- 过度柔焦、皮肤细节丢失
+- 完美无瑕光滑如瓷的皮肤、镜面反光的皮肤
+- 过度美化后导致的"不像真人"效果
+
+拍摄哲学 (Aesthetic):
+- 目标是"真实人像摄影"（editorial / documentary portrait），不是美颜 App 或 AI 生成`,
+    },
+    {
+      name: "商业修图（轻度美化）",
+      description: "电商精修标准 · 略美化但保留真实",
+      is_default: 0,
+      sort_order: 20,
+      constraints_text: `【真实感约束 / Realism - Commercial Retouch】
+要求:
+- 皮肤整体平滑但保留毛孔和自然纹理（轻微修饰但非磨皮）
+- 肤色均匀化，但保留自然的红润和阴影层次
+- 发丝清晰，整体整洁但保留自然动态
+- 光影柔和，整体呈现"电商精修"标准
+
+禁止:
+- 完全磨皮导致塑料感
+- 过度美白导致不真实
+- AI 感或数字插画感
+- 发丝结块或不自然
+
+拍摄哲学:
+- 电商商品图的标准修图——整洁、干净，但依然是真实摄影`,
+    },
+    {
+      name: "电影级质感（强调自然）",
+      description: "大片感 · 真实到极致 · 胶片颗粒",
+      is_default: 0,
+      sort_order: 30,
+      constraints_text: `【真实感约束 / Realism - Cinematic】
+要求:
+- 极高的真实度：毛孔、细纹、甚至皮肤上的小绒毛都清晰可见
+- 保留所有自然特征：痘印、痣、肤色不均、疲惫感等
+- 轻微胶片颗粒感 (film grain, ISO 400-800 feel)
+- 头发层次丰富，光影在发丝间自然过渡
+- 皮肤质感呈现电影摄影（ARRI Alexa / Kodak film）的质感
+
+禁止:
+- 任何形式的磨皮或美化
+- 过度锐化或数字感
+- AI 插画或 3D 渲染感
+
+拍摄哲学:
+- 电影级人像（cinematic portrait），让画面"重得起来"，像真人在镜头前生活`,
+    },
+    {
+      name: "时尚大片（略修饰）",
+      description: "杂志 / lookbook 风 · 略美化但时髦",
+      is_default: 0,
+      sort_order: 40,
+      constraints_text: `【真实感约束 / Realism - Fashion Editorial】
+要求:
+- 皮肤呈现时尚杂志的精修质感：毛孔若隐若现但不粗糙
+- 肤色修饰偏冷色调或暖色调（根据场景），但依然真实
+- 发丝整洁有型，可呈现刻意的造型感
+- 光影戏剧化但自然
+- 整体呈现 Vogue / Harper's Bazaar 风格的精致人像
+
+禁止:
+- 过度磨皮到失去真实感
+- AI 生成的塑料感
+- 看起来像手机美颜 App
+
+拍摄哲学:
+- 高级时尚摄影（high fashion editorial）——精致但不失真实`,
+    },
+    {
+      name: "硬核纪实（零修饰）",
+      description: "完全不修 · 纪实摄影级 · 极端真实",
+      is_default: 0,
+      sort_order: 50,
+      constraints_text: `【真实感约束 / Realism - Documentary】
+要求:
+- 零修饰：完全保留原生皮肤状态，所有瑕疵、纹理、光斑
+- 毛孔、毫毛、皮肤颗粒都清晰可见
+- 保留所有自然皱褶、表情纹
+- 头发完全自然状态，允许凌乱
+- 光线真实不做美化
+
+禁止:
+- 任何修饰、美化、平滑化
+- 任何 AI 痕迹
+
+拍摄哲学:
+- 纪实摄影（documentary photography）——真实至上，摄影师不打扰模特`,
+    },
+  ];
+
+  const stmt = db.prepare(
+    `INSERT INTO realism_presets (name, description, constraints_text, is_default, sort_order)
+     VALUES (@name, @description, @constraints_text, @is_default, @sort_order)`,
+  );
+  const tx = db.transaction(() => {
+    for (const p of presets) stmt.run(p);
+  });
+  tx();
+}
+
+/**
+ * 面料材质库种子
+ * 涵盖伴娘服/礼服/婚纱常用的核心材质
+ */
+function seedMaterials(db: Database.Database) {
+  const exists = db.prepare(`SELECT COUNT(*) AS c FROM materials`).get() as {
+    c: number;
+  };
+  if (exists.c > 0) return;
+
+  const materials: Array<{
+    name: string;
+    english_name: string;
+    aliases: string;
+    description: string;
+    visual_traits: string;
+    light_behavior: string;
+    texture_rules: string;
+    dont_confuse_with: string;
+    sort_order: number;
+  }> = [
+    {
+      name: "雪纺",
+      english_name: "chiffon",
+      aliases: "雪纺,chiffon,纱,轻纱,乔其纱",
+      description: "轻薄飘逸半透明面料，常用于礼服和伴娘服",
+      visual_traits:
+        "轻薄透明、质地柔软飘逸、下垂感明显、多层叠加呈现半透视效果、走动/风吹时有自然流动感、表面细腻无粗糙颗粒、微微哑光",
+      light_behavior:
+        "半透明：光线容易穿透形成柔和光晕；褶皱处有微妙阴影渐变，不产生强烈反光；逆光时呈现朦胧发光感（halo）",
+      texture_rules:
+        "编织密度高但纱线细，近观肌理细密；不能有塑料感或橡胶质感；多层叠加时每层都要有独立的质感",
+      dont_confuse_with:
+        "不要画成缎面（无强反光）；不要画得硬挺或厚重（应柔软下垂）；不要出现粗糙纹理或织物颗粒",
+      sort_order: 10,
+    },
+    {
+      name: "缎面",
+      english_name: "satin",
+      aliases: "缎面,缎,satin,丝缎",
+      description: "光泽丝滑面料，反光强，高贵感",
+      visual_traits:
+        "表面光滑如丝、反光强烈、丝滑有光泽、厚重感适中、高光和阴影对比明显、呈现液态流动般的质感",
+      light_behavior:
+        "强镜面反光（specular highlight）：高光区域明亮锐利，阴影深邃；对光源方向和角度非常敏感；不同角度看呈现不同的色彩深浅",
+      texture_rules: "表面必须极度光滑，无可见编织纹理；褶皱呈现圆润的光影过渡",
+      dont_confuse_with:
+        "不要画成哑光面料（必须有强反光）；不要出现纱质的半透明感；不要看起来像塑料片",
+      sort_order: 20,
+    },
+    {
+      name: "哑光缎面",
+      english_name: "matte satin",
+      aliases: "哑光缎面,哑缎,matte satin,duchess satin",
+      description: "缎面的哑光版本，更高级更含蓄",
+      visual_traits:
+        "表面光滑但反射柔和、丝绸质地、低调的光泽感、不像普通缎面那样闪亮、更沉稳的视觉效果",
+      light_behavior:
+        "漫反射为主：光线柔和散开，无强烈镜面反光；整体呈现柔和的低光泽（semi-gloss）；褶皱阴影柔和过渡",
+      texture_rules: "表面光滑但不反光如镜，像哑光丝绸",
+      dont_confuse_with:
+        "不要画成高反光的普通缎面；不要完全失去光泽变成纯哑光布料",
+      sort_order: 30,
+    },
+    {
+      name: "蕾丝",
+      english_name: "lace",
+      aliases: "蕾丝,lace,花边,刺绣",
+      description: "镂空花纹装饰面料，常作为装饰或整体",
+      visual_traits:
+        "镂空花纹图案、立体刺绣感、图案层次丰富、花朵或几何纹样、花纹间有透光",
+      light_behavior:
+        "透光部位清晰可见底层（皮肤或衬里）；实体花纹处有阴影与立体感；花纹本身可能有刺绣的立体凸起",
+      texture_rules:
+        "花纹复杂但不杂乱，针脚细腻可见；立体感强（3D embroidery 效果）；图案要连贯不碎片化",
+      dont_confuse_with:
+        "不要画成平面印花（必须有镂空和立体感）；不要花纹糊在一起；不要失去透光感",
+      sort_order: 40,
+    },
+    {
+      name: "弹力绉纱",
+      english_name: "stretch crepe",
+      aliases: "弹力绉纱,绉纱,crepe,弹力面料",
+      description: "表面有细密褶皱的弹性面料，贴身塑形",
+      visual_traits:
+        "表面有细密的褶皱肌理（crinkled surface）、贴身塑形展现身体曲线、弹性垂顺、微微哑光",
+      light_behavior: "漫反射为主；细密褶皱产生规律性的微小阴影图案，形成独特肌理",
+      texture_rules:
+        "可见细密的褶皱颗粒感（pebble texture），但不生硬；贴合身体时产生流畅的光影过渡",
+      dont_confuse_with: "不要画成光滑的缎面（必须有细小褶皱质感）；不要画成硬挺的梭织",
+      sort_order: 50,
+    },
+    {
+      name: "纱网",
+      english_name: "tulle",
+      aliases: "纱网,tulle,网纱,头纱",
+      description: "网状轻薄面料，常用于蓬蓬裙和头纱",
+      visual_traits:
+        "网状结构肉眼可见、极度轻薄、蓬松感、空气感强、多层堆叠时呈现云朵般的视觉效果",
+      light_behavior: "光线穿透形成朦胧感；边缘柔和模糊；多层叠加时透光度递减",
+      texture_rules: "网眼规整清晰，但整体观感柔软蓬松",
+      dont_confuse_with: "不要画成实体布料（必须透气透光）；不要网眼粗大像渔网",
+      sort_order: 60,
+    },
+    {
+      name: "欧根纱",
+      english_name: "organza",
+      aliases: "欧根纱,organza,绢网纱",
+      description: "挺括半透明面料，硬挺有型",
+      visual_traits:
+        "半透明、挺括有型（不像雪纺那么软）、能保持立体造型、表面光滑微有光泽、硬朗的轮廓感",
+      light_behavior: "半透明；表面有轻微的光泽；褶皱呈现锐利的边缘",
+      texture_rules: "硬挺，可以做大蓬裙型；表面平整",
+      dont_confuse_with: "不要画成柔软下垂的雪纺（必须硬挺）；不要画成塑料片",
+      sort_order: 70,
+    },
+    {
+      name: "丝绒",
+      english_name: "velvet",
+      aliases: "丝绒,velvet,天鹅绒",
+      description: "绒面面料，奢华厚重",
+      visual_traits:
+        "表面有细密绒毛、厚重质感、光线入射角度不同呈现不同的颜色深浅（anisotropic）、奢华感",
+      light_behavior:
+        "独特的各向异性反射：顺毛方向偏亮，逆毛方向偏暗；表面像吸光又像反光，呈现深邃感",
+      texture_rules: "可见细绒毛的方向性；褶皱处颜色加深",
+      dont_confuse_with: "不要画成光滑的缎面；不要失去绒毛感变成平面布料",
+      sort_order: 80,
+    },
+    {
+      name: "塔夫绸",
+      english_name: "taffeta",
+      aliases: "塔夫绸,taffeta",
+      description: "硬挺有声感的面料，复古质感",
+      visual_traits:
+        "硬挺有身骨、表面有珠光般的光泽、轻微的经纬交错纹理、走动时有轻微的沙沙声感（画面应体现硬度）、复古奢华感",
+      light_behavior: "有光泽但不像缎面那么液态；珠光效果（shimmery）",
+      texture_rules: "可见的经纬纹理细节；硬挺不柔顺",
+      dont_confuse_with: "不要画成柔软的缎面；不要失去硬度",
+      sort_order: 90,
+    },
+    {
+      name: "梭织棉",
+      english_name: "woven cotton",
+      aliases: "梭织,梭织棉,woven,cotton",
+      description: "梭织结构的棉质面料",
+      visual_traits:
+        "表面平整、可见规整的经纬线编织纹理、硬挺有结构感、哑光",
+      light_behavior: "漫反射为主，无强反光；自然的光影过渡",
+      texture_rules: "经纬线纹理规整清晰，表面平整",
+      dont_confuse_with: "不要画成针织的弹性线圈结构；不要画得有光泽感",
+      sort_order: 100,
+    },
+    {
+      name: "针织",
+      english_name: "knit",
+      aliases: "针织,knit,knitted,jersey",
+      description: "线圈编织结构的面料，有弹性",
+      visual_traits:
+        "表面可见线圈结构（stitches）、凹凸立体感、有自然弹性、垂顺贴身、温暖感",
+      light_behavior: "漫反射；线圈结构产生细密的规律性光影图案",
+      texture_rules: "可见线圈的凹凸感；表面有肌理颗粒感",
+      dont_confuse_with: "不要画成平滑的梭织（必须有立体线圈）；不要画得像粗糙毛衣",
+      sort_order: 110,
+    },
+    {
+      name: "亮片",
+      english_name: "sequin",
+      aliases: "亮片,sequin,sequined,glitter",
+      description: "缀满亮片的装饰面料",
+      visual_traits:
+        "缀满反光亮片（细碎或整片覆盖）、闪烁感强、每个亮片独立反光、奢华晚礼服感",
+      light_behavior:
+        "每个亮片独立镜面反光；角度不同呈现闪烁变化；在光源下形成大量高光点",
+      texture_rules: "亮片大小应符合实际（不要大到不合比例）；排列可规整或随机",
+      dont_confuse_with:
+        "不要画成连续的光泽面料（必须是离散的亮片）；不要过度夸张失真",
+      sort_order: 120,
+    },
+  ];
+
+  const stmt = db.prepare(
+    `INSERT INTO materials
+       (name, english_name, aliases, description, visual_traits, light_behavior, texture_rules, dont_confuse_with, sort_order)
+     VALUES (@name, @english_name, @aliases, @description, @visual_traits, @light_behavior, @texture_rules, @dont_confuse_with, @sort_order)`,
+  );
+  const tx = db.transaction(() => {
+    for (const m of materials) stmt.run(m);
   });
   tx();
 }

@@ -5,10 +5,17 @@ import { getDb, DATA_DIR_PATH } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import {
   buildRecolorPrompt,
+  formatGarmentAttrs,
   generateImage,
   type GenImageInput,
 } from "@/lib/gemini-image";
 import { resolveModelId } from "@/lib/ai-models";
+import {
+  formatMaterialDetails,
+  formatRealismConstraints,
+  getMaterialsByIds,
+  getRealismPreset,
+} from "@/lib/materials";
 
 export const runtime = "nodejs";
 // 换色每张：Flash Image 5-15 秒，Pro Image 带 Thinking 可达 3-5 分钟
@@ -56,6 +63,52 @@ export async function POST(req: NextRequest) {
       "image_gen",
       typeof modelRaw === "string" ? modelRaw : undefined,
     );
+
+    // 新：材质 ids（用户在前端勾的 + 自动匹配后保留的）
+    const materialIdsRaw = formData.get("material_ids");
+    let materialIds: number[] = [];
+    if (typeof materialIdsRaw === "string" && materialIdsRaw.trim()) {
+      try {
+        const parsed = JSON.parse(materialIdsRaw);
+        if (Array.isArray(parsed)) {
+          materialIds = parsed.filter((v) => Number.isFinite(v));
+        }
+      } catch {
+        // ignore bad JSON
+      }
+    }
+
+    // 新：真实感预设 id
+    const realismIdRaw = formData.get("realism_id");
+    const realismId =
+      typeof realismIdRaw === "string" && realismIdRaw.trim()
+        ? Number(realismIdRaw)
+        : null;
+
+    // 新：款式解析结果 JSON（前端解析后传过来，避免服务端再解析一次）
+    const garmentAttrsRaw = formData.get("garment_attrs");
+    let garmentAttrs: Record<string, string | string[]> | null = null;
+    if (typeof garmentAttrsRaw === "string" && garmentAttrsRaw.trim()) {
+      try {
+        garmentAttrs = JSON.parse(garmentAttrsRaw);
+      } catch {
+        // ignore bad JSON
+      }
+    }
+
+    // 新：用户追加指令
+    const userSeed =
+      typeof formData.get("user_seed") === "string"
+        ? String(formData.get("user_seed")).trim()
+        : "";
+
+    // 读材质 + 真实感
+    const materials = getMaterialsByIds(materialIds);
+    const realismPreset = getRealismPreset(realismId);
+
+    const materialDetailsText = formatMaterialDetails(materials);
+    const realismConstraintsText = formatRealismConstraints(realismPreset);
+    const garmentAttrsText = formatGarmentAttrs(garmentAttrs);
 
     // 解析要用的颜色列表
     let colorsToApply: ColorRow[] = [];
@@ -117,7 +170,12 @@ export async function POST(req: NextRequest) {
     const results: RecolorResult[] = [];
     for (const c of colorsToApply) {
       try {
-        const prompt = buildRecolorPrompt(c.name, c.hex);
+        const prompt = buildRecolorPrompt(c.name, c.hex, {
+          garmentAttrs: garmentAttrsText || undefined,
+          materialDetails: materialDetailsText || undefined,
+          realismConstraints: realismConstraintsText || undefined,
+          userSeed: userSeed || undefined,
+        });
         const gen = await generateImage([inputImage], prompt, model);
 
         const ext = gen.mimeType.includes("png") ? "png" : "jpg";
@@ -160,6 +218,12 @@ export async function POST(req: NextRequest) {
           name: c.name,
           hex: c.hex,
         })),
+        material_ids: materials.map((m) => m.id),
+        material_names: materials.map((m) => m.name),
+        realism_id: realismPreset?.id ?? null,
+        realism_name: realismPreset?.name ?? null,
+        has_garment_attrs: Boolean(garmentAttrsText),
+        user_seed: userSeed || null,
       }),
       Date.now() - startedAt,
       successCount > 0 ? 1 : 0,
