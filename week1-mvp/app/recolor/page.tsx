@@ -75,6 +75,29 @@ const ASPECT_RATIOS = [
   { value: "16:9", label: "16:9 横" },
 ] as const;
 
+type QualityLevel = "hd" | "2k" | "4k";
+const QUALITY_LEVELS: Array<{
+  value: QualityLevel;
+  label: string;
+  desc: string;
+}> = [
+  {
+    value: "4k",
+    label: "4K 超清（推荐）",
+    desc: "模型按 4K 标准重绘整张图，糊图也能出清晰版",
+  },
+  {
+    value: "2k",
+    label: "2K 高清",
+    desc: "按 2K 标准重绘，速度略快",
+  },
+  {
+    value: "hd",
+    label: "HD 清晰",
+    desc: "保守级别，轻度锐化",
+  },
+];
+
 export default function RecolorPage() {
   // Step 1: Images (多图)
   const [files, setFiles] = useState<File[]>([]);
@@ -86,6 +109,8 @@ export default function RecolorPage() {
 
   // 输出比例
   const [aspectRatio, setAspectRatio] = useState<string>("3:4");
+  // 输出清晰度档位
+  const [qualityLevel, setQualityLevel] = useState<QualityLevel>("4k");
 
   // Step 3: Materials
   const [allMaterials, setAllMaterials] = useState<Material[]>([]);
@@ -274,6 +299,7 @@ export default function RecolorPage() {
       }
       formData.append("model", model);
       if (aspectRatio) formData.append("aspect_ratio", aspectRatio);
+      formData.append("quality_level", qualityLevel);
       if (selectedMaterialIds.length > 0) {
         formData.append("material_ids", JSON.stringify(selectedMaterialIds));
       }
@@ -651,7 +677,7 @@ export default function RecolorPage() {
           <label className="block text-sm font-medium text-gray-700 mb-2">
             7. 输出比例
             <span className="ml-2 text-xs text-gray-500 font-normal">
-              （伴娘服推荐 3:4 竖。原图不会被裁剪，模型按此比例输出新图）
+              （伴娘服推荐 3:4 竖）
             </span>
           </label>
           <div className="flex flex-wrap gap-2">
@@ -673,15 +699,44 @@ export default function RecolorPage() {
               );
             })}
           </div>
-          <p className="mt-2 text-xs text-gray-500">
-            注：Nano Banana 原生输出约 1024-2048 分辨率（非真 4K），需要 4K 级可再接 upscale 工具处理
-          </p>
         </div>
 
-        {/* Step 8: 自定义指令（可选） */}
+        {/* Step 8: 输出清晰度 */}
         <div className="mb-6">
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            8. 额外指令（可选）
+            8. 输出清晰度
+            <span className="ml-2 text-xs text-gray-500 font-normal">
+              （告诉模型按这个标准重绘整张图；糊图 / 截图也能变清晰）
+            </span>
+          </label>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+            {QUALITY_LEVELS.map((q) => {
+              const active = qualityLevel === q.value;
+              return (
+                <button
+                  key={q.value}
+                  type="button"
+                  onClick={() => setQualityLevel(q.value)}
+                  className={`text-left p-3 rounded-md border transition ${
+                    active
+                      ? "border-blue-500 bg-blue-50 ring-1 ring-blue-500"
+                      : "border-gray-300 hover:border-gray-400"
+                  }`}
+                >
+                  <div className="text-sm font-medium text-gray-900">
+                    {q.label}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">{q.desc}</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Step 9: 自定义指令（可选） */}
+        <div className="mb-6">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            9. 额外指令（可选）
           </label>
           <textarea
             value={userSeed}

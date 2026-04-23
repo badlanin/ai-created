@@ -168,6 +168,23 @@ export interface RecolorPromptOptions {
   realismConstraints?: string;
   /** 用户自定义追加指令 */
   userSeed?: string;
+  /** 输出清晰度档位：'hd' | '2k' | '4k'。会转成强约束文字进 prompt */
+  qualityLevel?: "hd" | "2k" | "4k";
+}
+
+/**
+ * 输出质量指令 · 关键：告诉模型**重绘而不是改图**，按目标分辨率渲染
+ * 这是让"糊图变清晰"的核心——模型不会拘泥于原图的像素，而是按指令级别重新生成
+ */
+function buildQualityHint(level: "hd" | "2k" | "4k" = "4k"): string {
+  const levelLabel = level === "4k" ? "4K 超清" : level === "2k" ? "2K 高清" : "HD 清晰";
+  return `【输出质量 / Output Quality】${levelLabel}
+- 必须输出 ${level.toUpperCase()} 级别的清晰锐利图像（${level.toUpperCase()} ultra-high resolution, tack-sharp）
+- **即使输入图片模糊、有噪点、是截图或低像素，你必须 REDRAW / 重新渲染整张图，让它变得锐利清晰**
+- 所有细节必须清晰可辨：面料纹理 / 蕾丝针脚 / 珠片反光 / 发丝 / 皮肤毛孔
+- 不保留输入图的任何瑕疵：模糊、压缩块、噪点、色带都必须被重新生成的清晰版本覆盖
+- 参考标准：专业电商摄影或时尚杂志的精修直出，印刷级清晰度 (magazine-quality, print-ready)
+- 关键词强化：sharp focus, crystal clear, ultra-detailed, high-resolution, photorealistic, 8K textures`;
 }
 
 export function buildRecolorPrompt(
@@ -207,9 +224,12 @@ export function buildRecolorPrompt(
     parts.push("", options.realismConstraints);
   }
 
+  // 清晰度指令（关键）——告诉模型按 2K/4K 重绘，不要复刻输入图的模糊
+  parts.push("", buildQualityHint(options.qualityLevel ?? "4k"));
+
   parts.push(
     "",
-    `【质量要求】输出图要清晰、真实，保持商品摄影级质感，不要添加水印、logo、文字等任何额外元素。`,
+    `【其他要求】保持商品摄影级质感，不要添加水印、logo、文字等任何额外元素。`,
   );
 
   if (options.userSeed?.trim()) {

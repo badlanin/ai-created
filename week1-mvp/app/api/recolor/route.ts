@@ -140,6 +140,13 @@ export async function POST(req: NextRequest) {
         ? aspectRatioRaw
         : undefined;
 
+    // 新：输出清晰度档位（给模型"按 4K 重绘"的指令，不是真 4K 输出）
+    const qualityLevelRaw = formData.get("quality_level");
+    const qualityLevel: "hd" | "2k" | "4k" =
+      qualityLevelRaw === "hd" || qualityLevelRaw === "2k"
+        ? qualityLevelRaw
+        : "4k";
+
     // 读材质 + 真实感
     const materials = getMaterialsByIds(materialIds);
     const realismPreset = getRealismPreset(realismId);
@@ -231,6 +238,7 @@ export async function POST(req: NextRequest) {
               materialDetails: materialDetailsText || undefined,
               realismConstraints: realismConstraintsText || undefined,
               userSeed: userSeed || undefined,
+              qualityLevel,
             }) + multiImageHint;
 
           const gen = await generateImage(reordered, prompt, model, {
@@ -278,6 +286,7 @@ export async function POST(req: NextRequest) {
       JSON.stringify({
         model,
         aspect_ratio: aspectRatio || null,
+        quality_level: qualityLevel,
         image_count: inputImages.length,
         image_labels: imageLabels,
         colors: colorsToApply.map((c) => ({
