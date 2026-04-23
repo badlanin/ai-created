@@ -11,8 +11,9 @@ import {
 import { resolveModelId } from "@/lib/ai-models";
 
 export const runtime = "nodejs";
-// 换色每张约 5-15 秒，批量时要给足时间
-export const maxDuration = 300;
+// 换色每张：Flash Image 5-15 秒，Pro Image 带 Thinking 可达 3-5 分钟
+// 批量 + Pro 时要给足时间。600s 覆盖最坏情况
+export const maxDuration = 600;
 
 type ColorRow = { id: number; name: string; hex: string };
 

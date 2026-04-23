@@ -8,12 +8,21 @@ import { buildGenaiClient } from "./genai-client";
  * - 输入若干张参考图 + 文本提示，生成新图
  * - 适合：换色、风格迁移、模特穿着合成
  *
- * 鉴权：优先 API Key（GOOGLE_CLOUD_API_KEY），其次 ADC
- *   - Nano Banana 预览版通常只对 API Key 放开，Service Account 会 404
- *   - 从 GCP 控制台创建 API Key 填进 .env 的 GOOGLE_CLOUD_API_KEY 即可
+ * 鉴权：ADC（Application Default Credentials）
+ *   - 优先用 GOOGLE_APPLICATION_CREDENTIALS 指向的凭证文件
+ *   - 否则走 VM 绑定的 Service Account
  *
  * 可用模型由 ai_models 表动态维护（/admin/ai-models 管理）。
+ *
+ * 每次调用硬超时保护，避免请求挂起不返回：
+ * - Flash Image 系列通常 5-15 秒出图
+ * - Pro Image 系列有思考阶段（Thinking），可能 30-180 秒
+ * - 我们给它 580s（9.6 分钟）上限，配合 thinkingBudget 限制思考长度
+ * - 对应 route 里 maxDuration 要设 600s（留 20s 给 Next.js 返回错误）
  */
+
+/** 单次 Vertex AI 调用超时（毫秒）。配套 maxDuration = 600s */
+const CALL_TIMEOUT_MS = 580_000;
 
 export interface GenImageInput {
   buffer: Buffer;
@@ -54,15 +63,40 @@ export async function generateImage(
     })),
   ];
 
-  const response = await ai.models.generateContent({
+  // Pro Image 是思考型模型（Thinking），要给它一个合理的思考预算，
+  // 否则可能无限 thinking 导致卡死。Flash Image 不支持 thinking，
+  // 多传这个字段不会报错，@google/genai 会自动忽略不支持的参数。
+  const isProImage = MODEL.includes("pro-image");
+  const configBase: Record<string, unknown> = {
+    // Nano Banana 既可以返回图片也可以返回文本，都要
+    responseModalities: ["IMAGE", "TEXT"],
+    temperature: 0.4,
+  };
+  if (isProImage) {
+    // 限定 Pro Image 的思考预算：2048 tokens 足够一般换色/简单合成场景
+    // （不设置的话默认可能是 -1 动态无上限，容易拖到几分钟）
+    configBase.thinkingConfig = { thinkingBudget: 2048 };
+  }
+
+  // 加 timeout wrapper：超过 CALL_TIMEOUT_MS 就抛 TimeoutError，
+  // 避免被 Next.js maxDuration 强杀（用户连不到错误信息）
+  const callPromise = ai.models.generateContent({
     model: MODEL,
     contents: [{ role: "user", parts }],
-    config: {
-      // Nano Banana 既可以返回图片也可以返回文本，都要
-      responseModalities: ["IMAGE", "TEXT"],
-      temperature: 0.4,
-    },
+    config: configBase,
   });
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => {
+      reject(
+        new Error(
+          `调用 ${MODEL} 超过 ${CALL_TIMEOUT_MS / 1000} 秒无响应，可能模型暂不可用，建议换另一个模型`,
+        ),
+      );
+    }, CALL_TIMEOUT_MS);
+  });
+
+  const response = await Promise.race([callPromise, timeoutPromise]);
 
   // 解析 response.candidates[0].content.parts，找出 inlineData（图片）
   const candidates = response.candidates;
