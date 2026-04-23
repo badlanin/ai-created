@@ -1,5 +1,5 @@
-import { GoogleGenAI } from "@google/genai";
 import { resolveModelId } from "./ai-models";
+import { buildGenaiClient } from "./genai-client";
 
 /**
  * Nano Banana (Gemini * Image) 调用封装
@@ -8,13 +8,11 @@ import { resolveModelId } from "./ai-models";
  * - 输入若干张参考图 + 文本提示，生成新图
  * - 适合：换色、风格迁移、模特穿着合成
  *
- * 鉴权：Vertex AI + ADC（沿用 lib/gemini.ts 的配置）
+ * 鉴权：优先 API Key（GOOGLE_CLOUD_API_KEY），其次 ADC
+ *   - Nano Banana 预览版通常只对 API Key 放开，Service Account 会 404
+ *   - 从 GCP 控制台创建 API Key 填进 .env 的 GOOGLE_CLOUD_API_KEY 即可
  *
  * 可用模型由 ai_models 表动态维护（/admin/ai-models 管理）。
- * 默认走该表 image_gen 分类下 is_default=1 的那条。
- * 也可以：
- *   1) 前端调用时传 modelOverride（来自页面上用户选的那张卡片）
- *   2) 管理员在后台把默认模型切到另一个
  */
 
 export interface GenImageInput {
@@ -42,20 +40,7 @@ export async function generateImage(
   modelOverride?: string,
 ): Promise<GenImageResult> {
   const MODEL = resolveModelId("image_gen", modelOverride);
-  const project = process.env.GCP_PROJECT_ID;
-  const location = process.env.GCP_LOCATION || "asia-southeast1";
-
-  if (!project) {
-    throw new Error(
-      "缺少环境变量 GCP_PROJECT_ID，请在 .env 文件中配置",
-    );
-  }
-
-  const ai = new GoogleGenAI({
-    vertexai: true,
-    project,
-    location,
-  });
+  const ai = buildGenaiClient();
 
   const parts: Array<
     { text: string } | { inlineData: { mimeType: string; data: string } }

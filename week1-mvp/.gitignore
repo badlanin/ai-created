@@ -15,6 +15,7 @@ build/
 
 # data & logs
 data/
+gcp-credentials/
 *.log
 logs/
 

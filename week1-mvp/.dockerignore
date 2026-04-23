@@ -4,6 +4,7 @@ node_modules
 .env
 .env.local
 data
+gcp-credentials
 *.log
 .DS_Store
 README.md

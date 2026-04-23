@@ -14,9 +14,15 @@ services:
       INITIAL_ADMIN_USERNAME: ${INITIAL_ADMIN_USERNAME}
       INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD}
       DATA_DIR: /app/data
+      # ADC 凭证文件路径。留空 = 用 VM 绑定的 Service Account
+      # 非空 = 用挂载进来的凭证文件（通常是 gcloud auth application-default login 生成的用户账号 ADC）
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
     volumes:
       # SQLite 数据库 + 生成图 + 上传素材都持久化在这里
       - ./data:/app/data
+      # 用户账号 ADC 凭证目录（可能为空）
+      # 需要时：mkdir -p ./gcp-credentials 并把 application_default_credentials.json 放进去
+      - ./gcp-credentials:/app/gcp-credentials:ro
     networks:
       - web
     healthcheck:

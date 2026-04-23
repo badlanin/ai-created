@@ -1,5 +1,5 @@
-import { GoogleGenAI } from "@google/genai";
 import { resolveModelId } from "./ai-models";
+import { buildGenaiClient } from "./genai-client";
 
 /**
  * 服装属性结构化 schema
@@ -62,10 +62,8 @@ const SYSTEM_PROMPT = `你是一位专业的服装视觉分析师，专注于伴
 /**
  * 调用 Vertex AI Gemini 做视觉解析，返回结构化 JSON
  *
- * 鉴权方式：Application Default Credentials (ADC)
- * - 在 GCP VM 上运行：自动使用 VM 绑定的 Service Account（通过 metadata 服务器）
- * - 本地开发：先执行 `gcloud auth application-default login`
- * - 需要 VM 的 Service Account 拥有 "Vertex AI User" 角色
+ * 鉴权优先 API Key（GOOGLE_CLOUD_API_KEY），否则回落 ADC。
+ * 详见 lib/genai-client.ts。
  *
  * @param images  图片列表
  * @param modelOverride  调用方指定模型 ID（会经白名单校验）。不传则走 DB 默认
@@ -75,20 +73,7 @@ export async function analyzeGarment(
   modelOverride?: string,
 ) {
   const MODEL = resolveModelId("vision", modelOverride);
-  const project = process.env.GCP_PROJECT_ID;
-  const location = process.env.GCP_LOCATION || "asia-southeast1";
-
-  if (!project) {
-    throw new Error(
-      "缺少环境变量 GCP_PROJECT_ID，请在 .env 文件中配置为你的 Google Cloud 项目 ID",
-    );
-  }
-
-  const ai = new GoogleGenAI({
-    vertexai: true,
-    project,
-    location,
-  });
+  const ai = buildGenaiClient();
 
   const parts: Array<
     { text: string } | { inlineData: { mimeType: string; data: string } }
