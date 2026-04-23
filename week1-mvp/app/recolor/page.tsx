@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { IMAGE_MODELS, DEFAULT_IMAGE_MODEL } from "@/lib/image-models";
 
 type Color = { id: number; name: string; hex: string };
 
@@ -52,6 +53,9 @@ export default function RecolorPage() {
   const [customName, setCustomName] = useState("");
   const [customHex, setCustomHex] = useState("#722F37");
 
+  // 模型选择
+  const [model, setModel] = useState<string>(DEFAULT_IMAGE_MODEL);
+
   useEffect(() => {
     fetch("/api/colors")
       .then((r) => (r.ok ? r.json() : []))
@@ -98,6 +102,7 @@ export default function RecolorPage() {
           JSON.stringify([{ name: customName.trim(), hex: customHex }]),
         );
       }
+      formData.append("model", model);
 
       const res = await fetch("/api/recolor", {
         method: "POST",
@@ -156,10 +161,52 @@ export default function RecolorPage() {
           )}
         </div>
 
+        {/* 模型选择 */}
+        <div className="mb-6">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            2. 选择生成模型
+          </label>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+            {IMAGE_MODELS.map((m) => {
+              const active = model === m.id;
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setModel(m.id)}
+                  className={`text-left p-3 rounded-md border transition ${
+                    active
+                      ? "border-blue-500 bg-blue-50 ring-1 ring-blue-500"
+                      : "border-gray-300 hover:border-gray-400"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-gray-900">
+                      {m.label}
+                    </span>
+                    {m.badge && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-600 text-white">
+                        {m.badge}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">{m.desc}</div>
+                  <div className="text-[10px] text-gray-400 font-mono mt-1">
+                    {m.id}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-xs text-gray-500">
+            如果生成失败报「模型不存在」，说明当前区域暂未上线该模型，换另一个试试
+          </p>
+        </div>
+
         {/* 选择颜色 */}
         <div className="mb-6">
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            2. 选择目标颜色（可多选）
+            3. 选择目标颜色（可多选）
           </label>
           {colors.length === 0 ? (
             <div className="text-xs text-gray-500 p-3 bg-gray-50 rounded border border-dashed border-gray-300">

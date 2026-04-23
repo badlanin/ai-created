@@ -8,6 +8,7 @@ import {
   generateImage,
   type GenImageInput,
 } from "@/lib/gemini-image";
+import { resolveImageModel } from "@/lib/image-models";
 
 export const runtime = "nodejs";
 // 换色每张约 5-15 秒，批量时要给足时间
@@ -49,6 +50,10 @@ export async function POST(req: NextRequest) {
 
     const colorIdsRaw = formData.get("color_ids");
     const customColorsRaw = formData.get("custom_colors");
+    const modelRaw = formData.get("model");
+    const model = resolveImageModel(
+      typeof modelRaw === "string" ? modelRaw : undefined,
+    );
 
     // 解析要用的颜色列表
     let colorsToApply: ColorRow[] = [];
@@ -111,7 +116,7 @@ export async function POST(req: NextRequest) {
     for (const c of colorsToApply) {
       try {
         const prompt = buildRecolorPrompt(c.name, c.hex);
-        const gen = await generateImage([inputImage], prompt);
+        const gen = await generateImage([inputImage], prompt, model);
 
         const ext = gen.mimeType.includes("png") ? "png" : "jpg";
         const filename = `recolor_${user.id}_${Date.now()}_${Math.random()
@@ -147,6 +152,7 @@ export async function POST(req: NextRequest) {
       user.id,
       JSON.stringify(results.filter((r) => r.success).map((r) => r.image_url)),
       JSON.stringify({
+        model,
         colors: colorsToApply.map((c) => ({
           id: c.id,
           name: c.name,
@@ -157,7 +163,7 @@ export async function POST(req: NextRequest) {
       successCount > 0 ? 1 : 0,
     );
 
-    return NextResponse.json({ results });
+    return NextResponse.json({ results, model });
   } catch (e) {
     const status = (e as { status?: number }).status || 500;
     const msg = e instanceof Error ? e.message : String(e);

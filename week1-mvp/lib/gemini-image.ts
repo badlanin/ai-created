@@ -1,27 +1,20 @@
 import { GoogleGenAI } from "@google/genai";
+import { resolveImageModel } from "./image-models";
 
 /**
- * Gemini 2.5 Flash Image (Nano Banana) 封装
+ * Nano Banana (Gemini * Image) 调用封装
  *
  * 能力：
  * - 输入若干张参考图 + 文本提示，生成新图
  * - 适合：换色、风格迁移、模特穿着合成
  *
  * 鉴权：Vertex AI + ADC（沿用 lib/gemini.ts 的配置）
- */
-
-/**
- * Nano Banana 在 Vertex AI 上的默认模型 ID
  *
- * 注意：模型名会随 Google 的版本迭代变化。如果报 404（模型不存在），
- * 可以在 .env 里用 GEMINI_IMAGE_MODEL 环境变量覆盖，无需改代码。
- *
- * 常见候选（按稳定性排序）：
- *   - gemini-2.5-flash-image-preview  （当前 preview）
- *   - gemini-2.5-flash-image           （GA 版本，视区域而定）
- *   - gemini-2.0-flash-exp-image       （更老的实验版）
+ * 可选模型见 lib/image-models.ts。默认走 gemini-3-pro-image-preview
+ * （Nano Banana Pro）。也可以：
+ *   1) 在 .env 中配 GEMINI_IMAGE_MODEL 改全局默认
+ *   2) 调用时传 modelOverride，按次指定（前端表单选的那种）
  */
-const MODEL = process.env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image-preview";
 
 export interface GenImageInput {
   buffer: Buffer;
@@ -32,6 +25,7 @@ export interface GenImageResult {
   mimeType: string;
   data: Buffer; // 生成图的原始字节
   textResponse?: string; // 模型附带的文本（通常有一段描述）
+  model: string; // 实际用到的模型 ID（记录到 generations 表）
 }
 
 /**
@@ -39,11 +33,14 @@ export interface GenImageResult {
  *
  * @param images 参考图列表（如产品正面/背面、模特图、场景图）
  * @param prompt 文本指令
+ * @param modelOverride 单次调用的模型 ID（会经 resolveImageModel 白名单校验）
  */
 export async function generateImage(
   images: GenImageInput[],
   prompt: string,
+  modelOverride?: string,
 ): Promise<GenImageResult> {
+  const MODEL = resolveImageModel(modelOverride);
   const project = process.env.GCP_PROJECT_ID;
   const location = process.env.GCP_LOCATION || "asia-southeast1";
 
@@ -118,6 +115,7 @@ export async function generateImage(
     mimeType: imageData.mimeType,
     data: imageData.data,
     textResponse,
+    model: MODEL,
   };
 }
 
