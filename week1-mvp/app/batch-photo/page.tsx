@@ -88,9 +88,13 @@ const QUALITY_LEVELS: Array<{
   label: string;
   desc: string;
 }> = [
-  { value: "4k", label: "4K 超清", desc: "按 4K 重绘整张图（推荐）" },
-  { value: "2k", label: "2K 高清", desc: "按 2K 重绘，稍快" },
-  { value: "hd", label: "HD 清晰", desc: "保守，轻度锐化" },
+  {
+    value: "4k",
+    label: "4K 超清",
+    desc: "仅 Pro 真输出 4K（Flash 仍 1K）",
+  },
+  { value: "2k", label: "2K 高清", desc: "仅 Pro 生效" },
+  { value: "hd", label: "HD 清晰", desc: "所有模型默认档位" },
 ];
 
 // ============ Helpers ============

@@ -47,6 +47,15 @@ export interface GenImageResult {
 export interface GenImageOptions {
   /** 输出图片比例，如 '3:4' '2:3' '1:1' '16:9' 等。默认由模型决定（通常 1:1） */
   aspectRatio?: string;
+  /**
+   * 输出图片"档位"：'1K' | '2K' | '4K'（还有 '0.5K'）
+   *
+   * 默认 '1K'（约 896×1200 / 1024×1024）。
+   * 关键：`gemini-3-pro-image-preview` 会按此输出真实对应分辨率；
+   * 但 `gemini-3.1-flash-image-preview` 和 2.5 系列目前**静默忽略**，
+   * 始终输出 ~1K。所以要真的 4K 输出，需要用 Pro 模型 + imageSize='4K'。
+   */
+  imageSize?: "0.5K" | "1K" | "2K" | "4K";
 }
 
 export async function generateImage(
@@ -84,10 +93,15 @@ export async function generateImage(
     // （不设置的话默认可能是 -1 动态无上限，容易拖到几分钟）
     configBase.thinkingConfig = { thinkingBudget: 2048 };
   }
-  if (options.aspectRatio) {
-    // imageConfig.aspectRatio 让模型按指定比例输出
-    // 支持的值：1:1, 3:2, 2:3, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9
-    configBase.imageConfig = { aspectRatio: options.aspectRatio };
+  if (options.aspectRatio || options.imageSize) {
+    // imageConfig:
+    //   - aspectRatio: '1:1' | '3:2' | '2:3' | '3:4' | '4:3' | '4:5' | '5:4' | '9:16' | '16:9' | '21:9'
+    //   - imageSize: '0.5K' | '1K' | '2K' | '4K'
+    // 注意 Flash Image 模型会忽略 imageSize，只有 Pro Image 真的按这个出
+    const imageConfig: Record<string, string> = {};
+    if (options.aspectRatio) imageConfig.aspectRatio = options.aspectRatio;
+    if (options.imageSize) imageConfig.imageSize = options.imageSize;
+    configBase.imageConfig = imageConfig;
   }
 
   // 加 timeout wrapper：超过 CALL_TIMEOUT_MS 就抛 TimeoutError，
@@ -146,7 +160,7 @@ export async function generateImage(
   // 日志输出图片信息（宽高 / 体积），用于诊断输出质量问题
   const info = readImageInfo(imageData.data, imageData.mimeType);
   console.log(
-    `[gen OK] model=${MODEL} aspect=${options.aspectRatio ?? "default"} → ${formatImageInfo(info)}`,
+    `[gen OK] model=${MODEL} aspect=${options.aspectRatio ?? "default"} size=${options.imageSize ?? "1K(default)"} → ${formatImageInfo(info)}`,
   );
 
   return {

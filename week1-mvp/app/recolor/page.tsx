@@ -88,17 +88,17 @@ const QUALITY_LEVELS: Array<{
   {
     value: "4k",
     label: "4K 超清（推荐）",
-    desc: "模型按 4K 标准重绘整张图，糊图也能出清晰版",
+    desc: "约 2048×2880 · 仅 Pro 模型真输出 4K，Flash 仍是 1K",
   },
   {
     value: "2k",
     label: "2K 高清",
-    desc: "按 2K 标准重绘，速度略快",
+    desc: "约 1448×2048 · 仅 Pro 生效",
   },
   {
     value: "hd",
     label: "HD 清晰",
-    desc: "保守级别，轻度锐化",
+    desc: "约 896×1200 · 所有模型默认档位",
   },
 ];
 

@@ -316,10 +316,15 @@ export async function POST(req: NextRequest) {
         sceneInput,
       ];
 
+      // qualityLevel → imageSize（仅 Pro Image 真实放大；Flash 会忽略）
+      const imageSize: "1K" | "2K" | "4K" =
+        qualityLevel === "4k" ? "4K" : qualityLevel === "2k" ? "2K" : "1K";
+
       const gen = await retryWithBackoff(
         () =>
           generateImage(parts, finalPrompt, model, {
             aspectRatio,
+            imageSize,
           }),
         {
           onRetry: (e, attempt, delay) => {

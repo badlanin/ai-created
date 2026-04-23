@@ -253,8 +253,17 @@ export async function POST(req: NextRequest) {
           qualityLevel,
         }) + multiImageHint;
 
+      // qualityLevel → imageSize 映射：hd=1K / 2k=2K / 4k=4K
+      // 注意：Flash 系列会忽略，只有 Pro Image 真的放大
+      const imageSize: "1K" | "2K" | "4K" =
+        qualityLevel === "4k" ? "4K" : qualityLevel === "2k" ? "2K" : "1K";
+
       const gen = await retryWithBackoff(
-        () => generateImage(reordered, prompt, model, { aspectRatio }),
+        () =>
+          generateImage(reordered, prompt, model, {
+            aspectRatio,
+            imageSize,
+          }),
         {
           onRetry: (e, attempt, delay) => {
             console.warn(
