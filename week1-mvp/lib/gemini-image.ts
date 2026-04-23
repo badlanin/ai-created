@@ -1,5 +1,6 @@
 import { resolveModelId } from "./ai-models";
 import { buildGenaiClient } from "./genai-client";
+import { readImageInfo, formatImageInfo } from "./image-info";
 
 /**
  * Nano Banana (Gemini * Image) 调用封装
@@ -141,6 +142,12 @@ export async function generateImage(
       `Nano Banana 没返回图片。${textResponse ? "模型说：" + textResponse : ""}`,
     );
   }
+
+  // 日志输出图片信息（宽高 / 体积），用于诊断输出质量问题
+  const info = readImageInfo(imageData.data, imageData.mimeType);
+  console.log(
+    `[gen OK] model=${MODEL} aspect=${options.aspectRatio ?? "default"} → ${formatImageInfo(info)}`,
+  );
 
   return {
     mimeType: imageData.mimeType,

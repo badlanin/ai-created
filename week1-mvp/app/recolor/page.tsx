@@ -1,6 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  downloadImagesAsZip,
+  downloadSingleImage,
+} from "@/lib/download-zip";
 
 type Color = { id: number; name: string; hex: string };
 type AiModel = {
@@ -862,38 +866,142 @@ function ResultsView({
   results: RecolorResult[];
   elapsed: number | null;
 }) {
-  // 按颜色分组展示，每组内按图片 index 排序
-  const groups = new Map<
-    number,
-    { color_name: string; hex: string; items: RecolorResult[] }
-  >();
-  for (const r of results) {
-    if (!groups.has(r.color_id)) {
-      groups.set(r.color_id, {
-        color_name: r.color_name,
-        hex: r.hex,
-        items: [],
-      });
+  // 多选 state
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [zipping, setZipping] = useState(false);
+  const [zipProgress, setZipProgress] = useState<{ done: number; total: number } | null>(null);
+
+  // 每张图一个稳定的 key：color_id + image_index
+  const keyOf = (r: RecolorResult) => `${r.color_id}:${r.image_index}`;
+
+  const successful = useMemo(
+    () => results.filter((r) => r.success && r.image_url),
+    [results],
+  );
+
+  const groups = useMemo(() => {
+    const map = new Map<
+      number,
+      { color_name: string; hex: string; items: RecolorResult[] }
+    >();
+    for (const r of results) {
+      if (!map.has(r.color_id)) {
+        map.set(r.color_id, {
+          color_name: r.color_name,
+          hex: r.hex,
+          items: [],
+        });
+      }
+      map.get(r.color_id)!.items.push(r);
     }
-    groups.get(r.color_id)!.items.push(r);
+    for (const g of map.values()) g.items.sort((a, b) => a.image_index - b.image_index);
+    return Array.from(map.values());
+  }, [results]);
+
+  function toggle(key: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   }
-  for (const g of groups.values()) {
-    g.items.sort((a, b) => a.image_index - b.image_index);
+
+  function selectAll() {
+    setSelected(new Set(successful.map(keyOf)));
+  }
+
+  function selectNone() {
+    setSelected(new Set());
+  }
+
+  async function downloadSelected() {
+    const chosen = successful.filter((r) => selected.has(keyOf(r)));
+    if (chosen.length === 0) return;
+    setZipping(true);
+    setZipProgress({ done: 0, total: chosen.length });
+    try {
+      const entries = chosen.map((r) => ({
+        url: r.image_url!,
+        filename: `${r.color_name}_${String(r.image_index + 1).padStart(2, "0")}.png`,
+      }));
+      await downloadImagesAsZip(entries, `recolor_${Date.now()}.zip`, (done, total) =>
+        setZipProgress({ done, total }),
+      );
+    } finally {
+      setZipping(false);
+      setZipProgress(null);
+    }
+  }
+
+  async function downloadAll() {
+    if (successful.length === 0) return;
+    setZipping(true);
+    setZipProgress({ done: 0, total: successful.length });
+    try {
+      const entries = successful.map((r) => ({
+        url: r.image_url!,
+        filename: `${r.color_name}_${String(r.image_index + 1).padStart(2, "0")}.png`,
+      }));
+      await downloadImagesAsZip(entries, `recolor_all_${Date.now()}.zip`, (done, total) =>
+        setZipProgress({ done, total }),
+      );
+    } finally {
+      setZipping(false);
+      setZipProgress(null);
+    }
   }
 
   return (
     <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
         <h2 className="text-lg font-semibold text-gray-900">生成结果</h2>
         {elapsed !== null && (
           <span className="text-xs text-gray-500">
-            总耗时 {(elapsed / 1000).toFixed(1)}s · 共 {results.length} 张
+            总耗时 {(elapsed / 1000).toFixed(1)}s · 共 {results.length} 张 · 成功{" "}
+            {successful.length}
           </span>
         )}
       </div>
 
+      {successful.length > 0 && (
+        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded flex flex-wrap items-center gap-2">
+          <span className="text-sm text-blue-800">
+            已选 <b>{selected.size}</b> / {successful.length}
+          </span>
+          <button
+            onClick={selectAll}
+            className="px-2 py-1 text-xs bg-white border border-blue-300 text-blue-700 rounded hover:bg-blue-100"
+          >
+            全选
+          </button>
+          <button
+            onClick={selectNone}
+            className="px-2 py-1 text-xs bg-white border border-gray-300 text-gray-700 rounded hover:bg-gray-100"
+          >
+            清除
+          </button>
+          <button
+            onClick={downloadSelected}
+            disabled={selected.size === 0 || zipping}
+            className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+          >
+            {zipping && zipProgress
+              ? `打包中 ${zipProgress.done}/${zipProgress.total}`
+              : `下载选中 (ZIP)`}
+          </button>
+          <button
+            onClick={downloadAll}
+            disabled={zipping}
+            className="px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
+          >
+            {zipping ? "打包中..." : "下载全部 (ZIP)"}
+          </button>
+        </div>
+      )}
+
       <div className="space-y-6">
-        {Array.from(groups.values()).map((g) => (
+        {groups.map((g) => (
           <div key={g.color_name} className="border-t border-gray-200 pt-4">
             <div className="flex items-center gap-2 mb-3">
               <span
@@ -909,41 +1017,68 @@ function ResultsView({
               </span>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-              {g.items.map((r, i) => (
-                <div
-                  key={i}
-                  className="border border-gray-200 rounded-md overflow-hidden"
-                >
-                  <div className="aspect-[3/4] bg-gray-100 flex items-center justify-center">
-                    {r.success && r.image_url ? (
-                      /* eslint-disable-next-line @next/next/no-img-element */
-                      <img
-                        src={r.image_url}
-                        alt={r.image_label}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <div className="text-xs text-red-600 p-4 text-center">
-                        失败：{r.error || "未知错误"}
-                      </div>
-                    )}
-                  </div>
-                  <div className="p-2 flex items-center justify-between text-xs">
-                    <span className="text-gray-500 truncate">
-                      #{r.image_index + 1} {r.image_label}
-                    </span>
+              {g.items.map((r) => {
+                const k = keyOf(r);
+                const isSelected = selected.has(k);
+                return (
+                  <div
+                    key={k}
+                    className={`relative border rounded-md overflow-hidden transition ${
+                      isSelected
+                        ? "border-blue-500 ring-2 ring-blue-500"
+                        : "border-gray-200"
+                    }`}
+                  >
                     {r.success && r.image_url && (
-                      <a
-                        href={r.image_url}
-                        download={`recolor_${g.color_name}_${r.image_index + 1}.png`}
-                        className="text-blue-600 hover:underline shrink-0 ml-2"
+                      <button
+                        onClick={() => toggle(k)}
+                        className={`absolute top-2 left-2 z-10 w-5 h-5 rounded border-2 flex items-center justify-center text-xs ${
+                          isSelected
+                            ? "bg-blue-600 border-blue-600 text-white"
+                            : "bg-white/80 border-gray-400"
+                        }`}
                       >
-                        下载
-                      </a>
+                        {isSelected ? "✓" : ""}
+                      </button>
                     )}
+                    <div
+                      className="aspect-[3/4] bg-gray-100 flex items-center justify-center cursor-pointer"
+                      onClick={() => r.success && r.image_url && toggle(k)}
+                    >
+                      {r.success && r.image_url ? (
+                        /* eslint-disable-next-line @next/next/no-img-element */
+                        <img
+                          src={r.image_url}
+                          alt={r.image_label}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="text-xs text-red-600 p-4 text-center">
+                          失败：{r.error || "未知错误"}
+                        </div>
+                      )}
+                    </div>
+                    <div className="p-2 flex items-center justify-between text-xs">
+                      <span className="text-gray-500 truncate">
+                        #{r.image_index + 1} {r.image_label}
+                      </span>
+                      {r.success && r.image_url && (
+                        <button
+                          onClick={() =>
+                            downloadSingleImage(
+                              r.image_url!,
+                              `${g.color_name}_${r.image_index + 1}.png`,
+                            )
+                          }
+                          className="text-blue-600 hover:underline shrink-0 ml-2"
+                        >
+                          下载
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         ))}

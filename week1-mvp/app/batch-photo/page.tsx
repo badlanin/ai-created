@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import {
+  downloadImagesAsZip,
+  downloadSingleImage,
+} from "@/lib/download-zip";
 
 // ============ Types ============
 type AiModel = {
@@ -885,10 +889,55 @@ function ResultsView({
   results: BatchResult[];
   elapsed: number | null;
 }) {
-  const successCount = results.filter((r) => r.success).length;
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [zipping, setZipping] = useState(false);
+  const [zipProgress, setZipProgress] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
+
+  const successful = useMemo(
+    () => results.filter((r) => r.success && r.image_url),
+    [results],
+  );
+  const successCount = successful.length;
+
+  function toggle(id: number) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function selectAll() {
+    setSelected(new Set(successful.map((r) => r.pose_id)));
+  }
+  function selectNone() {
+    setSelected(new Set());
+  }
+
+  async function doZip(items: BatchResult[], name: string) {
+    if (items.length === 0) return;
+    setZipping(true);
+    setZipProgress({ done: 0, total: items.length });
+    try {
+      const entries = items.map((r, i) => ({
+        url: r.image_url!,
+        filename: `${String(i + 1).padStart(2, "0")}_${r.pose_name}.png`,
+      }));
+      await downloadImagesAsZip(entries, name, (done, total) =>
+        setZipProgress({ done, total }),
+      );
+    } finally {
+      setZipping(false);
+      setZipProgress(null);
+    }
+  }
+
   return (
     <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
         <h2 className="text-lg font-semibold text-gray-900">生成结果</h2>
         {elapsed !== null && (
           <span className="text-xs text-gray-500">
@@ -897,47 +946,115 @@ function ResultsView({
           </span>
         )}
       </div>
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-        {results.map((r, i) => (
-          <div
-            key={i}
-            className="border border-gray-200 rounded-md overflow-hidden"
+
+      {successCount > 0 && (
+        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded flex flex-wrap items-center gap-2">
+          <span className="text-sm text-blue-800">
+            已选 <b>{selected.size}</b> / {successCount}
+          </span>
+          <button
+            onClick={selectAll}
+            className="px-2 py-1 text-xs bg-white border border-blue-300 text-blue-700 rounded hover:bg-blue-100"
           >
-            <div className="aspect-[3/4] bg-gray-100 flex items-center justify-center">
-              {r.success && r.image_url ? (
-                /* eslint-disable-next-line @next/next/no-img-element */
-                <img
-                  src={r.image_url}
-                  alt={r.pose_name}
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                <div className="text-xs text-red-600 p-4 text-center">
-                  失败：{r.error || "未知错误"}
-                </div>
+            全选
+          </button>
+          <button
+            onClick={selectNone}
+            className="px-2 py-1 text-xs bg-white border border-gray-300 text-gray-700 rounded hover:bg-gray-100"
+          >
+            清除
+          </button>
+          <button
+            onClick={() =>
+              doZip(
+                successful.filter((r) => selected.has(r.pose_id)),
+                `batch_selected_${Date.now()}.zip`,
+              )
+            }
+            disabled={selected.size === 0 || zipping}
+            className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+          >
+            {zipping && zipProgress
+              ? `打包中 ${zipProgress.done}/${zipProgress.total}`
+              : `下载选中 (ZIP)`}
+          </button>
+          <button
+            onClick={() => doZip(successful, `batch_all_${Date.now()}.zip`)}
+            disabled={zipping}
+            className="px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
+          >
+            {zipping ? "打包中..." : "下载全部 (ZIP)"}
+          </button>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+        {results.map((r) => {
+          const isSelected = selected.has(r.pose_id);
+          return (
+            <div
+              key={r.pose_id}
+              className={`relative border rounded-md overflow-hidden transition ${
+                isSelected
+                  ? "border-blue-500 ring-2 ring-blue-500"
+                  : "border-gray-200"
+              }`}
+            >
+              {r.success && r.image_url && (
+                <button
+                  onClick={() => toggle(r.pose_id)}
+                  className={`absolute top-2 left-2 z-10 w-5 h-5 rounded border-2 flex items-center justify-center text-xs ${
+                    isSelected
+                      ? "bg-blue-600 border-blue-600 text-white"
+                      : "bg-white/80 border-gray-400"
+                  }`}
+                >
+                  {isSelected ? "✓" : ""}
+                </button>
               )}
-            </div>
-            <div className="p-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-gray-900 truncate">{r.pose_name}</span>
-                {r.success && r.image_url && (
-                  <a
-                    href={r.image_url}
-                    download={`batch_${r.pose_name}.png`}
-                    className="text-blue-600 hover:underline shrink-0 ml-2"
-                  >
-                    下载
-                  </a>
+              <div
+                className="aspect-[3/4] bg-gray-100 flex items-center justify-center cursor-pointer"
+                onClick={() => r.success && r.image_url && toggle(r.pose_id)}
+              >
+                {r.success && r.image_url ? (
+                  /* eslint-disable-next-line @next/next/no-img-element */
+                  <img
+                    src={r.image_url}
+                    alt={r.pose_name}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="text-xs text-red-600 p-4 text-center">
+                    失败：{r.error || "未知错误"}
+                  </div>
                 )}
               </div>
-              {r.duration_ms && (
-                <div className="text-[10px] text-gray-400 mt-0.5">
-                  {(r.duration_ms / 1000).toFixed(1)}s
+              <div className="p-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-gray-900 truncate">{r.pose_name}</span>
+                  {r.success && r.image_url && (
+                    <button
+                      onClick={() =>
+                        downloadSingleImage(
+                          r.image_url!,
+                          `${r.pose_name}.png`,
+                        )
+                      }
+                      className="text-blue-600 hover:underline shrink-0 ml-2"
+                    >
+                      下载
+                    </button>
+                  )}
                 </div>
-              )}
+                {r.duration_ms && (
+                  <div className="text-[10px] text-gray-400 mt-0.5">
+                    {(r.duration_ms / 1000).toFixed(1)}s
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </section>
   );
