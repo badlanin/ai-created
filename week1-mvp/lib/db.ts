@@ -250,7 +250,70 @@ function migrate(db: Database.Database) {
       UNIQUE(model_id, category)
     );
     CREATE INDEX IF NOT EXISTS idx_ai_models_cat ON ai_models(category, enabled, sort_order);
+
+    -- ==========================================
+    -- P3-1 批次 B：异步任务队列
+    -- ==========================================
+    --
+    -- 设计：
+    --   · 前端 POST 任务 → 立即返回 job_id（fire-and-forget）
+    --   · 后端在进程内跑一个 async worker 逐条处理 render_job_items
+    --   · 前端轮询 GET /api/jobs/:id 看进度
+    --   · 取消：POST /api/jobs/:id/cancel 把 status 置成 canceling，
+    --          worker 处理完当前一条后立即退出，剩余 item 标为 canceled
+    --
+    -- 和旧的 generations 表共存：generations 保留作为"成功结果归档表"
+    -- （给 /history 页读）。render_jobs 是"进行中任务状态表"。
+    -- 成功完成的 job 可选地也往 generations 插一条，但不是必须。
+    --
+    CREATE TABLE IF NOT EXISTS render_jobs (
+      id              TEXT PRIMARY KEY,                      -- uuid-ish
+      user_id         INTEGER NOT NULL REFERENCES users(id),
+      feature         TEXT NOT NULL,                          -- 'recolor' | 'batch_photo'
+      model           TEXT NOT NULL,                          -- base_model id
+      status          TEXT NOT NULL DEFAULT 'running',        -- 'running'|'canceling'|'canceled'|'completed'|'failed'
+      total_count     INTEGER NOT NULL,
+      completed_count INTEGER NOT NULL DEFAULT 0,
+      failed_count    INTEGER NOT NULL DEFAULT 0,
+      canceled_count  INTEGER NOT NULL DEFAULT 0,
+      total_cost_cny  REAL    NOT NULL DEFAULT 0,
+      params          TEXT,                                    -- JSON snapshot of inputs
+      error_message   TEXT,                                    -- 致命错误（整个 job 挂了）
+      created_at      INTEGER NOT NULL DEFAULT (unixepoch()),
+      started_at      INTEGER,
+      finished_at     INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_render_jobs_user
+      ON render_jobs(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_render_jobs_status
+      ON render_jobs(status, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS render_job_items (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      job_id            TEXT NOT NULL REFERENCES render_jobs(id) ON DELETE CASCADE,
+      idx               INTEGER NOT NULL,                      -- 0-based 顺序
+      status            TEXT NOT NULL DEFAULT 'queued',        -- 'queued'|'waiting_quota'|'processing'|'completed'|'failed'|'canceled'
+      label             TEXT,                                  -- 展示名（"米白" / "站立正面"）
+      result_image_path TEXT,                                  -- 相对 DATA_DIR 的路径
+      result_image_url  TEXT,                                  -- /assets/outputs/xxx.png（方便前端直接读）
+      input_tokens      INTEGER,
+      output_tokens     INTEGER,
+      cost_cny          REAL,
+      error_message     TEXT,
+      retry_count       INTEGER NOT NULL DEFAULT 0,
+      wait_until_ms     INTEGER,                               -- 被 rate limit 挡住时的解除时间戳（给前端倒计时用）
+      started_at        INTEGER,
+      finished_at       INTEGER,
+      UNIQUE (job_id, idx)
+    );
+    CREATE INDEX IF NOT EXISTS idx_render_job_items_job
+      ON render_job_items(job_id, idx);
+    CREATE INDEX IF NOT EXISTS idx_render_job_items_status
+      ON render_job_items(status);
   `);
+
+  // 启动时恢复：把被进程重启打断的 item 标为 failed
+  recoverOrphanJobs(db);
 
   seedAiModels(db);
   seedPoses(db);
@@ -260,6 +323,58 @@ function migrate(db: Database.Database) {
   seedMaterials(db);
   seedModelPrices(db);
   seedSettings(db);
+}
+
+/**
+ * 进程重启时的任务状态恢复
+ *
+ * 场景：服务重启（部署更新 / OOM / 手动 restart）时，
+ * render_job_items 里可能有 status='processing' 的 item —— 这些其实已经
+ * 中断了。启动时一次性把它们标为 failed，避免前端一直看到"进行中"。
+ *
+ * 同时把 status='queued' / 'waiting_quota' 的也标为 canceled
+ * （因为 worker 已经不在了，这些 item 永远不会被处理）。
+ *
+ * 相关的 render_jobs 也一并置为 'failed'，附上 error_message 说明原因。
+ */
+function recoverOrphanJobs(db: Database.Database) {
+  const now = Math.floor(Date.now() / 1000);
+  const tx = db.transaction(() => {
+    // 1) 把活跃 item 都置成终态
+    const itemsUpdated = db
+      .prepare(
+        `UPDATE render_job_items
+         SET status = CASE status
+             WHEN 'processing' THEN 'failed'
+             ELSE 'canceled'
+           END,
+           error_message = CASE status
+             WHEN 'processing' THEN '服务重启导致任务中断'
+             ELSE NULL
+           END,
+           finished_at = ?
+         WHERE status IN ('processing','queued','waiting_quota')`,
+      )
+      .run(now).changes;
+
+    // 2) 活跃的 render_jobs 标为 failed
+    const jobsUpdated = db
+      .prepare(
+        `UPDATE render_jobs
+         SET status = 'failed',
+             error_message = '服务重启导致任务中断',
+             finished_at = ?
+         WHERE status IN ('running','canceling')`,
+      )
+      .run(now).changes;
+
+    if (itemsUpdated > 0 || jobsUpdated > 0) {
+      console.log(
+        `[db] 恢复孤儿任务：${jobsUpdated} 个 job / ${itemsUpdated} 个 item 已标为 failed/canceled`,
+      );
+    }
+  });
+  tx();
 }
 
 /**
@@ -1131,6 +1246,18 @@ function seedSettings(db: Database.Database) {
       value: "0",
       notes:
         "新用户默认月度预算（人民币，0 = 无限。管理员可在用户管理页单独调整）",
+    },
+    {
+      key: "image_rate_limit_per_min",
+      value: "2",
+      notes:
+        "单个图片模型每分钟最多请求数（Google preview 默认 2，提额后管理员改这里）",
+    },
+    {
+      key: "image_rate_burst",
+      value: "2",
+      notes:
+        "token bucket 容量（即突发上限）。一般等于 image_rate_limit_per_min",
     },
   ];
 

@@ -1,11 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import {
-  downloadImagesAsZip,
-  downloadSingleImage,
-} from "@/lib/download-zip";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ImageCropper } from "@/app/_components/image-cropper";
+import { AppShell } from "@/app/_components/app-shell";
+import { NotificationStack, useNotifications, notifyHelpers } from "@/app/_components/notification-stack";
+import { JobProgressPanel } from "@/app/_components/job-progress-panel";
+import { JobResultsGrid } from "@/app/_components/job-results-grid";
+import { Thumbnail, ThumbnailBadge } from "@/app/_components/thumbnail";
+import { ResetButton } from "@/app/_components/reset-button";
+import { useCurrentUser } from "@/lib/hooks/use-current-user";
+import { useJobPolling } from "@/lib/hooks/use-job-polling";
+import { useSlotStore } from "@/lib/stores/task-store";
+
+/* ─────────── 类型 ─────────── */
 
 type Color = { id: number; name: string; hex: string };
 type AiModel = {
@@ -28,48 +35,18 @@ type Realism = {
   description: string | null;
   is_default: 0 | 1;
 };
-
 type GarmentAttrs = Record<string, string | string[]>;
 
-type RecolorResult = {
-  color_id: number;
-  color_name: string;
-  hex: string;
-  image_index: number;
-  image_label: string;
-  success: boolean;
-  image_url?: string;
-  error?: string;
-};
-
-/**
- * 客户端压缩：长边 2048，JPEG 质量 0.95（比之前更好的保留）
- * 比例选 3:4 / 2:3 等时，原图会保持原比例，模型会按目标比例输出
- */
-async function resizeImage(file: File, maxSize = 2048): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement("canvas");
-      const ratio = Math.min(maxSize / img.width, maxSize / img.height, 1);
-      canvas.width = Math.round(img.width * ratio);
-      canvas.height = Math.round(img.height * ratio);
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return reject(new Error("canvas 不可用"));
-      // 高质量缩放
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = "high";
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      canvas.toBlob(
-        (blob) => (blob ? resolve(blob) : reject(new Error("压缩失败"))),
-        "image/jpeg",
-        0.95,
-      );
-    };
-    img.onerror = () => reject(new Error("图片读取失败"));
-    img.src = URL.createObjectURL(file);
-  });
+interface CostEstimate {
+  per_image_cny: number;
+  total_cost_cny: number;
+  affordable: boolean;
+  can_afford_count: number;
+  is_unlimited: boolean;
+  remaining_cny: number;
 }
+
+/* ─────────── 常量 ─────────── */
 
 const ASPECT_RATIOS = [
   { value: "3:4", label: "3:4 竖（推荐）" },
@@ -94,51 +71,71 @@ const QUALITY_LEVELS: Array<{
   {
     value: "4k",
     label: "4K 超清",
-    desc: "约 3584×4800 · 最大清晰度，速度慢 2-3x 成本高 ~15x",
+    desc: "约 3584×4800 · 最大清晰度，成本 ~15x",
   },
   {
     value: "hd",
     label: "HD 清晰",
-    desc: "约 896×1200 · 最快最省，网页小图够用",
+    desc: "约 896×1200 · 最快最省",
   },
 ];
 
+/* ─────────── 客户端压缩 ─────────── */
+
+async function resizeImage(file: File, maxSize = 2048): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      const ratio = Math.min(maxSize / img.width, maxSize / img.height, 1);
+      canvas.width = Math.round(img.width * ratio);
+      canvas.height = Math.round(img.height * ratio);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return reject(new Error("canvas 不可用"));
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(
+        (blob) => (blob ? resolve(blob) : reject(new Error("压缩失败"))),
+        "image/jpeg",
+        0.95,
+      );
+    };
+    img.onerror = () => reject(new Error("图片读取失败"));
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+/* ─────────── 页面主组件 ─────────── */
+
 export default function RecolorPage() {
-  // Step 1: Images (多图)
+  const user = useCurrentUser();
+  const slotStore = useSlotStore("recolor");
+  const { push } = useNotifications();
+
+  // ─── 文件 + 裁剪 ───
   const [files, setFiles] = useState<File[]>([]);
   const [compressedBlobs, setCompressedBlobs] = useState<Blob[]>([]);
   const [croppedFlags, setCroppedFlags] = useState<boolean[]>([]);
   const [croppingIndex, setCroppingIndex] = useState<number | null>(null);
 
-  // Step 2: Analysis（只对第一张做解析，节省成本和时间）
+  // ─── 解析 ───
   const [analyzing, setAnalyzing] = useState(false);
   const [garmentAttrs, setGarmentAttrs] = useState<GarmentAttrs | null>(null);
 
-  // 输出比例
+  // ─── 配置 ───
   const [aspectRatio, setAspectRatio] = useState<string>("3:4");
-  // 输出清晰度档位（默认 2K 性价比最佳）
   const [qualityLevel, setQualityLevel] = useState<QualityLevel>("2k");
+  const [userSeed, setUserSeed] = useState("");
 
-  // 成本预估
-  const [estimate, setEstimate] = useState<{
-    per_image_cny: number;
-    total_cost_cny: number;
-    affordable: boolean;
-    can_afford_count: number;
-    is_unlimited: boolean;
-    remaining_cny: number;
-  } | null>(null);
-
-  // Step 3: Materials
+  // ─── 素材库 ───
   const [allMaterials, setAllMaterials] = useState<Material[]>([]);
   const [selectedMaterialIds, setSelectedMaterialIds] = useState<number[]>([]);
   const [showMaterialPicker, setShowMaterialPicker] = useState(false);
 
-  // Step 4: Realism
   const [realisms, setRealisms] = useState<Realism[]>([]);
   const [realismId, setRealismId] = useState<number | null>(null);
 
-  // Step 5: Colors
   const [colors, setColors] = useState<Color[]>([]);
   const [selectedColorIds, setSelectedColorIds] = useState<Set<number>>(
     new Set(),
@@ -146,265 +143,111 @@ export default function RecolorPage() {
   const [customName, setCustomName] = useState("");
   const [customHex, setCustomHex] = useState("#722F37");
 
-  // Step 6: Model
   const [aiModels, setAiModels] = useState<AiModel[]>([]);
   const [model, setModel] = useState<string>("");
 
-  // Step 7: Seed
-  const [userSeed, setUserSeed] = useState("");
+  // ─── 提交 / 任务 ───
+  const [submitting, setSubmitting] = useState(false);
+  const [activeJobId, setActiveJobId] = useState<string | null>(
+    slotStore.get<string>("activeJobId") ?? null,
+  );
+  const [activeJobCount, setActiveJobCount] = useState(0);
 
-  // Submission state
-  const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState<RecolorResult[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [elapsed, setElapsed] = useState<number | null>(null);
+  // ─── 估价 ───
+  const [estimate, setEstimate] = useState<CostEstimate | null>(null);
 
-  // 初始化加载：colors / models / materials / realism
+  /* ─── 初始数据加载 + slot 恢复 ─── */
   useEffect(() => {
     fetch("/api/colors")
       .then((r) => (r.ok ? r.json() : []))
       .then(setColors)
-      .catch(() => setColors([]));
-
+      .catch(() => {});
     fetch("/api/ai-models?category=image_gen")
       .then((r) => (r.ok ? r.json() : []))
       .then((list: AiModel[]) => {
         setAiModels(list);
+        const saved = slotStore.get<string>("model");
         const def =
-          list.find((m) => m.is_default === 1)?.model_id || list[0]?.model_id;
+          saved ||
+          list.find((m) => m.is_default === 1)?.model_id ||
+          list[0]?.model_id;
         if (def) setModel(def);
       })
-      .catch(() => setAiModels([]));
-
+      .catch(() => {});
     fetch("/api/materials")
       .then((r) => (r.ok ? r.json() : []))
       .then(setAllMaterials)
-      .catch(() => setAllMaterials([]));
-
+      .catch(() => {});
     fetch("/api/realism")
       .then((r) => (r.ok ? r.json() : []))
       .then((list: Realism[]) => {
         setRealisms(list);
-        const def = list.find((r) => r.is_default === 1)?.id || list[0]?.id;
+        const savedId = slotStore.get<number>("realismId");
+        const def =
+          savedId || list.find((r) => r.is_default === 1)?.id || list[0]?.id;
         if (def) setRealismId(def);
       })
-      .catch(() => setRealisms([]));
+      .catch(() => {});
+
+    // 恢复 slot 里存着的其他状态
+    const savedAspect = slotStore.get<string>("aspectRatio");
+    if (savedAspect) setAspectRatio(savedAspect);
+    const savedQuality = slotStore.get<QualityLevel>("qualityLevel");
+    if (savedQuality) setQualityLevel(savedQuality);
+    const savedSeed = slotStore.get<string>("userSeed");
+    if (savedSeed) setUserSeed(savedSeed);
+    const savedColorIds = slotStore.get<number[]>("selectedColorIds");
+    if (savedColorIds) setSelectedColorIds(new Set(savedColorIds));
+    const savedGarment = slotStore.get<GarmentAttrs>("garmentAttrs");
+    if (savedGarment) setGarmentAttrs(savedGarment);
+    const savedMatIds = slotStore.get<number[]>("selectedMaterialIds");
+    if (savedMatIds) setSelectedMaterialIds(savedMatIds);
+
+    // 活跃任务数
+    fetch("/api/jobs/active")
+      .then((r) => (r.ok ? r.json() : { count: 0 }))
+      .then((d) => setActiveJobCount(d.count || 0))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 文件选中后：只压缩，不自动解析
-  async function onPickFiles(fileList: FileList | null) {
-    if (!fileList || fileList.length === 0) {
-      setFiles([]);
-      setCompressedBlobs([]);
-      setGarmentAttrs(null);
-      setSelectedMaterialIds([]);
-      setResults(null);
-      setError(null);
-      return;
-    }
-
-    const picked = Array.from(fileList).slice(0, 5);
-    setFiles(picked);
-    setCompressedBlobs([]);
-    setCroppedFlags(new Array(picked.length).fill(false));
-    setGarmentAttrs(null);
-    setSelectedMaterialIds([]);
-    setResults(null);
-    setError(null);
-
-    try {
-      const blobs = await Promise.all(picked.map((f) => resizeImage(f, 2048)));
-      setCompressedBlobs(blobs);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }
-
-  function onCropConfirm(i: number, blob: Blob) {
-    setCompressedBlobs((prev) => {
-      const next = [...prev];
-      next[i] = blob;
-      return next;
+  /* ─── 持久化状态到 slotStore ─── */
+  useEffect(() => {
+    slotStore.merge({
+      aspectRatio,
+      qualityLevel,
+      userSeed,
+      model,
+      realismId,
+      selectedColorIds: Array.from(selectedColorIds),
+      selectedMaterialIds,
+      garmentAttrs,
     });
-    setCroppedFlags((prev) => {
-      const next = [...prev];
-      next[i] = true;
-      return next;
-    });
-    setCroppingIndex(null);
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    aspectRatio,
+    qualityLevel,
+    userSeed,
+    model,
+    realismId,
+    selectedColorIds,
+    selectedMaterialIds,
+    garmentAttrs,
+  ]);
 
-  // 手动触发款式解析（用户点按钮）
-  async function handleAnalyze() {
-    if (compressedBlobs.length === 0 || files.length === 0) {
-      setError("请先上传图片");
-      return;
-    }
-    setAnalyzing(true);
-    setError(null);
-    try {
-      const fd = new FormData();
-      fd.append("image0", compressedBlobs[0], files[0].name);
-      const res = await fetch("/api/analyze", { method: "POST", body: fd });
-      if (!res.ok) {
-        throw new Error((await res.json()).error || res.statusText);
-      }
-      const attrs = (await res.json()) as GarmentAttrs;
-      setGarmentAttrs(attrs);
-      await rematchMaterials(String(attrs["面料材质"] || ""));
-    } catch (e) {
-      setError("款式解析失败：" + (e instanceof Error ? e.message : String(e)));
-    } finally {
-      setAnalyzing(false);
-    }
-  }
-
-  // 根据面料材质文本重新匹配材质库（用户编辑"面料材质"字段后可手动触发）
-  async function rematchMaterials(materialText: string) {
-    if (!materialText) {
-      setSelectedMaterialIds([]);
-      return;
-    }
-    try {
-      const mRes = await fetch("/api/materials/match", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: materialText }),
-      });
-      if (mRes.ok) {
-        const body = (await mRes.json()) as { matched: Material[] };
-        setSelectedMaterialIds(body.matched.map((m) => m.id));
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  // 用户编辑了某个解析字段
-  function updateGarmentAttr(key: string, value: string) {
-    setGarmentAttrs((prev) => {
-      if (!prev) return prev;
-      return { ...prev, [key]: value };
-    });
-  }
-
-  function toggleColor(id: number) {
-    setSelectedColorIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  function addMaterial(id: number) {
-    setSelectedMaterialIds((prev) =>
-      prev.includes(id) ? prev : [...prev, id],
-    );
-    setShowMaterialPicker(false);
-  }
-
-  function removeMaterial(id: number) {
-    setSelectedMaterialIds((prev) => prev.filter((x) => x !== id));
-  }
-
-  const selectedMaterials = selectedMaterialIds
-    .map((id) => allMaterials.find((m) => m.id === id))
-    .filter(Boolean) as Material[];
-
-  const unselectedMaterials = allMaterials.filter(
-    (m) => !selectedMaterialIds.includes(m.id),
-  );
-
-  async function handleSubmit() {
-    if (compressedBlobs.length === 0 || files.length === 0) {
-      setError("请先上传产品图");
-      return;
-    }
+  /* ─── 估价（参数变化时 debounce 查询） ─── */
+  const totalCount = useMemo(() => {
     const useCustom = customName.trim().length > 0;
-    const colorCount = selectedColorIds.size + (useCustom ? 1 : 0);
-    if (colorCount === 0) {
-      setError("请至少选择一个颜色，或填一个临时颜色");
-      return;
-    }
+    const c = selectedColorIds.size + (useCustom ? 1 : 0);
+    return files.length * c;
+  }, [files.length, selectedColorIds, customName]);
 
-    // 预算拦截：预估成本 > 余额，弹窗让用户确认减少或取消
-    if (estimate && !estimate.affordable && !estimate.is_unlimited) {
-      const ok = confirm(
-        `预估花费 ¥${estimate.total_cost_cny.toFixed(2)}，` +
-          `超过你当前余额 ¥${estimate.remaining_cny.toFixed(2)}。\n\n` +
-          `建议把任务数减到 ${estimate.can_afford_count} 张以内。\n\n` +
-          `仍要提交吗？（服务端会拒绝或只完成一部分）`,
-      );
-      if (!ok) return;
-    }
-
-    setLoading(true);
-    setError(null);
-    setResults(null);
-    setElapsed(null);
-    const startedAt = Date.now();
-
-    try {
-      const formData = new FormData();
-      // 多图：image0, image1, ...
-      compressedBlobs.forEach((blob, i) => {
-        formData.append(`image${i}`, blob, files[i].name);
-      });
-      if (selectedColorIds.size > 0) {
-        formData.append("color_ids", JSON.stringify([...selectedColorIds]));
-      }
-      if (useCustom) {
-        formData.append(
-          "custom_colors",
-          JSON.stringify([{ name: customName.trim(), hex: customHex }]),
-        );
-      }
-      formData.append("model", model);
-      if (aspectRatio) formData.append("aspect_ratio", aspectRatio);
-      formData.append("quality_level", qualityLevel);
-      if (selectedMaterialIds.length > 0) {
-        formData.append("material_ids", JSON.stringify(selectedMaterialIds));
-      }
-      if (realismId) {
-        formData.append("realism_id", String(realismId));
-      }
-      if (garmentAttrs) {
-        formData.append("garment_attrs", JSON.stringify(garmentAttrs));
-      }
-      if (userSeed.trim()) {
-        formData.append("user_seed", userSeed.trim());
-      }
-
-      const res = await fetch("/api/recolor", {
-        method: "POST",
-        body: formData,
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || res.statusText);
-      setResults(body.results as RecolorResult[]);
-      setElapsed(Date.now() - startedAt);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  /** 总任务数 = 图数 × 颜色数 */
-  const totalCount = (() => {
-    const useCustom = customName.trim().length > 0;
-    const colors = selectedColorIds.size + (useCustom ? 1 : 0);
-    return files.length * colors;
-  })();
-
-  // 参数变化时，实时查询预估成本
   useEffect(() => {
     if (totalCount === 0 || !model) {
       setEstimate(null);
       return;
     }
-    const timer = setTimeout(() => {
+    const t = setTimeout(() => {
       fetch("/api/billing/estimate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -428,534 +271,852 @@ export default function RecolorPage() {
         })
         .catch(() => setEstimate(null));
     }, 300);
-    return () => clearTimeout(timer);
+    return () => clearTimeout(t);
   }, [totalCount, model, qualityLevel]);
 
-  return (
-    <main className="max-w-5xl mx-auto p-4 md:p-8">
-      <header className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">HEX 精准换色</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          上传 → 自动解析款式 + 识别材质 → 选颜色批量生成
-        </p>
-      </header>
+  /* ─── 轮询当前 job ─── */
+  const handleJobFinished = useCallback(() => {
+    // 成功完成 / 取消 / 失败时，跳一条通知，不自动清 activeJobId
+    // 保留状态让用户看结果 + 手动点"收起"才清掉
+    fetch("/api/jobs/active")
+      .then((r) => (r.ok ? r.json() : { count: 0 }))
+      .then((d) => setActiveJobCount(d.count || 0))
+      .catch(() => {});
+  }, []);
 
-      <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-        {/* Step 1: 上传（支持多图） */}
-        <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            1. 上传产品图
-            <span className="ml-2 text-xs text-gray-500 font-normal">
-              可一次选多张同款不同角度（最多 5 张，有助于色差一致性）
-            </span>
-          </label>
-          <input
-            type="file"
-            accept="image/*"
-            multiple
-            onChange={(e) => onPickFiles(e.target.files)}
-            className="block w-full text-sm text-gray-600
-              file:mr-4 file:py-2 file:px-4
-              file:rounded-md file:border-0
-              file:text-sm file:font-medium
-              file:bg-blue-50 file:text-blue-700
-              hover:file:bg-blue-100"
-          />
-          {files.length > 0 && (
-            <div className="mt-3">
-              <div className="flex flex-wrap gap-2">
+  const polling = useJobPolling(activeJobId, {
+    intervalMs: 1500,
+    onFinished: (result) => {
+      handleJobFinished();
+      const { job } = result;
+      if (job.status === "completed") {
+        notifyHelpers.success(
+          push,
+          `换色任务完成 · ${job.completed_count}/${job.total_count}`,
+          job.failed_count > 0
+            ? `${job.failed_count} 张失败，其余已完成。`
+            : undefined,
+        );
+      } else if (job.status === "canceled") {
+        notifyHelpers.info(
+          push,
+          `任务已停止`,
+          `已完成 ${job.completed_count} / 共 ${job.total_count}，剩余已跳过`,
+        );
+      } else if (job.status === "failed") {
+        notifyHelpers.error(
+          push,
+          `任务失败`,
+          job.error_message || "请查看详细日志",
+        );
+      }
+    },
+  });
+
+  /* ─── 文件处理 ─── */
+  async function onPickFiles(fileList: FileList | null) {
+    if (!fileList || fileList.length === 0) {
+      setFiles([]);
+      setCompressedBlobs([]);
+      setGarmentAttrs(null);
+      setSelectedMaterialIds([]);
+      return;
+    }
+    const picked = Array.from(fileList).slice(0, 5);
+    setFiles(picked);
+    setCompressedBlobs([]);
+    setCroppedFlags(new Array(picked.length).fill(false));
+    setGarmentAttrs(null);
+    setSelectedMaterialIds([]);
+    try {
+      const blobs = await Promise.all(picked.map((f) => resizeImage(f, 2048)));
+      setCompressedBlobs(blobs);
+    } catch (e) {
+      notifyHelpers.error(push, "图片读取失败", e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  function onCropConfirm(i: number, blob: Blob) {
+    setCompressedBlobs((prev) => {
+      const next = [...prev];
+      next[i] = blob;
+      return next;
+    });
+    setCroppedFlags((prev) => {
+      const next = [...prev];
+      next[i] = true;
+      return next;
+    });
+    setCroppingIndex(null);
+  }
+
+  function removeFile(i: number) {
+    setFiles((prev) => prev.filter((_, idx) => idx !== i));
+    setCompressedBlobs((prev) => prev.filter((_, idx) => idx !== i));
+    setCroppedFlags((prev) => prev.filter((_, idx) => idx !== i));
+  }
+
+  /* ─── 解析 ─── */
+  async function handleAnalyze() {
+    if (compressedBlobs.length === 0 || files.length === 0) {
+      notifyHelpers.warn(push, "请先上传图片");
+      return;
+    }
+    setAnalyzing(true);
+    try {
+      const fd = new FormData();
+      fd.append("image0", compressedBlobs[0], files[0].name);
+      const res = await fetch("/api/analyze", { method: "POST", body: fd });
+      if (!res.ok) {
+        throw new Error((await res.json()).error || res.statusText);
+      }
+      const attrs = (await res.json()) as GarmentAttrs;
+      setGarmentAttrs(attrs);
+      await rematchMaterials(String(attrs["面料材质"] || ""));
+      notifyHelpers.success(push, "款式解析完成");
+    } catch (e) {
+      notifyHelpers.error(
+        push,
+        "款式解析失败",
+        e instanceof Error ? e.message : String(e),
+      );
+    } finally {
+      setAnalyzing(false);
+    }
+  }
+
+  async function rematchMaterials(materialText: string) {
+    if (!materialText) {
+      setSelectedMaterialIds([]);
+      return;
+    }
+    try {
+      const mRes = await fetch("/api/materials/match", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: materialText }),
+      });
+      if (mRes.ok) {
+        const body = (await mRes.json()) as { matched: Material[] };
+        setSelectedMaterialIds(body.matched.map((m) => m.id));
+      }
+    } catch {}
+  }
+
+  function updateGarmentAttr(key: string, value: string) {
+    setGarmentAttrs((prev) => (prev ? { ...prev, [key]: value } : prev));
+  }
+
+  function toggleColor(id: number) {
+    setSelectedColorIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function addMaterial(id: number) {
+    setSelectedMaterialIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    setShowMaterialPicker(false);
+  }
+  function removeMaterial(id: number) {
+    setSelectedMaterialIds((prev) => prev.filter((x) => x !== id));
+  }
+
+  const selectedMaterials = selectedMaterialIds
+    .map((id) => allMaterials.find((m) => m.id === id))
+    .filter(Boolean) as Material[];
+  const unselectedMaterials = allMaterials.filter(
+    (m) => !selectedMaterialIds.includes(m.id),
+  );
+
+  /* ─── 提交（走异步 API） ─── */
+  async function handleSubmit() {
+    if (compressedBlobs.length === 0 || files.length === 0) {
+      notifyHelpers.warn(push, "请先上传产品图");
+      return;
+    }
+    const useCustom = customName.trim().length > 0;
+    const colorCount = selectedColorIds.size + (useCustom ? 1 : 0);
+    if (colorCount === 0) {
+      notifyHelpers.warn(push, "请至少选择一个颜色，或填一个临时颜色");
+      return;
+    }
+
+    if (estimate && !estimate.affordable && !estimate.is_unlimited) {
+      const ok = confirm(
+        `预估花费 ¥${estimate.total_cost_cny.toFixed(2)}，` +
+          `超过你当前余额 ¥${estimate.remaining_cny.toFixed(2)}。\n\n` +
+          `建议把任务数减到 ${estimate.can_afford_count} 张以内。\n\n` +
+          `仍要提交吗？（服务端会拒绝或只完成一部分）`,
+      );
+      if (!ok) return;
+    }
+
+    setSubmitting(true);
+    try {
+      const fd = new FormData();
+      compressedBlobs.forEach((blob, i) => {
+        fd.append(`image${i}`, blob, files[i].name);
+      });
+      if (selectedColorIds.size > 0) {
+        fd.append("color_ids", JSON.stringify([...selectedColorIds]));
+      }
+      if (useCustom) {
+        fd.append(
+          "custom_colors",
+          JSON.stringify([{ name: customName.trim(), hex: customHex }]),
+        );
+      }
+      fd.append("model", model);
+      if (aspectRatio) fd.append("aspect_ratio", aspectRatio);
+      fd.append("quality_level", qualityLevel);
+      if (selectedMaterialIds.length > 0) {
+        fd.append("material_ids", JSON.stringify(selectedMaterialIds));
+      }
+      if (realismId) fd.append("realism_id", String(realismId));
+      if (garmentAttrs) fd.append("garment_attrs", JSON.stringify(garmentAttrs));
+      if (userSeed.trim()) fd.append("user_seed", userSeed.trim());
+
+      const res = await fetch("/api/jobs/recolor", {
+        method: "POST",
+        body: fd,
+      });
+      const body = (await res.json()) as { job_id?: string; error?: string };
+      if (!res.ok || !body.job_id) {
+        throw new Error(body.error || res.statusText);
+      }
+      setActiveJobId(body.job_id);
+      slotStore.setActiveJob(body.job_id);
+      setActiveJobCount((v) => v + 1);
+      notifyHelpers.info(
+        push,
+        `任务已提交`,
+        `共 ${totalCount} 张，进度看右栏 · Google quota 2/分钟，预计耗时 ${Math.ceil(totalCount / 2)}+ 分钟`,
+      );
+    } catch (e) {
+      notifyHelpers.error(
+        push,
+        "提交失败",
+        e instanceof Error ? e.message : String(e),
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  /* ─── 重置 ─── */
+  function resetAll() {
+    setFiles([]);
+    setCompressedBlobs([]);
+    setCroppedFlags([]);
+    setGarmentAttrs(null);
+    setSelectedMaterialIds([]);
+    setSelectedColorIds(new Set());
+    setCustomName("");
+    setUserSeed("");
+    setActiveJobId(null);
+    slotStore.reset();
+    notifyHelpers.info(push, "已清空当前任务");
+  }
+
+  function dismissCurrentJob() {
+    setActiveJobId(null);
+    slotStore.setActiveJob(null);
+  }
+
+  if (!user) {
+    return (
+      <div className="p-8 text-gray-500 text-sm">正在加载…</div>
+    );
+  }
+
+  /* ─────────── 渲染 ─────────── */
+
+  return (
+    <AppShell
+      leftNav={{
+        user,
+        activeJobCount,
+      }}
+      rightPanel={
+        <RightPanel
+          aiModels={aiModels}
+          model={model}
+          onModelChange={setModel}
+          aspectRatio={aspectRatio}
+          onAspectChange={setAspectRatio}
+          qualityLevel={qualityLevel}
+          onQualityChange={setQualityLevel}
+          userSeed={userSeed}
+          onUserSeedChange={setUserSeed}
+          totalCount={totalCount}
+          filesLen={files.length}
+          colorsLen={selectedColorIds.size + (customName.trim() ? 1 : 0)}
+          estimate={estimate}
+          submitting={submitting}
+          canSubmit={files.length > 0 && totalCount > 0 && !analyzing}
+          onSubmit={handleSubmit}
+          onReset={resetAll}
+          poll={polling.data}
+          pollError={polling.error}
+          onDismissJob={dismissCurrentJob}
+        />
+      }
+    >
+      <div className="p-4 md:p-6 max-w-4xl mx-auto">
+        <header className="mb-6">
+          <h1 className="text-2xl font-bold text-gray-900">HEX 精准换色</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            上传 → 解析款式 + 识别材质 → 选颜色批量生成
+          </p>
+        </header>
+
+        <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 space-y-6">
+          {/* Step 1: 上传 */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              1. 上传产品图
+              <span className="ml-2 text-xs text-gray-500 font-normal">
+                最多 5 张同款不同角度
+              </span>
+            </label>
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={(e) => onPickFiles(e.target.files)}
+              className="block w-full text-sm text-gray-600
+                file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0
+                file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700
+                hover:file:bg-blue-100"
+            />
+            {files.length > 0 && (
+              <div className="mt-3 grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
                 {files.map((f, i) => (
-                  <div key={i} className="relative group">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={
-                        compressedBlobs[i]
-                          ? URL.createObjectURL(compressedBlobs[i])
-                          : URL.createObjectURL(f)
-                      }
-                      alt={`原图 ${i + 1}`}
-                      className={`w-28 h-28 object-cover rounded-md border-2 ${
-                        croppedFlags[i]
-                          ? "border-green-500"
-                          : "border-gray-200"
-                      }`}
-                    />
-                    <div className="absolute top-1 left-1 bg-black/60 text-white text-[10px] px-1.5 rounded">
-                      #{i + 1}
-                    </div>
-                    {croppedFlags[i] && (
-                      <div className="absolute top-1 right-1 bg-green-600 text-white text-[10px] px-1.5 rounded">
-                        已裁
+                  <Thumbnail
+                    key={i}
+                    src={
+                      compressedBlobs[i]
+                        ? URL.createObjectURL(compressedBlobs[i])
+                        : URL.createObjectURL(f)
+                    }
+                    alt={`原图 ${i + 1}`}
+                    ratio="3/4"
+                    fit="contain"
+                    selected={croppedFlags[i]}
+                    checkbox={
+                      <span className="w-5 h-5 rounded bg-black/60 text-white text-[10px] flex items-center justify-center">
+                        {i + 1}
+                      </span>
+                    }
+                    badge={
+                      croppedFlags[i] ? (
+                        <ThumbnailBadge tone="green">已裁</ThumbnailBadge>
+                      ) : undefined
+                    }
+                    hoverOverlay={
+                      <div className="flex flex-col gap-1">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setCroppingIndex(i);
+                          }}
+                          className="px-3 py-1 bg-white/90 text-gray-800 text-xs rounded hover:bg-white"
+                        >
+                          裁剪
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeFile(i);
+                          }}
+                          className="px-3 py-1 bg-red-600/90 text-white text-xs rounded hover:bg-red-700"
+                        >
+                          删除
+                        </button>
                       </div>
-                    )}
-                    {compressedBlobs[i] && (
-                      <button
-                        type="button"
-                        onClick={() => setCroppingIndex(i)}
-                        className="absolute bottom-1 right-1 px-2 py-0.5 bg-white/90 hover:bg-white text-[10px] text-gray-700 rounded border border-gray-300"
-                      >
-                        裁剪
-                      </button>
-                    )}
-                    <div className="mt-1 text-[10px] text-gray-500 truncate w-28">
-                      {f.name}
-                    </div>
-                  </div>
+                    }
+                  />
                 ))}
               </div>
-            </div>
-          )}
-        </div>
-
-        {/* 裁剪模态 */}
-        {croppingIndex !== null && compressedBlobs[croppingIndex] && (
-          <ImageCropper
-            imageSrc={URL.createObjectURL(compressedBlobs[croppingIndex])}
-            initialAspect={0}
-            onConfirm={(blob) => onCropConfirm(croppingIndex, blob)}
-            onCancel={() => setCroppingIndex(null)}
-          />
-        )}
-
-        {/* Step 2: 款式解析（手动触发 + 可编辑） */}
-        {files.length > 0 && (
-          <div className="mb-6">
-            <div className="flex items-center justify-between mb-2">
-              <label className="block text-sm font-medium text-gray-700">
-                2. 款式解析
-                <span className="ml-2 text-xs text-gray-500 font-normal">
-                  （可选。解析结果可编辑，不解析也能生成）
-                </span>
-              </label>
-              <button
-                type="button"
-                onClick={handleAnalyze}
-                disabled={analyzing || compressedBlobs.length === 0}
-                className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-              >
-                {analyzing ? (
-                  <span className="flex items-center gap-1">
-                    <span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    解析中...
-                  </span>
-                ) : garmentAttrs ? (
-                  "重新解析"
-                ) : (
-                  "解析款式"
-                )}
-              </button>
-            </div>
-            {garmentAttrs && (
-              <GarmentAttrsEditor
-                attrs={garmentAttrs}
-                onChange={updateGarmentAttr}
-                onMaterialTextBlur={rematchMaterials}
-              />
             )}
           </div>
-        )}
 
-        {/* Step 3: 材质（自动匹配 + 可编辑） */}
-        {(garmentAttrs || selectedMaterials.length > 0) && (
-          <div className="mb-6">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              3. 服装材质
-              <span className="ml-2 text-xs text-gray-500 font-normal">
-                （系统自动匹配，如不准可手动增删）
-              </span>
-            </label>
-            <div className="flex flex-wrap gap-2 items-center">
-              {selectedMaterials.map((m) => (
-                <span
-                  key={m.id}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-blue-50 border border-blue-200 text-sm text-blue-800"
-                >
-                  <span>{m.name}</span>
-                  {m.english_name && (
-                    <span className="text-xs text-blue-500 font-mono">
-                      {m.english_name}
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => removeMaterial(m.id)}
-                    className="ml-1 text-blue-400 hover:text-red-600"
-                    title="移除"
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-              <div className="relative">
+          {croppingIndex !== null && compressedBlobs[croppingIndex] && (
+            <ImageCropper
+              imageSrc={URL.createObjectURL(compressedBlobs[croppingIndex])}
+              initialAspect={0}
+              onConfirm={(blob) => onCropConfirm(croppingIndex, blob)}
+              onCancel={() => setCroppingIndex(null)}
+            />
+          )}
+
+          {/* Step 2: 款式解析 */}
+          {files.length > 0 && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-sm font-medium text-gray-700">
+                  2. 款式解析
+                  <span className="ml-2 text-xs text-gray-500 font-normal">
+                    （可选，解析结果可编辑）
+                  </span>
+                </label>
                 <button
                   type="button"
-                  onClick={() => setShowMaterialPicker((v) => !v)}
-                  className="px-3 py-1.5 rounded-full border border-dashed border-gray-400 text-sm text-gray-600 hover:border-blue-500 hover:text-blue-600"
+                  onClick={handleAnalyze}
+                  disabled={analyzing || compressedBlobs.length === 0}
+                  className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                 >
-                  + 添加材质
+                  {analyzing ? "解析中..." : garmentAttrs ? "重新解析" : "解析款式"}
                 </button>
-                {showMaterialPicker && (
-                  <div className="absolute top-full mt-1 left-0 z-10 bg-white border border-gray-200 rounded-md shadow-lg p-2 max-h-64 overflow-y-auto w-64">
-                    {unselectedMaterials.length === 0 ? (
-                      <div className="text-xs text-gray-500 p-2">
-                        所有材质都已添加
-                      </div>
-                    ) : (
-                      unselectedMaterials.map((m) => (
-                        <button
-                          key={m.id}
-                          onClick={() => addMaterial(m.id)}
-                          className="w-full text-left px-2 py-1.5 text-sm hover:bg-blue-50 rounded"
-                        >
-                          <div className="font-medium text-gray-900">
-                            {m.name}
-                            {m.english_name && (
-                              <span className="ml-1 text-xs text-gray-500 font-mono">
-                                {m.english_name}
-                              </span>
-                            )}
-                          </div>
-                          {m.description && (
-                            <div className="text-xs text-gray-500 mt-0.5 truncate">
-                              {m.description}
-                            </div>
-                          )}
-                        </button>
-                      ))
+              </div>
+              {garmentAttrs && (
+                <GarmentAttrsEditor
+                  attrs={garmentAttrs}
+                  onChange={updateGarmentAttr}
+                  onMaterialTextBlur={rematchMaterials}
+                />
+              )}
+            </div>
+          )}
+
+          {/* Step 3: 材质 */}
+          {(garmentAttrs || selectedMaterials.length > 0) && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                3. 服装材质
+                <span className="ml-2 text-xs text-gray-500 font-normal">
+                  （自动匹配，可手动增删）
+                </span>
+              </label>
+              <div className="flex flex-wrap gap-2 items-center">
+                {selectedMaterials.map((m) => (
+                  <span
+                    key={m.id}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-blue-50 border border-blue-200 text-sm text-blue-800"
+                  >
+                    <span>{m.name}</span>
+                    {m.english_name && (
+                      <span className="text-xs text-blue-500 font-mono">
+                        {m.english_name}
+                      </span>
                     )}
-                  </div>
-                )}
+                    <button
+                      type="button"
+                      onClick={() => removeMaterial(m.id)}
+                      className="ml-1 text-blue-400 hover:text-red-600"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowMaterialPicker((v) => !v)}
+                    className="px-3 py-1.5 rounded-full border border-dashed border-gray-400 text-sm text-gray-600 hover:border-blue-500 hover:text-blue-600"
+                  >
+                    + 添加材质
+                  </button>
+                  {showMaterialPicker && (
+                    <div className="absolute top-full mt-1 left-0 z-10 bg-white border border-gray-200 rounded-md shadow-lg p-2 max-h-64 overflow-y-auto w-64">
+                      {unselectedMaterials.length === 0 ? (
+                        <div className="text-xs text-gray-500 p-2">
+                          所有材质都已添加
+                        </div>
+                      ) : (
+                        unselectedMaterials.map((m) => (
+                          <button
+                            key={m.id}
+                            onClick={() => addMaterial(m.id)}
+                            className="w-full text-left px-2 py-1.5 text-sm hover:bg-blue-50 rounded"
+                          >
+                            <div className="font-medium text-gray-900">
+                              {m.name}
+                              {m.english_name && (
+                                <span className="ml-1 text-xs text-gray-500 font-mono">
+                                  {m.english_name}
+                                </span>
+                              )}
+                            </div>
+                            {m.description && (
+                              <div className="text-xs text-gray-500 mt-0.5 truncate">
+                                {m.description}
+                              </div>
+                            )}
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+              {selectedMaterials.length === 0 && (
+                <p className="mt-2 text-xs text-amber-600">
+                  ⚠ 未匹配到任何材质，AI 可能误判面料
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Step 4: 真实感 */}
+          {realisms.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                4. 真实感预设
+              </label>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                {realisms.map((r) => {
+                  const active = realismId === r.id;
+                  return (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => setRealismId(r.id)}
+                      className={`text-left p-3 rounded-md border transition ${
+                        active
+                          ? "border-blue-500 bg-blue-50 ring-1 ring-blue-500"
+                          : "border-gray-300 hover:border-gray-400"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-gray-900">
+                          {r.name}
+                        </span>
+                        {r.is_default === 1 && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700">
+                            默认
+                          </span>
+                        )}
+                      </div>
+                      {r.description && (
+                        <div className="text-xs text-gray-500 mt-1">
+                          {r.description}
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             </div>
-            {selectedMaterials.length === 0 && (
-              <p className="mt-2 text-xs text-amber-600">
-                ⚠ 未匹配到任何材质。换色时 AI 可能误判面料质感，建议手动添加至少一个材质
-              </p>
-            )}
-          </div>
-        )}
+          )}
 
-        {/* Step 4: 真实感 */}
-        {realisms.length > 0 && (
-          <div className="mb-6">
+          {/* Step 5: 颜色 */}
+          <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              4. 真实感预设
-              <span className="ml-2 text-xs text-gray-500 font-normal">
-                （控制皮肤/发丝的真实度，避免 AI 塑料感）
-              </span>
+              5. 选择目标颜色（可多选）
             </label>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-              {realisms.map((r) => {
-                const active = realismId === r.id;
-                return (
-                  <button
-                    key={r.id}
-                    type="button"
-                    onClick={() => setRealismId(r.id)}
-                    className={`text-left p-3 rounded-md border transition ${
-                      active
-                        ? "border-blue-500 bg-blue-50 ring-1 ring-blue-500"
-                        : "border-gray-300 hover:border-gray-400"
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-gray-900">
-                        {r.name}
-                      </span>
-                      {r.is_default === 1 && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700">
-                          默认
-                        </span>
-                      )}
-                    </div>
-                    {r.description && (
-                      <div className="text-xs text-gray-500 mt-1">
-                        {r.description}
+            {colors.length === 0 ? (
+              <div className="text-xs text-gray-500 p-3 bg-gray-50 rounded border border-dashed border-gray-300">
+                颜色库是空的，
+                <a href="/admin/colors" className="text-blue-600 underline">
+                  去添加
+                </a>
+                ，或使用下面的「临时颜色」
+              </div>
+            ) : (
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
+                {colors.map((c) => {
+                  const active = selectedColorIds.has(c.id);
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => toggleColor(c.id)}
+                      className={`p-2 rounded-md border text-left transition ${
+                        active
+                          ? "border-blue-500 ring-1 ring-blue-500 bg-blue-50"
+                          : "border-gray-300 hover:border-gray-400"
+                      }`}
+                    >
+                      <div
+                        className="w-full h-10 rounded border border-gray-200"
+                        style={{ backgroundColor: c.hex }}
+                      />
+                      <div className="text-xs mt-1 truncate">{c.name}</div>
+                      <div className="text-[10px] text-gray-400 font-mono truncate">
+                        {c.hex}
                       </div>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Step 5: 生成模型 */}
-        <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            5. 选择生成模型
-          </label>
-          {aiModels.length === 0 ? (
-            <div className="text-xs text-gray-500 p-3 bg-gray-50 rounded border border-dashed border-gray-300">
-              暂无可用模型，请让管理员在
-              <a href="/admin/ai-models" className="text-blue-600 underline">
-                AI 模型管理
-              </a>
-              中启用至少一个
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-              {aiModels.map((m) => {
-                const active = model === m.model_id;
-                return (
-                  <button
-                    key={m.model_id}
-                    type="button"
-                    onClick={() => setModel(m.model_id)}
-                    className={`text-left p-3 rounded-md border transition ${
-                      active
-                        ? "border-blue-500 bg-blue-50 ring-1 ring-blue-500"
-                        : "border-gray-300 hover:border-gray-400"
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-gray-900">
-                        {m.label}
-                      </span>
-                      {m.badge && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-600 text-white">
-                          {m.badge}
-                        </span>
-                      )}
-                    </div>
-                    {m.description && (
-                      <div className="text-xs text-gray-500 mt-1">
-                        {m.description}
-                      </div>
-                    )}
-                    <div className="text-[10px] text-gray-400 font-mono mt-1">
-                      {m.model_id}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Step 6: 颜色 */}
-        <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            6. 选择目标颜色（可多选）
-          </label>
-          {colors.length === 0 ? (
-            <div className="text-xs text-gray-500 p-3 bg-gray-50 rounded border border-dashed border-gray-300">
-              颜色库还是空的，
-              <a href="/admin/colors" className="text-blue-600 underline">
-                去添加
-              </a>
-              ，或者使用下面的「临时颜色」
-            </div>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {colors.map((c) => {
-                const active = selectedColorIds.has(c.id);
-                return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => toggleColor(c.id)}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-sm transition ${
-                      active
-                        ? "border-blue-500 bg-blue-50 text-blue-800"
-                        : "border-gray-300 hover:border-gray-400"
-                    }`}
-                  >
-                    <span
-                      className="w-4 h-4 rounded-full border border-gray-300 shrink-0"
-                      style={{ backgroundColor: c.hex }}
-                    />
-                    <span>{c.name}</span>
-                    <span className="text-xs text-gray-500 font-mono">
-                      {c.hex}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          <div className="mt-4 flex items-end gap-3 p-3 bg-gray-50 rounded border border-gray-200">
-            <div className="flex-1">
-              <label className="block text-xs text-gray-600 mb-1">
-                临时颜色名（选填，不保存到库里）
-              </label>
-              <input
-                type="text"
-                value={customName}
-                onChange={(e) => setCustomName(e.target.value)}
-                placeholder="如：酒红"
-                className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-600 mb-1">HEX</label>
-              <div className="flex gap-2">
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {/* 临时颜色 */}
+            <div className="mt-3 p-3 bg-gray-50 rounded-md border border-gray-200">
+              <div className="text-xs text-gray-500 mb-2">临时颜色（可选）</div>
+              <div className="flex flex-wrap gap-2 items-center">
                 <input
                   type="color"
                   value={customHex}
-                  onChange={(e) => setCustomHex(e.target.value.toUpperCase())}
-                  className="w-8 h-8 border border-gray-300 rounded cursor-pointer"
+                  onChange={(e) => setCustomHex(e.target.value)}
+                  className="w-10 h-10 rounded cursor-pointer border-0"
+                />
+                <input
+                  type="text"
+                  placeholder="颜色名（为空不生成）"
+                  value={customName}
+                  onChange={(e) => setCustomName(e.target.value)}
+                  className="flex-1 min-w-[140px] px-2 py-1.5 text-sm border border-gray-300 rounded"
                 />
                 <input
                   type="text"
                   value={customHex}
-                  onChange={(e) => setCustomHex(e.target.value.toUpperCase())}
-                  className="w-24 px-2 py-1.5 border border-gray-300 rounded text-sm font-mono"
+                  onChange={(e) => setCustomHex(e.target.value)}
+                  className="w-24 px-2 py-1.5 text-sm font-mono border border-gray-300 rounded"
                 />
               </div>
             </div>
           </div>
-        </div>
+        </section>
 
-        {/* Step 7: 输出比例 */}
-        <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            7. 输出比例
-            <span className="ml-2 text-xs text-gray-500 font-normal">
-              （伴娘服推荐 3:4 竖）
-            </span>
-          </label>
-          <div className="flex flex-wrap gap-2">
-            {ASPECT_RATIOS.map((r) => {
-              const active = aspectRatio === r.value;
-              return (
-                <button
-                  key={r.value}
-                  type="button"
-                  onClick={() => setAspectRatio(r.value)}
-                  className={`px-3 py-1.5 rounded-md border text-sm transition ${
-                    active
-                      ? "border-blue-500 bg-blue-50 text-blue-800"
-                      : "border-gray-300 hover:border-gray-400"
-                  }`}
-                >
-                  {r.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Step 8: 输出清晰度 */}
-        <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            8. 输出清晰度
-            <span className="ml-2 text-xs text-gray-500 font-normal">
-              （告诉模型按这个标准重绘整张图；糊图 / 截图也能变清晰）
-            </span>
-          </label>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-            {QUALITY_LEVELS.map((q) => {
-              const active = qualityLevel === q.value;
-              return (
-                <button
-                  key={q.value}
-                  type="button"
-                  onClick={() => setQualityLevel(q.value)}
-                  className={`text-left p-3 rounded-md border transition ${
-                    active
-                      ? "border-blue-500 bg-blue-50 ring-1 ring-blue-500"
-                      : "border-gray-300 hover:border-gray-400"
-                  }`}
-                >
-                  <div className="text-sm font-medium text-gray-900">
-                    {q.label}
-                  </div>
-                  <div className="text-xs text-gray-500 mt-1">{q.desc}</div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Step 9: 自定义指令（可选） */}
-        <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            9. 额外指令（可选）
-          </label>
-          <textarea
-            value={userSeed}
-            onChange={(e) => setUserSeed(e.target.value)}
-            rows={2}
-            placeholder="想让模型特别注意的地方，如：'背景保持纯白'、'强化下摆的飘逸感' 等"
-            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-          />
-        </div>
-
-        {/* 成本预估展示 */}
-        {estimate && totalCount > 0 && (
-          <div
-            className={`mb-3 p-3 rounded border text-sm ${
-              estimate.is_unlimited
-                ? "bg-gray-50 border-gray-200 text-gray-700"
-                : estimate.affordable
-                  ? "bg-blue-50 border-blue-200 text-blue-900"
-                  : "bg-red-50 border-red-200 text-red-900"
-            }`}
-          >
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div>
-                预计花费{" "}
-                <b className="text-base">
-                  ¥{estimate.total_cost_cny.toFixed(2)}
-                </b>
-                <span className="text-xs ml-2 opacity-75">
-                  （¥{estimate.per_image_cny.toFixed(2)} × {totalCount} 张）
-                </span>
-              </div>
-              {estimate.is_unlimited ? (
-                <span className="text-xs">无限额度</span>
-              ) : estimate.affordable ? (
-                <span className="text-xs">
-                  余额 ¥{estimate.remaining_cny.toFixed(2)} · 充足
-                </span>
-              ) : (
-                <span className="text-xs font-medium">
-                  ⚠ 余额不足（剩 ¥{estimate.remaining_cny.toFixed(2)}），建议减到{" "}
-                  {estimate.can_afford_count} 张
-                </span>
-              )}
-            </div>
-          </div>
+        {/* 结果区（轮询拿到后展示） */}
+        {polling.data && polling.data.items.length > 0 && (
+          <section className="mt-6 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">生成结果</h2>
+            <JobResultsGrid
+              items={polling.data.items}
+              groupBy="label-prefix"
+              zipFilenamePrefix="recolor"
+              subtitle={
+                polling.data.job.status === "completed"
+                  ? `已完成 · 共 ${polling.data.job.completed_count}/${polling.data.job.total_count}`
+                  : undefined
+              }
+            />
+          </section>
         )}
-
-        <button
-          onClick={handleSubmit}
-          disabled={loading || files.length === 0 || analyzing || totalCount === 0}
-          className="inline-flex items-center px-6 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {loading ? (
-            <>
-              <span className="inline-block w-4 h-4 mr-2 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              生成中（每张 Flash 约 10-20 秒 / Pro 约 2-3 分钟）...
-            </>
-          ) : (
-            `开始换色 · 共 ${totalCount} 张 (${files.length} 图 × ${
-              selectedColorIds.size + (customName.trim() ? 1 : 0)
-            } 色)`
-          )}
-        </button>
-
-        {error && (
-          <div className="mt-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
-            <div className="font-medium mb-1">失败</div>
-            <div className="text-xs whitespace-pre-wrap break-all">{error}</div>
-          </div>
-        )}
-      </section>
-
-      {results && <ResultsView results={results} elapsed={elapsed} />}
-    </main>
+      </div>
+    </AppShell>
   );
 }
 
-/**
- * 解析结果可编辑编辑器
- * - 每个字段是一个 input
- * - 特别的"面料材质"字段在失焦时触发重新匹配材质
- * - "装饰细节"如果是数组，用逗号拼接编辑，保存时还原回数组
- */
+/* ─────────── 右栏 ─────────── */
+
+function RightPanel({
+  aiModels,
+  model,
+  onModelChange,
+  aspectRatio,
+  onAspectChange,
+  qualityLevel,
+  onQualityChange,
+  userSeed,
+  onUserSeedChange,
+  totalCount,
+  filesLen,
+  colorsLen,
+  estimate,
+  submitting,
+  canSubmit,
+  onSubmit,
+  onReset,
+  poll,
+  pollError,
+  onDismissJob,
+}: {
+  aiModels: AiModel[];
+  model: string;
+  onModelChange: (m: string) => void;
+  aspectRatio: string;
+  onAspectChange: (a: string) => void;
+  qualityLevel: QualityLevel;
+  onQualityChange: (q: QualityLevel) => void;
+  userSeed: string;
+  onUserSeedChange: (s: string) => void;
+  totalCount: number;
+  filesLen: number;
+  colorsLen: number;
+  estimate: CostEstimate | null;
+  submitting: boolean;
+  canSubmit: boolean;
+  onSubmit: () => void;
+  onReset: () => void;
+  poll: import("@/lib/hooks/use-job-polling").PollResult | null;
+  pollError: string | null;
+  onDismissJob: () => void;
+}) {
+  return (
+    <div className="p-3 space-y-3 text-sm">
+      <NotificationStack />
+
+      {/* 进度看板 */}
+      {poll ? (
+        <JobProgressPanel
+          job={poll.job}
+          items={poll.items}
+          nextTokenReadyAtMs={poll.next_token_ready_at_ms}
+          serverTimeMs={poll.server_time_ms}
+          onCancelDone={
+            poll.job.status === "completed" ||
+            poll.job.status === "canceled" ||
+            poll.job.status === "failed"
+              ? onDismissJob
+              : undefined
+          }
+        />
+      ) : null}
+      {pollError ? (
+        <div className="p-2 rounded border border-red-200 bg-red-50 text-xs text-red-700">
+          轮询失败：{pollError}
+        </div>
+      ) : null}
+
+      {/* 生成参数 */}
+      <div className="rounded-md border border-gray-200 bg-white p-3 space-y-3">
+        <div className="text-xs font-medium text-gray-500">生成参数</div>
+
+        {/* 模型 */}
+        <div>
+          <div className="text-xs text-gray-500 mb-1">模型</div>
+          {aiModels.length === 0 ? (
+            <div className="text-xs text-gray-500">暂无模型</div>
+          ) : (
+            <select
+              value={model}
+              onChange={(e) => onModelChange(e.target.value)}
+              className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded bg-white"
+            >
+              {aiModels.map((m) => (
+                <option key={m.model_id} value={m.model_id}>
+                  {m.label}
+                  {m.badge ? ` (${m.badge})` : ""}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        {/* 输出比例 */}
+        <div>
+          <div className="text-xs text-gray-500 mb-1">输出比例</div>
+          <select
+            value={aspectRatio}
+            onChange={(e) => onAspectChange(e.target.value)}
+            className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded bg-white"
+          >
+            {ASPECT_RATIOS.map((a) => (
+              <option key={a.value} value={a.value}>
+                {a.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* 质量 */}
+        <div>
+          <div className="text-xs text-gray-500 mb-1">清晰度</div>
+          <select
+            value={qualityLevel}
+            onChange={(e) => onQualityChange(e.target.value as QualityLevel)}
+            className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded bg-white"
+          >
+            {QUALITY_LEVELS.map((q) => (
+              <option key={q.value} value={q.value}>
+                {q.label}
+              </option>
+            ))}
+          </select>
+          <div className="text-[10px] text-gray-400 mt-0.5">
+            {QUALITY_LEVELS.find((q) => q.value === qualityLevel)?.desc}
+          </div>
+        </div>
+
+        {/* Seed */}
+        <div>
+          <div className="text-xs text-gray-500 mb-1">
+            追加指令{" "}
+            <span className="text-gray-400 font-normal">（可选）</span>
+          </div>
+          <textarea
+            value={userSeed}
+            onChange={(e) => onUserSeedChange(e.target.value)}
+            rows={2}
+            placeholder="例：保留蕾丝立体感，背景留白"
+            className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded resize-none"
+          />
+        </div>
+      </div>
+
+      {/* 预估 + 余额 */}
+      {estimate && (
+        <div
+          className={`rounded-md border p-3 text-xs ${
+            estimate.is_unlimited || estimate.affordable
+              ? "border-blue-200 bg-blue-50 text-blue-900"
+              : "border-amber-300 bg-amber-50 text-amber-900"
+          }`}
+        >
+          <div className="flex justify-between items-baseline mb-1.5">
+            <span className="font-medium">预估</span>
+            <span className="text-lg font-bold">
+              ¥{estimate.total_cost_cny.toFixed(2)}
+            </span>
+          </div>
+          <div className="text-[11px] opacity-80">
+            ¥{estimate.per_image_cny.toFixed(3)} × {totalCount} 张
+          </div>
+          <div className="mt-2 pt-2 border-t border-current/20 text-[11px]">
+            {estimate.is_unlimited ? (
+              <span>无限额度</span>
+            ) : (
+              <span>
+                余额 ¥{estimate.remaining_cny.toFixed(2)}
+                {estimate.affordable ? " · 充足" : ` · 仅能做 ${estimate.can_afford_count} 张`}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 提交按钮 */}
+      <div className="space-y-2">
+        <button
+          onClick={onSubmit}
+          disabled={!canSubmit || submitting}
+          className="w-full px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+        >
+          {submitting ? (
+            <>
+              <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              提交中…
+            </>
+          ) : (
+            <>
+              开始换色{" "}
+              <span className="text-xs opacity-80">
+                · {totalCount} 张（{filesLen} 图 × {colorsLen} 色）
+              </span>
+            </>
+          )}
+        </button>
+        <div className="flex gap-2">
+          <ResetButton
+            label="清空"
+            size="sm"
+            variant="outline"
+            onConfirm={onReset}
+            confirmDetail="将清除已上传的图片、解析结果、选择的颜色和预设。当前正在进行的任务不受影响（可在右栏继续查看）。"
+          />
+          <div className="text-[10px] text-gray-400 flex-1 self-center">
+            刷新浏览器会清空所有状态（除 GC 中的任务）
+          </div>
+        </div>
+      </div>
+
+      <div className="text-[10px] text-gray-400 text-center pt-2">
+        受 Google quota 限制，每分钟最多 2 张
+      </div>
+    </div>
+  );
+}
+
+/* ─────────── 子组件 ─────────── */
+
 function GarmentAttrsEditor({
   attrs,
   onChange,
@@ -965,24 +1126,19 @@ function GarmentAttrsEditor({
   onChange: (key: string, value: string) => void;
   onMaterialTextBlur: (value: string) => void;
 }) {
-  const entries = Object.entries(attrs).filter(
-    ([key]) => !key.startsWith("_"),
-  );
+  const entries = Object.entries(attrs).filter(([key]) => !key.startsWith("_"));
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
       {entries.map(([key, value]) => {
         const strValue = Array.isArray(value) ? value.join("、") : String(value);
         const isMaterial = key === "面料材质";
         return (
-          <div
-            key={key}
-            className="p-2 bg-gray-50 border border-gray-200 rounded"
-          >
+          <div key={key} className="p-2 bg-gray-50 border border-gray-200 rounded">
             <div className="text-xs text-gray-500 mb-1">
               {key}
               {isMaterial && (
                 <span className="ml-1 text-[10px] text-blue-500">
-                  （失焦会重新匹配材质）
+                  （失焦重匹配）
                 </span>
               )}
             </div>
@@ -990,240 +1146,14 @@ function GarmentAttrsEditor({
               type="text"
               value={strValue}
               onChange={(e) => onChange(key, e.target.value)}
-              onBlur={isMaterial ? (e) => onMaterialTextBlur(e.target.value) : undefined}
+              onBlur={
+                isMaterial ? (e) => onMaterialTextBlur(e.target.value) : undefined
+              }
               className="w-full px-2 py-1 text-sm border border-gray-300 rounded bg-white focus:border-blue-500 focus:outline-none"
             />
           </div>
         );
       })}
     </div>
-  );
-}
-
-function ResultsView({
-  results,
-  elapsed,
-}: {
-  results: RecolorResult[];
-  elapsed: number | null;
-}) {
-  // 多选 state
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [zipping, setZipping] = useState(false);
-  const [zipProgress, setZipProgress] = useState<{ done: number; total: number } | null>(null);
-
-  // 每张图一个稳定的 key：color_id + image_index
-  const keyOf = (r: RecolorResult) => `${r.color_id}:${r.image_index}`;
-
-  const successful = useMemo(
-    () => results.filter((r) => r.success && r.image_url),
-    [results],
-  );
-
-  const groups = useMemo(() => {
-    const map = new Map<
-      number,
-      { color_name: string; hex: string; items: RecolorResult[] }
-    >();
-    for (const r of results) {
-      if (!map.has(r.color_id)) {
-        map.set(r.color_id, {
-          color_name: r.color_name,
-          hex: r.hex,
-          items: [],
-        });
-      }
-      map.get(r.color_id)!.items.push(r);
-    }
-    for (const g of map.values()) g.items.sort((a, b) => a.image_index - b.image_index);
-    return Array.from(map.values());
-  }, [results]);
-
-  function toggle(key: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }
-
-  function selectAll() {
-    setSelected(new Set(successful.map(keyOf)));
-  }
-
-  function selectNone() {
-    setSelected(new Set());
-  }
-
-  async function downloadSelected() {
-    const chosen = successful.filter((r) => selected.has(keyOf(r)));
-    if (chosen.length === 0) return;
-    setZipping(true);
-    setZipProgress({ done: 0, total: chosen.length });
-    try {
-      const entries = chosen.map((r) => ({
-        url: r.image_url!,
-        filename: `${r.color_name}_${String(r.image_index + 1).padStart(2, "0")}.png`,
-      }));
-      await downloadImagesAsZip(entries, `recolor_${Date.now()}.zip`, (done, total) =>
-        setZipProgress({ done, total }),
-      );
-    } finally {
-      setZipping(false);
-      setZipProgress(null);
-    }
-  }
-
-  async function downloadAll() {
-    if (successful.length === 0) return;
-    setZipping(true);
-    setZipProgress({ done: 0, total: successful.length });
-    try {
-      const entries = successful.map((r) => ({
-        url: r.image_url!,
-        filename: `${r.color_name}_${String(r.image_index + 1).padStart(2, "0")}.png`,
-      }));
-      await downloadImagesAsZip(entries, `recolor_all_${Date.now()}.zip`, (done, total) =>
-        setZipProgress({ done, total }),
-      );
-    } finally {
-      setZipping(false);
-      setZipProgress(null);
-    }
-  }
-
-  return (
-    <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-      <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
-        <h2 className="text-lg font-semibold text-gray-900">生成结果</h2>
-        {elapsed !== null && (
-          <span className="text-xs text-gray-500">
-            总耗时 {(elapsed / 1000).toFixed(1)}s · 共 {results.length} 张 · 成功{" "}
-            {successful.length}
-          </span>
-        )}
-      </div>
-
-      {successful.length > 0 && (
-        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded flex flex-wrap items-center gap-2">
-          <span className="text-sm text-blue-800">
-            已选 <b>{selected.size}</b> / {successful.length}
-          </span>
-          <button
-            onClick={selectAll}
-            className="px-2 py-1 text-xs bg-white border border-blue-300 text-blue-700 rounded hover:bg-blue-100"
-          >
-            全选
-          </button>
-          <button
-            onClick={selectNone}
-            className="px-2 py-1 text-xs bg-white border border-gray-300 text-gray-700 rounded hover:bg-gray-100"
-          >
-            清除
-          </button>
-          <button
-            onClick={downloadSelected}
-            disabled={selected.size === 0 || zipping}
-            className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-          >
-            {zipping && zipProgress
-              ? `打包中 ${zipProgress.done}/${zipProgress.total}`
-              : `下载选中 (ZIP)`}
-          </button>
-          <button
-            onClick={downloadAll}
-            disabled={zipping}
-            className="px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
-          >
-            {zipping ? "打包中..." : "下载全部 (ZIP)"}
-          </button>
-        </div>
-      )}
-
-      <div className="space-y-6">
-        {groups.map((g) => (
-          <div key={g.color_name} className="border-t border-gray-200 pt-4">
-            <div className="flex items-center gap-2 mb-3">
-              <span
-                className="w-5 h-5 rounded border border-gray-300"
-                style={{ backgroundColor: g.hex }}
-              />
-              <span className="text-sm font-semibold text-gray-900">
-                {g.color_name}
-              </span>
-              <span className="text-xs text-gray-500 font-mono">{g.hex}</span>
-              <span className="text-xs text-gray-400">
-                · {g.items.length} 张
-              </span>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-              {g.items.map((r) => {
-                const k = keyOf(r);
-                const isSelected = selected.has(k);
-                return (
-                  <div
-                    key={k}
-                    className={`relative border rounded-md overflow-hidden transition ${
-                      isSelected
-                        ? "border-blue-500 ring-2 ring-blue-500"
-                        : "border-gray-200"
-                    }`}
-                  >
-                    {r.success && r.image_url && (
-                      <button
-                        onClick={() => toggle(k)}
-                        className={`absolute top-2 left-2 z-10 w-5 h-5 rounded border-2 flex items-center justify-center text-xs ${
-                          isSelected
-                            ? "bg-blue-600 border-blue-600 text-white"
-                            : "bg-white/80 border-gray-400"
-                        }`}
-                      >
-                        {isSelected ? "✓" : ""}
-                      </button>
-                    )}
-                    <div
-                      className="aspect-[3/4] bg-gray-100 flex items-center justify-center cursor-pointer"
-                      onClick={() => r.success && r.image_url && toggle(k)}
-                    >
-                      {r.success && r.image_url ? (
-                        /* eslint-disable-next-line @next/next/no-img-element */
-                        <img
-                          src={r.image_url}
-                          alt={r.image_label}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <div className="text-xs text-red-600 p-4 text-center">
-                          失败：{r.error || "未知错误"}
-                        </div>
-                      )}
-                    </div>
-                    <div className="p-2 flex items-center justify-between text-xs">
-                      <span className="text-gray-500 truncate">
-                        #{r.image_index + 1} {r.image_label}
-                      </span>
-                      {r.success && r.image_url && (
-                        <button
-                          onClick={() =>
-                            downloadSingleImage(
-                              r.image_url!,
-                              `${g.color_name}_${r.image_index + 1}.png`,
-                            )
-                          }
-                          className="text-blue-600 hover:underline shrink-0 ml-2"
-                        >
-                          下载
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
   );
 }

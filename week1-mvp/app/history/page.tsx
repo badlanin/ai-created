@@ -1,6 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Thumbnail, ThumbnailBadge } from "@/app/_components/thumbnail";
+import {
+  downloadImagesAsZip,
+  downloadSingleImage,
+} from "@/lib/download-zip";
 
 type Generation = {
   id: number;
@@ -44,6 +49,17 @@ function formatTime(unix: number): string {
   });
 }
 
+/** 安全从 JSON 字符串拿 URL 列表 */
+function parseOutputImages(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 export default function HistoryPage() {
   const [me, setMe] = useState<Me | null>(null);
   const [items, setItems] = useState<Generation[]>([]);
@@ -56,8 +72,15 @@ export default function HistoryPage() {
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<number | null>(null);
 
+  // 多选状态：以 URL 作为稳定 key，跨分页保持
+  const [selectedUrls, setSelectedUrls] = useState<Set<string>>(new Set());
+  const [zipping, setZipping] = useState(false);
+  const [zipProgress, setZipProgress] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
+
   useEffect(() => {
-    // 拿当前用户
     fetch("/api/me")
       .then((r) => (r.ok ? r.json() : null))
       .then(setMe)
@@ -88,6 +111,79 @@ export default function HistoryPage() {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
+    }
+  }
+
+  /** 当前页所有可选 URL */
+  const currentPageUrls = useMemo(() => {
+    const urls: string[] = [];
+    for (const g of items) {
+      for (const u of parseOutputImages(g.output_images)) urls.push(u);
+    }
+    return urls;
+  }, [items]);
+
+  /** 当前页有多少个被选中（UI 用） */
+  const currentPageSelectedCount = useMemo(
+    () => currentPageUrls.filter((u) => selectedUrls.has(u)).length,
+    [currentPageUrls, selectedUrls],
+  );
+
+  function toggleUrl(url: string) {
+    setSelectedUrls((prev) => {
+      const next = new Set(prev);
+      if (next.has(url)) next.delete(url);
+      else next.add(url);
+      return next;
+    });
+  }
+
+  function toggleRow(g: Generation) {
+    const urls = parseOutputImages(g.output_images);
+    if (urls.length === 0) return;
+    setSelectedUrls((prev) => {
+      const next = new Set(prev);
+      const allSelected = urls.every((u) => next.has(u));
+      if (allSelected) {
+        for (const u of urls) next.delete(u);
+      } else {
+        for (const u of urls) next.add(u);
+      }
+      return next;
+    });
+  }
+
+  function selectAllOnPage() {
+    setSelectedUrls((prev) => {
+      const next = new Set(prev);
+      for (const u of currentPageUrls) next.add(u);
+      return next;
+    });
+  }
+
+  function clearAllSelected() {
+    setSelectedUrls(new Set());
+  }
+
+  async function downloadSelected() {
+    const chosen = [...selectedUrls];
+    if (chosen.length === 0) return;
+    setZipping(true);
+    setZipProgress({ done: 0, total: chosen.length });
+    try {
+      const entries = chosen.map((url, i) => {
+        // URL 末尾的 filename 作为文件名，加索引防重
+        const fname = url.split("/").pop() || `image_${i + 1}.png`;
+        return { url, filename: `${String(i + 1).padStart(3, "0")}_${fname}` };
+      });
+      await downloadImagesAsZip(
+        entries,
+        `history_${Date.now()}.zip`,
+        (done, total) => setZipProgress({ done, total }),
+      );
+    } finally {
+      setZipping(false);
+      setZipProgress(null);
     }
   }
 
@@ -138,6 +234,44 @@ export default function HistoryPage() {
         </div>
       </section>
 
+      {/* 多选工具栏（选中任何图就显示） */}
+      {(selectedUrls.size > 0 || currentPageSelectedCount > 0) && (
+        <section className="sticky top-2 z-20 bg-blue-50 border border-blue-200 rounded-lg shadow-sm p-3 mb-4 flex flex-wrap items-center gap-2">
+          <span className="text-sm text-blue-900">
+            已选 <b>{selectedUrls.size}</b> 张
+            {currentPageSelectedCount !== selectedUrls.size ? (
+              <span className="ml-1 text-[11px] text-blue-600">
+                （本页 {currentPageSelectedCount}/{currentPageUrls.length}）
+              </span>
+            ) : null}
+          </span>
+          <button
+            onClick={selectAllOnPage}
+            className="px-2 py-1 text-xs bg-white border border-blue-300 text-blue-700 rounded hover:bg-blue-100"
+          >
+            全选本页
+          </button>
+          <button
+            onClick={clearAllSelected}
+            className="px-2 py-1 text-xs bg-white border border-gray-300 text-gray-700 rounded hover:bg-gray-100"
+          >
+            清空选择
+          </button>
+          <button
+            onClick={downloadSelected}
+            disabled={selectedUrls.size === 0 || zipping}
+            className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+          >
+            {zipping && zipProgress
+              ? `打包中 ${zipProgress.done}/${zipProgress.total}`
+              : `下载选中 ZIP`}
+          </button>
+          <span className="ml-auto text-[11px] text-blue-600">
+            翻页也会保留选中项
+          </span>
+        </section>
+      )}
+
       {error && (
         <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
           {error}
@@ -157,8 +291,13 @@ export default function HistoryPage() {
               key={g.id}
               gen={g}
               isExpanded={expanded === g.id}
-              onToggle={() => setExpanded((prev) => (prev === g.id ? null : g.id))}
+              onToggleExpand={() =>
+                setExpanded((prev) => (prev === g.id ? null : g.id))
+              }
               showUsername={scope === "all"}
+              selectedUrls={selectedUrls}
+              onToggleUrl={toggleUrl}
+              onToggleRow={() => toggleRow(g)}
             />
           ))}
         </ul>
@@ -189,16 +328,24 @@ export default function HistoryPage() {
   );
 }
 
+/* ─────────── 行 ─────────── */
+
 function GenerationRow({
   gen,
   isExpanded,
-  onToggle,
+  onToggleExpand,
   showUsername,
+  selectedUrls,
+  onToggleUrl,
+  onToggleRow,
 }: {
   gen: Generation;
   isExpanded: boolean;
-  onToggle: () => void;
+  onToggleExpand: () => void;
   showUsername: boolean;
+  selectedUrls: Set<string>;
+  onToggleUrl: (url: string) => void;
+  onToggleRow: () => void;
 }) {
   const kindInfo = KIND_LABEL[gen.kind] || {
     label: gen.kind,
@@ -206,22 +353,41 @@ function GenerationRow({
     color: "bg-gray-100 text-gray-700",
   };
 
-  let outputImages: string[] = [];
-  try {
-    outputImages = gen.output_images ? JSON.parse(gen.output_images) : [];
-  } catch {}
+  const outputImages = parseOutputImages(gen.output_images);
+  const rowAllSelected =
+    outputImages.length > 0 && outputImages.every((u) => selectedUrls.has(u));
+  const rowPartialSelected =
+    !rowAllSelected && outputImages.some((u) => selectedUrls.has(u));
 
   let params: Record<string, unknown> = {};
   try {
     params = gen.params ? JSON.parse(gen.params) : {};
   } catch {}
 
+  const visibleCount = isExpanded ? outputImages.length : 8;
+
   return (
     <li className="bg-white rounded-lg border border-gray-200 overflow-hidden">
       <div className="p-4">
         <div className="flex items-start justify-between gap-4">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1">
+          <div className="flex-1 min-w-0 space-y-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              {outputImages.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={onToggleRow}
+                  title={rowAllSelected ? "取消本条全部选择" : "全选本条输出图"}
+                  className={`w-5 h-5 rounded border-2 flex items-center justify-center text-xs shrink-0 ${
+                    rowAllSelected
+                      ? "bg-blue-600 border-blue-600 text-white"
+                      : rowPartialSelected
+                        ? "bg-blue-200 border-blue-500 text-blue-800"
+                        : "bg-white border-gray-400"
+                  }`}
+                >
+                  {rowAllSelected ? "✓" : rowPartialSelected ? "—" : ""}
+                </button>
+              ) : null}
               <span
                 className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${kindInfo.color}`}
               >
@@ -251,7 +417,7 @@ function GenerationRow({
             <ParamsSummary kind={gen.kind} params={params} />
           </div>
           <button
-            onClick={onToggle}
+            onClick={onToggleExpand}
             className="text-xs text-blue-600 hover:underline shrink-0"
           >
             {isExpanded ? "收起" : "详情"}
@@ -259,27 +425,72 @@ function GenerationRow({
         </div>
 
         {outputImages.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-2">
-            {outputImages.slice(0, isExpanded ? undefined : 8).map((url, i) => (
-              <a
-                key={i}
-                href={url}
-                target="_blank"
-                rel="noopener"
-                className="block"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
+          <div className="mt-3 grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2">
+            {outputImages.slice(0, visibleCount).map((url, i) => {
+              const isSel = selectedUrls.has(url);
+              return (
+                <Thumbnail
+                  key={url}
                   src={url}
                   alt={`输出 ${i + 1}`}
-                  className="w-20 h-20 object-cover rounded border border-gray-200 hover:border-blue-500"
+                  ratio="3/4"
+                  fit="contain"
+                  selected={isSel}
+                  onClick={() => onToggleUrl(url)}
+                  checkbox={
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onToggleUrl(url);
+                      }}
+                      className={`w-5 h-5 rounded border-2 flex items-center justify-center text-xs ${
+                        isSel
+                          ? "bg-blue-600 border-blue-600 text-white"
+                          : "bg-white/90 border-gray-400"
+                      }`}
+                    >
+                      {isSel ? "✓" : ""}
+                    </button>
+                  }
+                  hoverOverlay={
+                    <div className="flex flex-col gap-1">
+                      <a
+                        href={url}
+                        target="_blank"
+                        rel="noopener"
+                        onClick={(e) => e.stopPropagation()}
+                        className="px-3 py-1 bg-white/90 text-gray-800 text-xs rounded hover:bg-white"
+                      >
+                        查看原图
+                      </a>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const fname =
+                            url.split("/").pop() || `image_${i + 1}.png`;
+                          downloadSingleImage(url, fname);
+                        }}
+                        className="px-3 py-1 bg-white/90 text-gray-800 text-xs rounded hover:bg-white"
+                      >
+                        下载单张
+                      </button>
+                    </div>
+                  }
+                  badge={
+                    isSel ? (
+                      <ThumbnailBadge tone="blue">已选</ThumbnailBadge>
+                    ) : undefined
+                  }
                 />
-              </a>
-            ))}
+              );
+            })}
             {!isExpanded && outputImages.length > 8 && (
-              <div className="w-20 h-20 rounded border border-dashed border-gray-300 flex items-center justify-center text-xs text-gray-500">
+              <button
+                onClick={onToggleExpand}
+                className="aspect-[3/4] rounded-md border border-dashed border-gray-300 bg-gray-50 flex items-center justify-center text-xs text-gray-500 hover:border-blue-400 hover:text-blue-600"
+              >
                 +{outputImages.length - 8}
-              </div>
+              </button>
             )}
           </div>
         )}
@@ -315,7 +526,8 @@ function ParamsSummary({
   const chips: string[] = [];
   if (params.model) chips.push(`模型 ${params.model}`);
   if (params.aspect_ratio) chips.push(`比例 ${params.aspect_ratio}`);
-  if (params.quality_level) chips.push(`${String(params.quality_level).toUpperCase()}`);
+  if (params.quality_level)
+    chips.push(`${String(params.quality_level).toUpperCase()}`);
 
   if (kind === "recolor") {
     const colors = Array.isArray(params.colors)

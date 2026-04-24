@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { NavBar } from "./_components/nav-bar";
+import { ConditionalNav } from "./_components/conditional-nav";
+import { AppProviders } from "./_components/providers";
 import { getCurrentUser, ensureInitialAdmin } from "@/lib/auth";
 
 export const metadata: Metadata = {
@@ -22,8 +23,10 @@ export default async function RootLayout({
   return (
     <html lang="zh-CN">
       <body className="bg-gray-50 min-h-screen">
-        {user && <NavBar user={user} />}
-        {children}
+        <AppProviders>
+          {user && <ConditionalNav user={user} />}
+          {children}
+        </AppProviders>
       </body>
     </html>
   );

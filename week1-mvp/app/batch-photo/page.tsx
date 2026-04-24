@@ -1,13 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import {
-  downloadImagesAsZip,
-  downloadSingleImage,
-} from "@/lib/download-zip";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ImageCropper } from "@/app/_components/image-cropper";
+import { AppShell } from "@/app/_components/app-shell";
+import { NotificationStack, useNotifications, notifyHelpers } from "@/app/_components/notification-stack";
+import { JobProgressPanel } from "@/app/_components/job-progress-panel";
+import { JobResultsGrid } from "@/app/_components/job-results-grid";
+import { Thumbnail, ThumbnailBadge } from "@/app/_components/thumbnail";
+import { ResetButton } from "@/app/_components/reset-button";
+import { useCurrentUser } from "@/lib/hooks/use-current-user";
+import { useJobPolling } from "@/lib/hooks/use-job-polling";
+import { useSlotStore } from "@/lib/stores/task-store";
 
-// ============ Types ============
+/* ─────────── 类型 ─────────── */
 type AiModel = {
   id: number;
   model_id: string;
@@ -60,15 +65,15 @@ type Pose = {
   tags: string | null;
 };
 type GarmentAttrs = Record<string, string | string[]>;
-type BatchResult = {
-  pose_id: number;
-  pose_name: string;
-  pose_type: string;
-  success: boolean;
-  image_url?: string;
-  error?: string;
-  duration_ms?: number;
-};
+
+interface CostEstimate {
+  per_image_cny: number;
+  total_cost_cny: number;
+  affordable: boolean;
+  can_afford_count: number;
+  is_unlimited: boolean;
+  remaining_cny: number;
+}
 
 const POSE_TYPE_LABEL: Record<PoseType, string> = {
   full: "全身",
@@ -89,20 +94,28 @@ const QUALITY_LEVELS: Array<{
   label: string;
   desc: string;
 }> = [
-  {
-    value: "2k",
-    label: "2K（推荐）",
-    desc: "~1792×2400 · 性价比最佳",
-  },
-  {
-    value: "4k",
-    label: "4K 超清",
-    desc: "~3584×4800 · 慢 + 贵 15x",
-  },
-  { value: "hd", label: "HD", desc: "~896×1200 · 最快" },
+  { value: "2k", label: "2K 高清（推荐）", desc: "~1792×2400 · 性价比最佳" },
+  { value: "4k", label: "4K 超清", desc: "~3584×4800 · 贵 15x" },
+  { value: "hd", label: "HD 清晰", desc: "~896×1200 · 最省" },
 ];
 
-// ============ Helpers ============
+/* ─────────── 3 槽位配置 ─────────── */
+
+const PRODUCT_SLOTS = [
+  { key: "front", label: "正面", hint: "必需" },
+  { key: "back", label: "背面", hint: "建议" },
+  { key: "detail", label: "细节", hint: "可选" },
+] as const;
+
+/** 单个槽位的状态（空 = null） */
+interface SlotFile {
+  file: File;
+  blob: Blob;
+  cropped: boolean;
+}
+
+/* ─────────── 客户端压缩 ─────────── */
+
 async function resizeImage(file: File, maxSize = 2048): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -127,9 +140,14 @@ async function resizeImage(file: File, maxSize = 2048): Promise<Blob> {
   });
 }
 
-// ============ Page ============
+/* ─────────── 页面主体 ─────────── */
+
 export default function BatchPhotoPage() {
-  // ---- Libraries ----
+  const user = useCurrentUser();
+  const slotStore = useSlotStore("batchPhoto");
+  const { push } = useNotifications();
+
+  // ─── 素材库 ───
   const [identities, setIdentities] = useState<Identity[]>([]);
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [templates, setTemplates] = useState<PromptTemplate[]>([]);
@@ -139,16 +157,17 @@ export default function BatchPhotoPage() {
   const [aiModels, setAiModels] = useState<AiModel[]>([]);
   const [allMaterials, setAllMaterials] = useState<Material[]>([]);
 
-  // ---- Selections ----
-  const [files, setFiles] = useState<File[]>([]);
-  const [compressedBlobs, setCompressedBlobs] = useState<Blob[]>([]);
-  const [croppedFlags, setCroppedFlags] = useState<boolean[]>([]);
-  const [croppingIndex, setCroppingIndex] = useState<number | null>(null);
+  // ─── 产品图（3 固定槽位）───
+  const [slots, setSlots] = useState<(SlotFile | null)[]>([null, null, null]);
+  const [croppingSlot, setCroppingSlot] = useState<number | null>(null);
+
+  // ─── 解析 ───
   const [analyzing, setAnalyzing] = useState(false);
   const [garmentAttrs, setGarmentAttrs] = useState<GarmentAttrs | null>(null);
   const [selectedMaterialIds, setSelectedMaterialIds] = useState<number[]>([]);
   const [showMaterialPicker, setShowMaterialPicker] = useState(false);
 
+  // ─── 选择 ───
   const [identityId, setIdentityId] = useState<number | null>(null);
   const [sceneId, setSceneId] = useState<number | null>(null);
   const [templateId, setTemplateId] = useState<number | null>(null);
@@ -162,23 +181,15 @@ export default function BatchPhotoPage() {
   const [qualityLevel, setQualityLevel] = useState<QualityLevel>("2k");
   const [userSeed, setUserSeed] = useState("");
 
-  // 成本预估
-  const [estimate, setEstimate] = useState<{
-    per_image_cny: number;
-    total_cost_cny: number;
-    affordable: boolean;
-    can_afford_count: number;
-    is_unlimited: boolean;
-    remaining_cny: number;
-  } | null>(null);
+  // ─── 估价 + 提交 ───
+  const [estimate, setEstimate] = useState<CostEstimate | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [activeJobId, setActiveJobId] = useState<string | null>(
+    slotStore.get<string>("activeJobId") ?? null,
+  );
+  const [activeJobCount, setActiveJobCount] = useState(0);
 
-  // ---- Submission state ----
-  const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState<BatchResult[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [elapsed, setElapsed] = useState<number | null>(null);
-
-  // ==== Init load all libraries ====
+  /* ─── 初始加载 + slot 恢复 ─── */
   useEffect(() => {
     const load = async (url: string) =>
       fetch(url).then((r) => (r.ok ? r.json() : []));
@@ -194,7 +205,7 @@ export default function BatchPhotoPage() {
       load("/api/materials"),
     ])
       .then(
-        ([ids, scs, tpls, photo, real, poses, models, materials]: [
+        ([ids, scs, tpls, photo, real, pos, models, mats]: [
           Identity[],
           Scene[],
           PromptTemplate[],
@@ -209,86 +220,242 @@ export default function BatchPhotoPage() {
           setTemplates(tpls);
           setPhotoParams(photo);
           setRealisms(real);
-          setPoses(poses);
+          setPoses(pos);
           setAiModels(models);
-          setAllMaterials(materials);
+          setAllMaterials(mats);
 
-          // 默认选中
-          if (tpls[0]) setTemplateId(tpls[0].id);
+          // 默认选中（slot 有值优先）
+          const savedTpl = slotStore.get<number>("templateId");
+          if (savedTpl && tpls.find((t) => t.id === savedTpl)) {
+            setTemplateId(savedTpl);
+          } else if (tpls[0]) {
+            setTemplateId(tpls[0].id);
+          }
+          const savedPhoto = slotStore.get<number>("photographyId");
           const defPhoto =
             photo.find((p) => p.is_default === 1)?.id || photo[0]?.id;
-          if (defPhoto) setPhotographyId(defPhoto);
+          setPhotographyId(savedPhoto ?? defPhoto ?? null);
+          const savedReal = slotStore.get<number>("realismId");
           const defReal =
             real.find((r) => r.is_default === 1)?.id || real[0]?.id;
-          if (defReal) setRealismId(defReal);
+          setRealismId(savedReal ?? defReal ?? null);
+          const savedModel = slotStore.get<string>("modelId");
           const defModel =
             models.find((m) => m.is_default === 1)?.model_id ||
             models[0]?.model_id;
-          if (defModel) setModelId(defModel);
+          setModelId(savedModel ?? defModel ?? "");
         },
       )
       .catch(() => {});
+
+    // 恢复 slot 其他状态
+    const savedIdentity = slotStore.get<number>("identityId");
+    if (savedIdentity) setIdentityId(savedIdentity);
+    const savedScene = slotStore.get<number>("sceneId");
+    if (savedScene) setSceneId(savedScene);
+    const savedPoses = slotStore.get<number[]>("selectedPoseIds");
+    if (savedPoses) setSelectedPoseIds(new Set(savedPoses));
+    const savedAspect = slotStore.get<string>("aspectRatio");
+    if (savedAspect) setAspectRatio(savedAspect);
+    const savedQuality = slotStore.get<QualityLevel>("qualityLevel");
+    if (savedQuality) setQualityLevel(savedQuality);
+    const savedSeed = slotStore.get<string>("userSeed");
+    if (savedSeed) setUserSeed(savedSeed);
+    const savedGarment = slotStore.get<GarmentAttrs>("garmentAttrs");
+    if (savedGarment) setGarmentAttrs(savedGarment);
+    const savedMatIds = slotStore.get<number[]>("selectedMaterialIds");
+    if (savedMatIds) setSelectedMaterialIds(savedMatIds);
+
+    // 活跃任务数
+    fetch("/api/jobs/active")
+      .then((r) => (r.ok ? r.json() : { count: 0 }))
+      .then((d) => setActiveJobCount(d.count || 0))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ==== File upload (不自动解析) ====
-  async function onPickFiles(fl: FileList | null) {
-    if (!fl || fl.length === 0) {
-      setFiles([]);
-      setCompressedBlobs([]);
-      setGarmentAttrs(null);
-      setSelectedMaterialIds([]);
-      setResults(null);
-      setError(null);
+  /* ─── 持久化 ─── */
+  useEffect(() => {
+    slotStore.merge({
+      identityId,
+      sceneId,
+      templateId,
+      photographyId,
+      realismId,
+      modelId,
+      aspectRatio,
+      qualityLevel,
+      userSeed,
+      garmentAttrs,
+      selectedMaterialIds,
+      selectedPoseIds: Array.from(selectedPoseIds),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    identityId,
+    sceneId,
+    templateId,
+    photographyId,
+    realismId,
+    modelId,
+    aspectRatio,
+    qualityLevel,
+    userSeed,
+    garmentAttrs,
+    selectedMaterialIds,
+    selectedPoseIds,
+  ]);
+
+  /* ─── 估价 ─── */
+  useEffect(() => {
+    const count = selectedPoseIds.size;
+    if (count === 0 || !modelId) {
+      setEstimate(null);
       return;
     }
-    const picked = Array.from(fl).slice(0, 3);
-    setFiles(picked);
-    setCompressedBlobs([]);
-    setCroppedFlags(new Array(picked.length).fill(false));
-    setGarmentAttrs(null);
-    setSelectedMaterialIds([]);
-    setResults(null);
-    setError(null);
+    const t = setTimeout(() => {
+      fetch("/api/billing/estimate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: modelId,
+          quality_level: qualityLevel,
+          image_count: count,
+        }),
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (!data) return;
+          setEstimate({
+            per_image_cny: data.estimate.per_image_cny,
+            total_cost_cny: data.estimate.total_cost_cny,
+            affordable: data.affordable,
+            can_afford_count: data.can_afford_count,
+            is_unlimited: data.budget.is_unlimited,
+            remaining_cny: data.budget.remaining_cny,
+          });
+        })
+        .catch(() => setEstimate(null));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [selectedPoseIds.size, modelId, qualityLevel]);
 
+  /* ─── 轮询 ─── */
+  const handleJobFinished = useCallback(() => {
+    fetch("/api/jobs/active")
+      .then((r) => (r.ok ? r.json() : { count: 0 }))
+      .then((d) => setActiveJobCount(d.count || 0))
+      .catch(() => {});
+  }, []);
+
+  const polling = useJobPolling(activeJobId, {
+    intervalMs: 1500,
+    onFinished: (result) => {
+      handleJobFinished();
+      const { job } = result;
+      if (job.status === "completed") {
+        notifyHelpers.success(
+          push,
+          `批量摄影图完成 · ${job.completed_count}/${job.total_count}`,
+          job.failed_count > 0
+            ? `${job.failed_count} 张失败，其余已完成。`
+            : undefined,
+        );
+      } else if (job.status === "canceled") {
+        notifyHelpers.info(
+          push,
+          `任务已停止`,
+          `已完成 ${job.completed_count} / 共 ${job.total_count}`,
+        );
+      } else if (job.status === "failed") {
+        notifyHelpers.error(
+          push,
+          `任务失败`,
+          job.error_message || "请查看详细日志",
+        );
+      }
+    },
+  });
+
+  /* ─── 槽位操作 ─── */
+
+  async function setSlotFromFile(slotIdx: number, file: File) {
     try {
-      const blobs = await Promise.all(picked.map((f) => resizeImage(f, 2048)));
-      setCompressedBlobs(blobs);
+      const blob = await resizeImage(file, 2048);
+      setSlots((prev) => {
+        const next = [...prev];
+        next[slotIdx] = { file, blob, cropped: false };
+        return next;
+      });
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      notifyHelpers.error(push, "图片读取失败", e instanceof Error ? e.message : String(e));
     }
   }
 
-  function onCropConfirm(i: number, blob: Blob) {
-    setCompressedBlobs((prev) => {
-      const next = [...prev];
-      next[i] = blob;
-      return next;
-    });
-    setCroppedFlags((prev) => {
-      const next = [...prev];
-      next[i] = true;
-      return next;
-    });
-    setCroppingIndex(null);
+  function onSlotPick(slotIdx: number, fileList: FileList | null) {
+    if (!fileList || fileList.length === 0) return;
+    // 如果用户一次选了多张，自动分到后续空槽位
+    const files = Array.from(fileList);
+    if (files.length === 1) {
+      void setSlotFromFile(slotIdx, files[0]);
+      return;
+    }
+    let pointer = slotIdx;
+    for (const f of files) {
+      if (pointer >= slots.length) break;
+      void setSlotFromFile(pointer, f);
+      pointer += 1;
+    }
   }
 
+  function onSlotRemove(slotIdx: number) {
+    setSlots((prev) => {
+      const next = [...prev];
+      next[slotIdx] = null;
+      return next;
+    });
+    // 清掉解析（原图变了）
+    if (slotIdx === 0) {
+      setGarmentAttrs(null);
+      setSelectedMaterialIds([]);
+    }
+  }
+
+  function onCropConfirm(slotIdx: number, blob: Blob) {
+    setSlots((prev) => {
+      const next = [...prev];
+      const cur = next[slotIdx];
+      if (cur) {
+        next[slotIdx] = { ...cur, blob, cropped: true };
+      }
+      return next;
+    });
+    setCroppingSlot(null);
+  }
+
+  /* ─── 解析 ─── */
   async function handleAnalyze() {
-    if (compressedBlobs.length === 0 || files.length === 0) {
-      setError("请先上传图片");
+    const slot = slots[0];
+    if (!slot) {
+      notifyHelpers.warn(push, "请先上传正面图");
       return;
     }
     setAnalyzing(true);
-    setError(null);
     try {
       const fd = new FormData();
-      fd.append("image0", compressedBlobs[0], files[0].name);
+      fd.append("image0", slot.blob, slot.file.name);
       const res = await fetch("/api/analyze", { method: "POST", body: fd });
       if (!res.ok) throw new Error((await res.json()).error || res.statusText);
       const attrs = (await res.json()) as GarmentAttrs;
       setGarmentAttrs(attrs);
       await rematchMaterials(String(attrs["面料材质"] || ""));
+      notifyHelpers.success(push, "款式解析完成");
     } catch (e) {
-      setError("款式解析失败：" + (e instanceof Error ? e.message : String(e)));
+      notifyHelpers.error(
+        push,
+        "款式解析失败",
+        e instanceof Error ? e.message : String(e),
+      );
     } finally {
       setAnalyzing(false);
     }
@@ -313,13 +480,13 @@ export default function BatchPhotoPage() {
   }
 
   function updateGarmentAttr(key: string, value: string) {
-    setGarmentAttrs((prev) => {
-      if (!prev) return prev;
-      return { ...prev, [key]: value };
-    });
+    setGarmentAttrs((prev) => (prev ? { ...prev, [key]: value } : prev));
   }
 
-  // ==== Derived ====
+  /* ─── 派生 ─── */
+  const filledSlots = slots.filter((s): s is SlotFile => s !== null);
+  const hasProductImages = filledSlots.length > 0;
+
   const selectedMaterials = selectedMaterialIds
     .map((id) => allMaterials.find((m) => m.id === id))
     .filter(Boolean) as Material[];
@@ -342,61 +509,22 @@ export default function BatchPhotoPage() {
     });
   }
 
-  function canSubmit() {
-    return (
-      !loading &&
-      !analyzing &&
-      files.length > 0 &&
-      compressedBlobs.length === files.length &&
-      identityId !== null &&
-      sceneId !== null &&
-      templateId !== null &&
-      selectedPoseIds.size > 0 &&
-      modelId
-    );
-  }
+  const canSubmit =
+    !submitting &&
+    !analyzing &&
+    hasProductImages &&
+    identityId !== null &&
+    sceneId !== null &&
+    templateId !== null &&
+    selectedPoseIds.size > 0 &&
+    Boolean(modelId);
 
-  // 实时预估成本
-  useEffect(() => {
-    const count = selectedPoseIds.size;
-    if (count === 0 || !modelId) {
-      setEstimate(null);
-      return;
-    }
-    const timer = setTimeout(() => {
-      fetch("/api/billing/estimate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: modelId,
-          quality_level: qualityLevel,
-          image_count: count,
-        }),
-      })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data) => {
-          if (!data) return;
-          setEstimate({
-            per_image_cny: data.estimate.per_image_cny,
-            total_cost_cny: data.estimate.total_cost_cny,
-            affordable: data.affordable,
-            can_afford_count: data.can_afford_count,
-            is_unlimited: data.budget.is_unlimited,
-            remaining_cny: data.budget.remaining_cny,
-          });
-        })
-        .catch(() => setEstimate(null));
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [selectedPoseIds.size, modelId, qualityLevel]);
-
+  /* ─── 提交 ─── */
   async function handleSubmit() {
-    if (!canSubmit()) {
-      setError("请完成所有必填项");
+    if (!canSubmit) {
+      notifyHelpers.warn(push, "请完成所有必填项（至少正面图 + 模特/场景/Prompt/姿势）");
       return;
     }
-
-    // 预算拦截
     if (estimate && !estimate.affordable && !estimate.is_unlimited) {
       const ok = confirm(
         `预估花费 ¥${estimate.total_cost_cny.toFixed(2)}，` +
@@ -407,26 +535,23 @@ export default function BatchPhotoPage() {
       if (!ok) return;
     }
 
-    setLoading(true);
-    setError(null);
-    setResults(null);
-    setElapsed(null);
-    const startedAt = Date.now();
-
+    setSubmitting(true);
     try {
       const fd = new FormData();
-      compressedBlobs.forEach((blob, i) => {
-        fd.append(`product_image${i}`, blob, files[i].name);
+      // 产品图按 slot 顺序依次 append（空槽跳过）
+      let productIdx = 0;
+      slots.forEach((s) => {
+        if (s) {
+          fd.append(`product_image${productIdx}`, s.blob, s.file.name);
+          productIdx += 1;
+        }
       });
       fd.append("identity_id", String(identityId));
       fd.append("scene_id", String(sceneId));
       fd.append("template_id", String(templateId));
       if (photographyId) fd.append("photography_id", String(photographyId));
       if (realismId) fd.append("realism_id", String(realismId));
-      fd.append(
-        "pose_ids",
-        JSON.stringify(Array.from(selectedPoseIds)),
-      );
+      fd.append("pose_ids", JSON.stringify(Array.from(selectedPoseIds)));
       if (selectedMaterialIds.length > 0) {
         fd.append("material_ids", JSON.stringify(selectedMaterialIds));
       }
@@ -438,512 +563,671 @@ export default function BatchPhotoPage() {
       fd.append("quality_level", qualityLevel);
       if (userSeed.trim()) fd.append("user_seed", userSeed.trim());
 
-      const res = await fetch("/api/batch-photo", {
+      const res = await fetch("/api/jobs/batch-photo", {
         method: "POST",
         body: fd,
       });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || res.statusText);
-      setResults(body.results as BatchResult[]);
-      setElapsed(Date.now() - startedAt);
+      const body = (await res.json()) as { job_id?: string; error?: string };
+      if (!res.ok || !body.job_id) {
+        throw new Error(body.error || res.statusText);
+      }
+      setActiveJobId(body.job_id);
+      slotStore.setActiveJob(body.job_id);
+      setActiveJobCount((v) => v + 1);
+      const poseCount = selectedPoseIds.size;
+      notifyHelpers.info(
+        push,
+        `任务已提交`,
+        `共 ${poseCount} 张 · 受 Google quota 限制，预计 ${Math.ceil(poseCount / 2)}+ 分钟`,
+      );
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      notifyHelpers.error(
+        push,
+        "提交失败",
+        e instanceof Error ? e.message : String(e),
+      );
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   }
 
-  // ==== Render ====
-  return (
-    <main className="max-w-6xl mx-auto p-4 md:p-8">
-      <header className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">批量摄影图</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          产品图 → 自动解析款式 → 匹配材质 → 选模特/场景/姿势 → 批量生成模特摄影图
-        </p>
-      </header>
+  /* ─── 重置 ─── */
+  function resetAll() {
+    setSlots([null, null, null]);
+    setGarmentAttrs(null);
+    setSelectedMaterialIds([]);
+    setSelectedPoseIds(new Set());
+    setUserSeed("");
+    setActiveJobId(null);
+    slotStore.reset();
+    notifyHelpers.info(push, "已清空当前任务");
+  }
 
-      <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6 space-y-6">
-        {/* === Step 1: 产品图 === */}
-        <StepBlock step={1} title="上传产品图（1-3 张，正面 / 背面 / 细节）">
-          <input
-            type="file"
-            accept="image/*"
-            multiple
-            onChange={(e) => onPickFiles(e.target.files)}
-            className="block w-full text-sm text-gray-600
-              file:mr-4 file:py-2 file:px-4
-              file:rounded-md file:border-0
-              file:text-sm file:font-medium
-              file:bg-blue-50 file:text-blue-700
-              hover:file:bg-blue-100"
-          />
-          {files.length > 0 && (
-            <div className="mt-3 flex flex-wrap gap-2">
-              {files.map((f, i) => (
-                <div key={i} className="relative">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={
-                      compressedBlobs[i]
-                        ? URL.createObjectURL(compressedBlobs[i])
-                        : URL.createObjectURL(f)
-                    }
-                    alt={`产品 ${i + 1}`}
-                    className={`w-24 h-24 object-cover rounded-md border-2 ${
-                      croppedFlags[i]
-                        ? "border-green-500"
-                        : "border-gray-200"
-                    }`}
-                  />
-                  <div className="absolute top-1 left-1 bg-black/60 text-white text-[10px] px-1.5 rounded">
-                    #{i + 1}
-                  </div>
-                  {croppedFlags[i] && (
-                    <div className="absolute top-1 right-1 bg-green-600 text-white text-[10px] px-1.5 rounded">
-                      已裁
-                    </div>
-                  )}
-                  {compressedBlobs[i] && (
-                    <button
-                      type="button"
-                      onClick={() => setCroppingIndex(i)}
-                      className="absolute bottom-1 right-1 px-1.5 py-0.5 bg-white/90 hover:bg-white text-[10px] text-gray-700 rounded border border-gray-300"
-                    >
-                      裁剪
-                    </button>
-                  )}
-                </div>
+  function dismissCurrentJob() {
+    setActiveJobId(null);
+    slotStore.setActiveJob(null);
+  }
+
+  if (!user) return <div className="p-8 text-gray-500 text-sm">正在加载…</div>;
+
+  /* ─────────── 渲染 ─────────── */
+
+  return (
+    <AppShell
+      leftNav={{ user, activeJobCount }}
+      rightPanel={
+        <RightPanel
+          aiModels={aiModels}
+          modelId={modelId}
+          onModelChange={setModelId}
+          aspectRatio={aspectRatio}
+          onAspectChange={setAspectRatio}
+          qualityLevel={qualityLevel}
+          onQualityChange={setQualityLevel}
+          userSeed={userSeed}
+          onUserSeedChange={setUserSeed}
+          totalCount={selectedPoseIds.size}
+          estimate={estimate}
+          submitting={submitting}
+          canSubmit={canSubmit}
+          onSubmit={handleSubmit}
+          onReset={resetAll}
+          poll={polling.data}
+          pollError={polling.error}
+          onDismissJob={dismissCurrentJob}
+        />
+      }
+    >
+      <div className="p-4 md:p-6 max-w-4xl mx-auto">
+        <header className="mb-6">
+          <h1 className="text-2xl font-bold text-gray-900">批量摄影图</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            产品图 → 解析款式 → 选模特/场景/姿势 → 批量生成模特穿着图
+          </p>
+        </header>
+
+        <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 space-y-6">
+          {/* Step 1: 3 固定槽位产品图 */}
+          <StepBlock step={1} title="上传产品图（3 槽位）">
+            <div className="grid grid-cols-3 gap-3">
+              {PRODUCT_SLOTS.map((cfg, i) => (
+                <ProductSlot
+                  key={cfg.key}
+                  label={cfg.label}
+                  hint={cfg.hint}
+                  slot={slots[i]}
+                  slotIndex={i}
+                  onPick={onSlotPick}
+                  onRemove={() => onSlotRemove(i)}
+                  onStartCrop={() => setCroppingSlot(i)}
+                />
               ))}
             </div>
-          )}
+            {hasProductImages && (
+              <p className="mt-2 text-[11px] text-gray-500">
+                一次选多张时会自动填入后续空槽位。点"删除"清空，点"替换"重传，点"裁剪"手动调整。
+              </p>
+            )}
+          </StepBlock>
 
           {/* 裁剪模态 */}
-          {croppingIndex !== null && compressedBlobs[croppingIndex] && (
+          {croppingSlot !== null && slots[croppingSlot] && (
             <ImageCropper
-              imageSrc={URL.createObjectURL(compressedBlobs[croppingIndex])}
+              imageSrc={URL.createObjectURL(slots[croppingSlot]!.blob)}
               initialAspect={0}
-              onConfirm={(blob) => onCropConfirm(croppingIndex, blob)}
-              onCancel={() => setCroppingIndex(null)}
+              onConfirm={(blob) => onCropConfirm(croppingSlot, blob)}
+              onCancel={() => setCroppingSlot(null)}
             />
           )}
-        </StepBlock>
 
-        {/* === Step 2: 款式解析（手动触发 + 可编辑） === */}
-        {files.length > 0 && (
-          <StepBlock
-            step={2}
-            title="款式解析 + 服装材质（可选，不解析也能生成）"
-          >
-            <div className="mb-3">
-              <button
-                type="button"
-                onClick={handleAnalyze}
-                disabled={analyzing || compressedBlobs.length === 0}
-                className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-              >
-                {analyzing ? (
-                  <span className="flex items-center gap-1">
-                    <span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    解析中...
-                  </span>
-                ) : garmentAttrs ? (
-                  "重新解析"
-                ) : (
-                  "解析款式"
-                )}
-              </button>
-            </div>
-            {garmentAttrs && (
-              <GarmentAttrsEditor
-                attrs={garmentAttrs}
-                onChange={updateGarmentAttr}
-                onMaterialTextBlur={rematchMaterials}
-              />
-            )}
-            {garmentAttrs && (
-              <div className="mt-3 flex flex-wrap gap-2 items-center">
-                <span className="text-xs text-gray-500">匹配材质：</span>
-              {selectedMaterials.map((m) => (
-                <span
-                  key={m.id}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-50 border border-blue-200 text-xs text-blue-800"
-                >
-                  {m.name}
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setSelectedMaterialIds((p) =>
-                        p.filter((x) => x !== m.id),
-                      )
-                    }
-                    className="ml-1 text-blue-400 hover:text-red-600"
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-              <div className="relative">
+          {/* Step 2: 款式解析 */}
+          {hasProductImages && (
+            <StepBlock
+              step={2}
+              title="款式解析 + 服装材质（可选）"
+            >
+              <div className="mb-3">
                 <button
                   type="button"
-                  onClick={() => setShowMaterialPicker((v) => !v)}
-                  className="px-2 py-1 rounded-full border border-dashed border-gray-400 text-xs text-gray-600 hover:border-blue-500"
+                  onClick={handleAnalyze}
+                  disabled={analyzing || !slots[0]}
+                  className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                 >
-                  + 添加
+                  {analyzing ? "解析中..." : garmentAttrs ? "重新解析" : "解析款式"}
                 </button>
-                {showMaterialPicker && (
-                  <div className="absolute top-full mt-1 left-0 z-10 bg-white border border-gray-200 rounded-md shadow-lg p-2 max-h-64 overflow-y-auto w-64">
-                    {unselectedMaterials.length === 0 ? (
-                      <div className="text-xs text-gray-500 p-2">
-                        全部已添加
+              </div>
+              {garmentAttrs && (
+                <GarmentAttrsEditor
+                  attrs={garmentAttrs}
+                  onChange={updateGarmentAttr}
+                  onMaterialTextBlur={rematchMaterials}
+                />
+              )}
+              {garmentAttrs && (
+                <div className="mt-3 flex flex-wrap gap-2 items-center">
+                  <span className="text-xs text-gray-500">匹配材质：</span>
+                  {selectedMaterials.map((m) => (
+                    <span
+                      key={m.id}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-50 border border-blue-200 text-xs text-blue-800"
+                    >
+                      {m.name}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSelectedMaterialIds((p) =>
+                            p.filter((x) => x !== m.id),
+                          )
+                        }
+                        className="ml-1 text-blue-400 hover:text-red-600"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setShowMaterialPicker((v) => !v)}
+                      className="px-2 py-1 rounded-full border border-dashed border-gray-400 text-xs text-gray-600 hover:border-blue-500"
+                    >
+                      + 添加
+                    </button>
+                    {showMaterialPicker && (
+                      <div className="absolute top-full mt-1 left-0 z-10 bg-white border border-gray-200 rounded-md shadow-lg p-2 max-h-64 overflow-y-auto w-64">
+                        {unselectedMaterials.length === 0 ? (
+                          <div className="text-xs text-gray-500 p-2">
+                            全部已添加
+                          </div>
+                        ) : (
+                          unselectedMaterials.map((m) => (
+                            <button
+                              key={m.id}
+                              onClick={() => {
+                                setSelectedMaterialIds((p) => [...p, m.id]);
+                                setShowMaterialPicker(false);
+                              }}
+                              className="w-full text-left px-2 py-1.5 text-sm hover:bg-blue-50 rounded"
+                            >
+                              {m.name}
+                              {m.english_name && (
+                                <span className="ml-1 text-xs text-gray-500 font-mono">
+                                  {m.english_name}
+                                </span>
+                              )}
+                            </button>
+                          ))
+                        )}
                       </div>
-                    ) : (
-                      unselectedMaterials.map((m) => (
-                        <button
-                          key={m.id}
-                          onClick={() => {
-                            setSelectedMaterialIds((p) => [...p, m.id]);
-                            setShowMaterialPicker(false);
-                          }}
-                          className="w-full text-left px-2 py-1.5 text-sm hover:bg-blue-50 rounded"
-                        >
-                          {m.name}
-                          {m.english_name && (
-                            <span className="ml-1 text-xs text-gray-500 font-mono">
-                              {m.english_name}
-                            </span>
-                          )}
-                        </button>
-                      ))
                     )}
                   </div>
-                )}
                 </div>
+              )}
+            </StepBlock>
+          )}
+
+          {/* Step 3: 模特 */}
+          <StepBlock step={3} title="选择模特形象">
+            {identities.length === 0 ? (
+              <EmptyHint
+                href="/admin/models"
+                label="去添加模特形象（需 PNG 透明底）"
+              />
+            ) : (
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
+                {identities.map((m) => (
+                  <Thumbnail
+                    key={m.id}
+                    src={m.image_url}
+                    alt={m.name}
+                    ratio="3/4"
+                    fit="contain"
+                    selected={identityId === m.id}
+                    onClick={() => setIdentityId(m.id)}
+                    badge={
+                      identityId === m.id ? (
+                        <ThumbnailBadge tone="blue">已选</ThumbnailBadge>
+                      ) : undefined
+                    }
+                    className="cursor-pointer"
+                  />
+                ))}
               </div>
             )}
           </StepBlock>
-        )}
 
-        {/* === Step 3: 模特形象 === */}
-        <StepBlock step={3} title="选择模特形象">
-          {identities.length === 0 ? (
-            <EmptyHint href="/admin/models" label="去添加模特形象（需 PNG 透明底）" />
-          ) : (
-            <div className="grid grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-2">
-              {identities.map((m) => {
-                const active = identityId === m.id;
-                return (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => setIdentityId(m.id)}
-                    className={`text-left border rounded-md overflow-hidden transition ${
-                      active
-                        ? "border-blue-500 ring-2 ring-blue-500"
-                        : "border-gray-300 hover:border-gray-400"
-                    }`}
-                  >
-                    <div className="aspect-square bg-[url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2220%22 height=%2220%22><rect width=%2210%22 height=%2210%22 fill=%22%23eee%22/><rect x=%2210%22 y=%2210%22 width=%2210%22 height=%2210%22 fill=%22%23eee%22/></svg>')]">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={m.image_url}
-                        alt={m.name}
-                        className="w-full h-full object-contain"
-                      />
-                    </div>
-                    <div className="p-1.5 text-xs text-gray-700 truncate">
-                      {m.name}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </StepBlock>
-
-        {/* === Step 4: 场景 === */}
-        <StepBlock step={4} title="选择场景">
-          {scenes.length === 0 ? (
-            <EmptyHint href="/admin/scenes" label="去添加场景" />
-          ) : (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-              {scenes.map((s) => {
-                const active = sceneId === s.id;
-                return (
-                  <button
-                    key={s.id}
-                    type="button"
-                    onClick={() => setSceneId(s.id)}
-                    className={`text-left border rounded-md overflow-hidden transition ${
-                      active
-                        ? "border-blue-500 ring-2 ring-blue-500"
-                        : "border-gray-300 hover:border-gray-400"
-                    }`}
-                  >
-                    <div className="aspect-video bg-gray-100">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={s.image_url}
-                        alt={s.name}
-                        className="w-full h-full object-cover"
-                      />
-                    </div>
-                    <div className="p-1.5 text-xs text-gray-700 truncate">
-                      {s.name}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </StepBlock>
-
-        {/* === Step 5: 姿势（多选） === */}
-        <StepBlock
-          step={5}
-          title={`选择姿势（已选 ${selectedPoseIds.size}，将生成 ${selectedPoseIds.size} 张图）`}
-        >
-          {poses.length === 0 ? (
-            <EmptyHint href="/admin/poses" label="去添加姿势" />
-          ) : (
-            <div className="space-y-3">
-              {(["full", "half", "closeup"] as PoseType[]).map((type) => (
-                <div key={type}>
-                  <div className="text-xs text-gray-500 mb-1">
-                    {POSE_TYPE_LABEL[type]}
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {posesByType[type].map((p) => {
-                      const active = selectedPoseIds.has(p.id);
-                      return (
-                        <button
-                          key={p.id}
-                          type="button"
-                          onClick={() => togglePose(p.id)}
-                          title={p.text}
-                          className={`px-2.5 py-1 rounded-full border text-xs transition ${
-                            active
-                              ? "border-blue-500 bg-blue-50 text-blue-800"
-                              : "border-gray-300 hover:border-gray-400"
-                          }`}
-                        >
-                          {p.name}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </StepBlock>
-
-        {/* === Step 6: 风格组（Prompt 模板 + 摄影 + 真实感） === */}
-        <StepBlock step={6} title="风格组合">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <ChoiceGroup
-              label="Prompt 模板"
-              items={templates.map((t) => ({
-                id: t.id,
-                label: t.name,
-                desc: t.notes || null,
-              }))}
-              selectedId={templateId}
-              onChange={setTemplateId}
-              emptyHint={{ href: "/admin/prompts", label: "Prompt 模板为空" }}
-            />
-            <ChoiceGroup
-              label="摄影参数"
-              items={photoParams.map((p) => ({
-                id: p.id,
-                label: p.name,
-                desc: p.description,
-                isDefault: p.is_default === 1,
-              }))}
-              selectedId={photographyId}
-              onChange={setPhotographyId}
-              emptyHint={{
-                href: "/admin/photography",
-                label: "摄影参数为空",
-              }}
-            />
-            <ChoiceGroup
-              label="真实感"
-              items={realisms.map((r) => ({
-                id: r.id,
-                label: r.name,
-                desc: r.description,
-                isDefault: r.is_default === 1,
-              }))}
-              selectedId={realismId}
-              onChange={setRealismId}
-              emptyHint={{ href: "/admin/realism", label: "真实感为空" }}
-            />
-          </div>
-        </StepBlock>
-
-        {/* === Step 7: 输出配置 === */}
-        <StepBlock step={7} title="输出配置">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <div className="text-xs text-gray-500 mb-1">生成模型</div>
-              <div className="grid gap-1">
-                {aiModels.map((m) => {
-                  const active = modelId === m.model_id;
-                  return (
-                    <button
-                      key={m.model_id}
-                      type="button"
-                      onClick={() => setModelId(m.model_id)}
-                      className={`text-left p-2 rounded-md border text-xs transition ${
-                        active
-                          ? "border-blue-500 bg-blue-50"
-                          : "border-gray-300 hover:border-gray-400"
-                      }`}
-                    >
-                      <div className="font-medium text-gray-900">
-                        {m.label}
-                        {m.badge && (
-                          <span className="ml-1 text-[10px] px-1 rounded bg-blue-600 text-white">
-                            {m.badge}
-                          </span>
-                        )}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            <div>
-              <div className="text-xs text-gray-500 mb-1">比例</div>
-              <div className="flex flex-wrap gap-1">
-                {ASPECT_RATIOS.map((r) => {
-                  const active = aspectRatio === r.value;
-                  return (
-                    <button
-                      key={r.value}
-                      type="button"
-                      onClick={() => setAspectRatio(r.value)}
-                      className={`px-2.5 py-1 rounded-md border text-xs ${
-                        active
-                          ? "border-blue-500 bg-blue-50 text-blue-800"
-                          : "border-gray-300"
-                      }`}
-                    >
-                      {r.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            <div>
-              <div className="text-xs text-gray-500 mb-1">清晰度</div>
-              <div className="grid gap-1">
-                {QUALITY_LEVELS.map((q) => {
-                  const active = qualityLevel === q.value;
-                  return (
-                    <button
-                      key={q.value}
-                      type="button"
-                      onClick={() => setQualityLevel(q.value)}
-                      className={`text-left p-2 rounded-md border text-xs ${
-                        active
-                          ? "border-blue-500 bg-blue-50"
-                          : "border-gray-300 hover:border-gray-400"
-                      }`}
-                    >
-                      <div className="font-medium text-gray-900">{q.label}</div>
-                      <div className="text-gray-500">{q.desc}</div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        </StepBlock>
-
-        {/* === Step 8: 额外指令 === */}
-        <StepBlock step={8} title="额外指令（可选）">
-          <textarea
-            value={userSeed}
-            onChange={(e) => setUserSeed(e.target.value)}
-            rows={2}
-            placeholder="如：'强化温馨感'、'保留原图腰带'、'头发微风吹动'..."
-            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-          />
-        </StepBlock>
-
-        {/* === Submit === */}
-        <div className="border-t border-gray-200 pt-4">
-          {/* 成本预估 */}
-          {estimate && selectedPoseIds.size > 0 && (
-            <div
-              className={`mb-3 p-3 rounded border text-sm ${
-                estimate.is_unlimited
-                  ? "bg-gray-50 border-gray-200 text-gray-700"
-                  : estimate.affordable
-                    ? "bg-blue-50 border-blue-200 text-blue-900"
-                    : "bg-red-50 border-red-200 text-red-900"
-              }`}
-            >
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <div>
-                  预计花费{" "}
-                  <b className="text-base">
-                    ¥{estimate.total_cost_cny.toFixed(2)}
-                  </b>
-                  <span className="text-xs ml-2 opacity-75">
-                    （¥{estimate.per_image_cny.toFixed(2)} ×{" "}
-                    {selectedPoseIds.size} 张）
-                  </span>
-                </div>
-                {estimate.is_unlimited ? (
-                  <span className="text-xs">无限额度</span>
-                ) : estimate.affordable ? (
-                  <span className="text-xs">
-                    余额 ¥{estimate.remaining_cny.toFixed(2)} · 充足
-                  </span>
-                ) : (
-                  <span className="text-xs font-medium">
-                    ⚠ 余额不足（剩 ¥{estimate.remaining_cny.toFixed(2)}），建议减到{" "}
-                    {estimate.can_afford_count} 张
-                  </span>
-                )}
-              </div>
-            </div>
-          )}
-
-          <button
-            onClick={handleSubmit}
-            disabled={!canSubmit()}
-            className="inline-flex items-center px-6 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {loading ? (
-              <>
-                <span className="inline-block w-4 h-4 mr-2 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                生成中（每张 Flash 约 15-30 秒 / Pro 约 2-3 分钟）...
-              </>
+          {/* Step 4: 场景 */}
+          <StepBlock step={4} title="选择场景">
+            {scenes.length === 0 ? (
+              <EmptyHint href="/admin/scenes" label="去添加场景" />
             ) : (
-              `开始生成 · 共 ${selectedPoseIds.size} 张`
-            )}
-          </button>
-          {error && (
-            <div className="mt-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
-              <div className="font-medium mb-1">失败</div>
-              <div className="text-xs whitespace-pre-wrap break-all">
-                {error}
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                {scenes.map((s) => (
+                  <Thumbnail
+                    key={s.id}
+                    src={s.image_url}
+                    alt={s.name}
+                    ratio="3/4"
+                    fit="contain"
+                    selected={sceneId === s.id}
+                    onClick={() => setSceneId(s.id)}
+                    badge={
+                      sceneId === s.id ? (
+                        <ThumbnailBadge tone="blue">已选</ThumbnailBadge>
+                      ) : undefined
+                    }
+                  />
+                ))}
               </div>
-            </div>
-          )}
-        </div>
-      </section>
+            )}
+          </StepBlock>
 
-      {results && <ResultsView results={results} elapsed={elapsed} />}
-    </main>
+          {/* Step 5: 姿势 */}
+          <StepBlock
+            step={5}
+            title={`选择姿势（已选 ${selectedPoseIds.size}，生成 ${selectedPoseIds.size} 张）`}
+          >
+            {poses.length === 0 ? (
+              <EmptyHint href="/admin/poses" label="去添加姿势" />
+            ) : (
+              <div className="space-y-3">
+                {(["full", "half", "closeup"] as PoseType[]).map((type) => (
+                  <div key={type}>
+                    <div className="text-xs text-gray-500 mb-1">
+                      {POSE_TYPE_LABEL[type]}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {posesByType[type].map((p) => {
+                        const active = selectedPoseIds.has(p.id);
+                        return (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => togglePose(p.id)}
+                            title={p.text}
+                            className={`px-2.5 py-1 rounded-full border text-xs transition ${
+                              active
+                                ? "border-blue-500 bg-blue-50 text-blue-800"
+                                : "border-gray-300 hover:border-gray-400"
+                            }`}
+                          >
+                            {p.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </StepBlock>
+
+          {/* Step 6: 风格组合 */}
+          <StepBlock step={6} title="风格组合">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <ChoiceGroup
+                label="Prompt 模板"
+                items={templates.map((t) => ({
+                  id: t.id,
+                  label: t.name,
+                  desc: t.notes || null,
+                }))}
+                selectedId={templateId}
+                onChange={setTemplateId}
+                emptyHint={{ href: "/admin/prompts", label: "Prompt 模板为空" }}
+              />
+              <ChoiceGroup
+                label="摄影参数"
+                items={photoParams.map((p) => ({
+                  id: p.id,
+                  label: p.name,
+                  desc: p.description,
+                  isDefault: p.is_default === 1,
+                }))}
+                selectedId={photographyId}
+                onChange={setPhotographyId}
+                emptyHint={{
+                  href: "/admin/photography",
+                  label: "摄影参数为空",
+                }}
+              />
+              <ChoiceGroup
+                label="真实感"
+                items={realisms.map((r) => ({
+                  id: r.id,
+                  label: r.name,
+                  desc: r.description,
+                  isDefault: r.is_default === 1,
+                }))}
+                selectedId={realismId}
+                onChange={setRealismId}
+                emptyHint={{ href: "/admin/realism", label: "真实感为空" }}
+              />
+            </div>
+          </StepBlock>
+        </section>
+
+        {/* 结果区 */}
+        {polling.data && polling.data.items.length > 0 && (
+          <section className="mt-6 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">生成结果</h2>
+            <JobResultsGrid
+              items={polling.data.items}
+              groupBy={null}
+              zipFilenamePrefix="batch_photo"
+              subtitle={
+                polling.data.job.status === "completed"
+                  ? `完成 ${polling.data.job.completed_count}/${polling.data.job.total_count}`
+                  : undefined
+              }
+            />
+          </section>
+        )}
+      </div>
+    </AppShell>
   );
 }
 
-// ============ Sub components ============
+/* ─────────── 3 槽位组件 ─────────── */
+
+function ProductSlot({
+  label,
+  hint,
+  slot,
+  slotIndex,
+  onPick,
+  onRemove,
+  onStartCrop,
+}: {
+  label: string;
+  hint: string;
+  slot: SlotFile | null;
+  slotIndex: number;
+  onPick: (slotIdx: number, files: FileList | null) => void;
+  onRemove: () => void;
+  onStartCrop: () => void;
+}) {
+  const inputId = `product-slot-${slotIndex}`;
+  if (!slot) {
+    return (
+      <label
+        htmlFor={inputId}
+        className="relative aspect-[3/4] rounded-md border-2 border-dashed border-gray-300 bg-gray-50 hover:border-blue-400 hover:bg-blue-50/50 cursor-pointer flex flex-col items-center justify-center text-center p-3"
+      >
+        <input
+          id={inputId}
+          type="file"
+          accept="image/*"
+          multiple={slotIndex === 0 /* 只有第一个支持一次选多张自动分配 */}
+          onChange={(e) => onPick(slotIndex, e.target.files)}
+          className="hidden"
+        />
+        <div className="text-2xl text-gray-400">+</div>
+        <div className="mt-1 text-sm font-medium text-gray-700">{label}</div>
+        <div className="mt-0.5 text-[10px] text-gray-400">{hint}</div>
+      </label>
+    );
+  }
+
+  return (
+    <div className="relative aspect-[3/4] rounded-md border-2 border-gray-200 bg-gray-100 overflow-hidden group">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={URL.createObjectURL(slot.blob)}
+        alt={label}
+        className="w-full h-full object-contain"
+      />
+      {/* 左上角：槽位名 */}
+      <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/60 text-white text-[10px]">
+        {label}
+      </div>
+      {/* 右上角：状态 */}
+      {slot.cropped ? (
+        <div className="absolute top-1 right-1 px-1.5 py-0.5 rounded bg-green-600 text-white text-[10px]">
+          已裁
+        </div>
+      ) : null}
+      {/* 悬浮层：替换 / 裁剪 / 删除 */}
+      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100 gap-1">
+        <label
+          htmlFor={inputId}
+          className="px-2 py-1 bg-white/90 hover:bg-white text-[11px] text-gray-800 rounded cursor-pointer"
+        >
+          替换
+          <input
+            id={inputId}
+            type="file"
+            accept="image/*"
+            onChange={(e) => onPick(slotIndex, e.target.files)}
+            className="hidden"
+          />
+        </label>
+        <button
+          type="button"
+          onClick={onStartCrop}
+          className="px-2 py-1 bg-white/90 hover:bg-white text-[11px] text-gray-800 rounded"
+        >
+          裁剪
+        </button>
+        <button
+          type="button"
+          onClick={onRemove}
+          className="px-2 py-1 bg-red-600/90 hover:bg-red-700 text-[11px] text-white rounded"
+        >
+          删除
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────── 右栏 ─────────── */
+
+function RightPanel({
+  aiModels,
+  modelId,
+  onModelChange,
+  aspectRatio,
+  onAspectChange,
+  qualityLevel,
+  onQualityChange,
+  userSeed,
+  onUserSeedChange,
+  totalCount,
+  estimate,
+  submitting,
+  canSubmit,
+  onSubmit,
+  onReset,
+  poll,
+  pollError,
+  onDismissJob,
+}: {
+  aiModels: AiModel[];
+  modelId: string;
+  onModelChange: (m: string) => void;
+  aspectRatio: string;
+  onAspectChange: (a: string) => void;
+  qualityLevel: QualityLevel;
+  onQualityChange: (q: QualityLevel) => void;
+  userSeed: string;
+  onUserSeedChange: (s: string) => void;
+  totalCount: number;
+  estimate: CostEstimate | null;
+  submitting: boolean;
+  canSubmit: boolean;
+  onSubmit: () => void;
+  onReset: () => void;
+  poll: import("@/lib/hooks/use-job-polling").PollResult | null;
+  pollError: string | null;
+  onDismissJob: () => void;
+}) {
+  return (
+    <div className="p-3 space-y-3 text-sm">
+      <NotificationStack />
+
+      {poll ? (
+        <JobProgressPanel
+          job={poll.job}
+          items={poll.items}
+          nextTokenReadyAtMs={poll.next_token_ready_at_ms}
+          serverTimeMs={poll.server_time_ms}
+          onCancelDone={
+            poll.job.status === "completed" ||
+            poll.job.status === "canceled" ||
+            poll.job.status === "failed"
+              ? onDismissJob
+              : undefined
+          }
+        />
+      ) : null}
+      {pollError ? (
+        <div className="p-2 rounded border border-red-200 bg-red-50 text-xs text-red-700">
+          轮询失败：{pollError}
+        </div>
+      ) : null}
+
+      {/* 参数 */}
+      <div className="rounded-md border border-gray-200 bg-white p-3 space-y-3">
+        <div className="text-xs font-medium text-gray-500">生成参数</div>
+
+        <div>
+          <div className="text-xs text-gray-500 mb-1">模型</div>
+          {aiModels.length === 0 ? (
+            <div className="text-xs text-gray-500">暂无模型</div>
+          ) : (
+            <select
+              value={modelId}
+              onChange={(e) => onModelChange(e.target.value)}
+              className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded bg-white"
+            >
+              {aiModels.map((m) => (
+                <option key={m.model_id} value={m.model_id}>
+                  {m.label}
+                  {m.badge ? ` (${m.badge})` : ""}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        <div>
+          <div className="text-xs text-gray-500 mb-1">输出比例</div>
+          <select
+            value={aspectRatio}
+            onChange={(e) => onAspectChange(e.target.value)}
+            className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded bg-white"
+          >
+            {ASPECT_RATIOS.map((a) => (
+              <option key={a.value} value={a.value}>
+                {a.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <div className="text-xs text-gray-500 mb-1">清晰度</div>
+          <select
+            value={qualityLevel}
+            onChange={(e) => onQualityChange(e.target.value as QualityLevel)}
+            className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded bg-white"
+          >
+            {QUALITY_LEVELS.map((q) => (
+              <option key={q.value} value={q.value}>
+                {q.label}
+              </option>
+            ))}
+          </select>
+          <div className="text-[10px] text-gray-400 mt-0.5">
+            {QUALITY_LEVELS.find((q) => q.value === qualityLevel)?.desc}
+          </div>
+        </div>
+
+        <div>
+          <div className="text-xs text-gray-500 mb-1">
+            追加指令{" "}
+            <span className="text-gray-400 font-normal">（可选）</span>
+          </div>
+          <textarea
+            value={userSeed}
+            onChange={(e) => onUserSeedChange(e.target.value)}
+            rows={2}
+            placeholder="如：强化温馨感、保留原腰带、头发微动"
+            className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded resize-none"
+          />
+        </div>
+      </div>
+
+      {/* 估价 */}
+      {estimate && (
+        <div
+          className={`rounded-md border p-3 text-xs ${
+            estimate.is_unlimited || estimate.affordable
+              ? "border-blue-200 bg-blue-50 text-blue-900"
+              : "border-amber-300 bg-amber-50 text-amber-900"
+          }`}
+        >
+          <div className="flex justify-between items-baseline mb-1.5">
+            <span className="font-medium">预估</span>
+            <span className="text-lg font-bold">
+              ¥{estimate.total_cost_cny.toFixed(2)}
+            </span>
+          </div>
+          <div className="text-[11px] opacity-80">
+            ¥{estimate.per_image_cny.toFixed(3)} × {totalCount} 张
+          </div>
+          <div className="mt-2 pt-2 border-t border-current/20 text-[11px]">
+            {estimate.is_unlimited ? (
+              <span>无限额度</span>
+            ) : (
+              <span>
+                余额 ¥{estimate.remaining_cny.toFixed(2)}
+                {estimate.affordable ? " · 充足" : ` · 仅 ${estimate.can_afford_count} 张`}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 提交按钮 */}
+      <div className="space-y-2">
+        <button
+          onClick={onSubmit}
+          disabled={!canSubmit || submitting}
+          className="w-full px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+        >
+          {submitting ? (
+            <>
+              <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              提交中…
+            </>
+          ) : (
+            <>开始生成 <span className="text-xs opacity-80">· {totalCount} 张</span></>
+          )}
+        </button>
+        <div className="flex gap-2">
+          <ResetButton
+            label="清空"
+            size="sm"
+            variant="outline"
+            onConfirm={onReset}
+            confirmDetail="将清除已上传的产品图、解析结果、选择的模特/场景/姿势/风格组合。当前正在进行的任务不受影响。"
+          />
+          <div className="text-[10px] text-gray-400 flex-1 self-center">
+            F5 刷新会清空所有状态
+          </div>
+        </div>
+      </div>
+
+      <div className="text-[10px] text-gray-400 text-center pt-2">
+        受 Google quota 限制，每分钟最多 2 张
+      </div>
+    </div>
+  );
+}
+
+/* ─────────── 子组件 ─────────── */
 
 function StepBlock({
   step,
@@ -1034,187 +1318,6 @@ function ChoiceGroup({
   );
 }
 
-function ResultsView({
-  results,
-  elapsed,
-}: {
-  results: BatchResult[];
-  elapsed: number | null;
-}) {
-  const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [zipping, setZipping] = useState(false);
-  const [zipProgress, setZipProgress] = useState<{
-    done: number;
-    total: number;
-  } | null>(null);
-
-  const successful = useMemo(
-    () => results.filter((r) => r.success && r.image_url),
-    [results],
-  );
-  const successCount = successful.length;
-
-  function toggle(id: number) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-  function selectAll() {
-    setSelected(new Set(successful.map((r) => r.pose_id)));
-  }
-  function selectNone() {
-    setSelected(new Set());
-  }
-
-  async function doZip(items: BatchResult[], name: string) {
-    if (items.length === 0) return;
-    setZipping(true);
-    setZipProgress({ done: 0, total: items.length });
-    try {
-      const entries = items.map((r, i) => ({
-        url: r.image_url!,
-        filename: `${String(i + 1).padStart(2, "0")}_${r.pose_name}.png`,
-      }));
-      await downloadImagesAsZip(entries, name, (done, total) =>
-        setZipProgress({ done, total }),
-      );
-    } finally {
-      setZipping(false);
-      setZipProgress(null);
-    }
-  }
-
-  return (
-    <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-      <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
-        <h2 className="text-lg font-semibold text-gray-900">生成结果</h2>
-        {elapsed !== null && (
-          <span className="text-xs text-gray-500">
-            总耗时 {(elapsed / 1000).toFixed(1)}s · 成功 {successCount}/
-            {results.length}
-          </span>
-        )}
-      </div>
-
-      {successCount > 0 && (
-        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded flex flex-wrap items-center gap-2">
-          <span className="text-sm text-blue-800">
-            已选 <b>{selected.size}</b> / {successCount}
-          </span>
-          <button
-            onClick={selectAll}
-            className="px-2 py-1 text-xs bg-white border border-blue-300 text-blue-700 rounded hover:bg-blue-100"
-          >
-            全选
-          </button>
-          <button
-            onClick={selectNone}
-            className="px-2 py-1 text-xs bg-white border border-gray-300 text-gray-700 rounded hover:bg-gray-100"
-          >
-            清除
-          </button>
-          <button
-            onClick={() =>
-              doZip(
-                successful.filter((r) => selected.has(r.pose_id)),
-                `batch_selected_${Date.now()}.zip`,
-              )
-            }
-            disabled={selected.size === 0 || zipping}
-            className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-          >
-            {zipping && zipProgress
-              ? `打包中 ${zipProgress.done}/${zipProgress.total}`
-              : `下载选中 (ZIP)`}
-          </button>
-          <button
-            onClick={() => doZip(successful, `batch_all_${Date.now()}.zip`)}
-            disabled={zipping}
-            className="px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
-          >
-            {zipping ? "打包中..." : "下载全部 (ZIP)"}
-          </button>
-        </div>
-      )}
-
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-        {results.map((r) => {
-          const isSelected = selected.has(r.pose_id);
-          return (
-            <div
-              key={r.pose_id}
-              className={`relative border rounded-md overflow-hidden transition ${
-                isSelected
-                  ? "border-blue-500 ring-2 ring-blue-500"
-                  : "border-gray-200"
-              }`}
-            >
-              {r.success && r.image_url && (
-                <button
-                  onClick={() => toggle(r.pose_id)}
-                  className={`absolute top-2 left-2 z-10 w-5 h-5 rounded border-2 flex items-center justify-center text-xs ${
-                    isSelected
-                      ? "bg-blue-600 border-blue-600 text-white"
-                      : "bg-white/80 border-gray-400"
-                  }`}
-                >
-                  {isSelected ? "✓" : ""}
-                </button>
-              )}
-              <div
-                className="aspect-[3/4] bg-gray-100 flex items-center justify-center cursor-pointer"
-                onClick={() => r.success && r.image_url && toggle(r.pose_id)}
-              >
-                {r.success && r.image_url ? (
-                  /* eslint-disable-next-line @next/next/no-img-element */
-                  <img
-                    src={r.image_url}
-                    alt={r.pose_name}
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <div className="text-xs text-red-600 p-4 text-center">
-                    失败：{r.error || "未知错误"}
-                  </div>
-                )}
-              </div>
-              <div className="p-2">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-gray-900 truncate">{r.pose_name}</span>
-                  {r.success && r.image_url && (
-                    <button
-                      onClick={() =>
-                        downloadSingleImage(
-                          r.image_url!,
-                          `${r.pose_name}.png`,
-                        )
-                      }
-                      className="text-blue-600 hover:underline shrink-0 ml-2"
-                    >
-                      下载
-                    </button>
-                  )}
-                </div>
-                {r.duration_ms && (
-                  <div className="text-[10px] text-gray-400 mt-0.5">
-                    {(r.duration_ms / 1000).toFixed(1)}s
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
-/**
- * 解析结果可编辑编辑器（与 /recolor 共享设计）
- */
 function GarmentAttrsEditor({
   attrs,
   onChange,
@@ -1224,24 +1327,19 @@ function GarmentAttrsEditor({
   onChange: (key: string, value: string) => void;
   onMaterialTextBlur: (value: string) => void;
 }) {
-  const entries = Object.entries(attrs).filter(
-    ([key]) => !key.startsWith("_"),
-  );
+  const entries = Object.entries(attrs).filter(([key]) => !key.startsWith("_"));
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
       {entries.map(([key, value]) => {
         const strValue = Array.isArray(value) ? value.join("、") : String(value);
         const isMaterial = key === "面料材质";
         return (
-          <div
-            key={key}
-            className="p-2 bg-gray-50 border border-gray-200 rounded"
-          >
+          <div key={key} className="p-2 bg-gray-50 border border-gray-200 rounded">
             <div className="text-xs text-gray-500 mb-1">
               {key}
               {isMaterial && (
                 <span className="ml-1 text-[10px] text-blue-500">
-                  （失焦会重新匹配材质）
+                  （失焦重匹配）
                 </span>
               )}
             </div>
@@ -1250,9 +1348,7 @@ function GarmentAttrsEditor({
               value={strValue}
               onChange={(e) => onChange(key, e.target.value)}
               onBlur={
-                isMaterial
-                  ? (e) => onMaterialTextBlur(e.target.value)
-                  : undefined
+                isMaterial ? (e) => onMaterialTextBlur(e.target.value) : undefined
               }
               className="w-full px-2 py-1 text-sm border border-gray-300 rounded bg-white focus:border-blue-500 focus:outline-none"
             />

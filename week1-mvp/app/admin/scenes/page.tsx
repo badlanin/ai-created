@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Thumbnail, ThumbnailBadge } from "@/app/_components/thumbnail";
 
 type Scene = {
   id: number;
@@ -140,16 +141,18 @@ export default function ScenesAdminPage() {
                 hover:file:bg-blue-100"
             />
             {file && (
-              <div className="mt-2 relative inline-block">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
+              <div className="mt-2 w-48">
+                <Thumbnail
                   src={URL.createObjectURL(file)}
                   alt="预览"
-                  className="w-48 h-32 object-cover border border-gray-300 rounded"
+                  ratio="3/4"
+                  fit="contain"
+                  badge={
+                    <ThumbnailBadge tone="gray">
+                      {(file.size / 1024).toFixed(0)} KB
+                    </ThumbnailBadge>
+                  }
                 />
-                <div className="absolute -top-1 -right-1 bg-white text-[10px] px-1 rounded shadow text-gray-600">
-                  {(file.size / 1024).toFixed(0)} KB
-                </div>
               </div>
             )}
           </div>
@@ -252,14 +255,13 @@ function SceneCard({
 
   return (
     <li className="border border-gray-200 rounded-lg overflow-hidden">
-      <div className="aspect-video bg-gray-100">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={item.image_url}
-          alt={item.name}
-          className="w-full h-full object-cover"
-        />
-      </div>
+      <Thumbnail
+        src={item.image_url}
+        alt={item.name}
+        ratio="3/4"
+        fit="contain"
+        className="rounded-none"
+      />
       {editing ? (
         <div className="p-3 space-y-2">
           <input
