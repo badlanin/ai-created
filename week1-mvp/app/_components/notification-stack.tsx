@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { AlertOctagon, AlertTriangle, CheckCircle2, Info, X } from "lucide-react";
 
 export type NotificationTone = "error" | "warn" | "info" | "success";
 
@@ -138,50 +139,57 @@ function NotificationCard({
   const { tone, title, detail } = item;
   const toneStyles: Record<
     NotificationTone,
-    { bg: string; border: string; icon: string; iconBg: string }
+    {
+      bg: string;
+      border: string;
+      iconColor: string;
+      icon: React.ReactNode;
+    }
   > = {
     error: {
-      bg: "bg-red-50",
+      bg: "bg-white",
       border: "border-red-200",
-      icon: "✕",
-      iconBg: "bg-red-600 text-white",
+      iconColor: "text-red-500",
+      icon: <AlertOctagon size={16} strokeWidth={2.2} />,
     },
     warn: {
-      bg: "bg-amber-50",
+      bg: "bg-white",
       border: "border-amber-200",
-      icon: "!",
-      iconBg: "bg-amber-500 text-white",
+      iconColor: "text-amber-500",
+      icon: <AlertTriangle size={16} strokeWidth={2.2} />,
     },
     info: {
-      bg: "bg-blue-50",
+      bg: "bg-white",
       border: "border-blue-200",
-      icon: "i",
-      iconBg: "bg-blue-600 text-white",
+      iconColor: "text-blue-500",
+      icon: <Info size={16} strokeWidth={2.2} />,
     },
     success: {
-      bg: "bg-green-50",
+      bg: "bg-white",
       border: "border-green-200",
-      icon: "✓",
-      iconBg: "bg-green-600 text-white",
+      iconColor: "text-green-500",
+      icon: <CheckCircle2 size={16} strokeWidth={2.2} />,
     },
   };
   const s = toneStyles[tone];
 
   return (
     <div
-      className={`relative rounded-md border ${s.bg} ${s.border} px-3 py-2.5 pr-8 text-sm`}
+      className={`relative rounded-xl border ${s.bg} ${s.border} px-3 py-2.5 pr-8 text-sm shadow-sm animate-[slideInRight_200ms_cubic-bezier(0.25,1,0.5,1)]`}
     >
-      <div className="flex items-start gap-2">
+      <div className="flex items-start gap-2.5">
         <span
-          className={`inline-flex items-center justify-center flex-shrink-0 w-5 h-5 rounded-full text-[11px] font-bold ${s.iconBg}`}
+          className={`mt-0.5 shrink-0 ${s.iconColor}`}
           aria-hidden
         >
           {s.icon}
         </span>
         <div className="min-w-0 flex-1">
-          <div className="font-medium text-gray-900 leading-tight">{title}</div>
+          <div className="font-medium text-gray-900 leading-tight text-[13px]">
+            {title}
+          </div>
           {detail ? (
-            <div className="mt-0.5 text-xs text-gray-600 leading-snug whitespace-pre-wrap break-words">
+            <div className="mt-1 text-[12px] text-gray-600 leading-relaxed whitespace-pre-wrap break-words">
               {detail}
             </div>
           ) : null}
@@ -190,10 +198,22 @@ function NotificationCard({
       <button
         onClick={onClose}
         aria-label="关闭"
-        className="absolute top-1.5 right-1.5 text-gray-400 hover:text-gray-700 w-5 h-5 flex items-center justify-center text-sm leading-none"
+        className="absolute top-2 right-2 w-5 h-5 flex items-center justify-center rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors"
       >
-        ×
+        <X size={12} strokeWidth={2.2} />
       </button>
+      <style jsx global>{`
+        @keyframes slideInRight {
+          from {
+            opacity: 0;
+            transform: translateX(12px);
+          }
+          to {
+            opacity: 1;
+            transform: translateX(0);
+          }
+        }
+      `}</style>
     </div>
   );
 }

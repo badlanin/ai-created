@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import path from "path";
+import { promises as fs } from "fs";
 import { requireUser } from "@/lib/auth";
-import { getJobWithItems } from "@/lib/jobs-db";
+import { getJobWithItems, getJob, getJobItems } from "@/lib/jobs-db";
 import { peekNextTokenAtMs } from "@/lib/rate-limiter";
+import { getDb, DATA_DIR_PATH } from "@/lib/db";
 
 export const runtime = "nodejs";
 
@@ -46,4 +49,67 @@ export async function GET(
     next_token_ready_at_ms: nextTokenReadyAtMs,
     server_time_ms: Date.now(),
   });
+}
+
+/**
+ * DELETE /api/jobs/:id
+ *
+ * 删除任务 + 对应 items + 对应 generations（如果已写入）+ 磁盘文件
+ * 非 admin 只能删自己的
+ */
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const user = await requireUser();
+    const { id } = await params;
+    const job = getJob(id);
+    if (!job) {
+      return NextResponse.json({ error: "任务不存在" }, { status: 404 });
+    }
+    if (job.user_id !== user.id && user.role !== "admin") {
+      return NextResponse.json({ error: "无权删除该任务" }, { status: 403 });
+    }
+
+    // 收集要删除的图片路径（用来后台删盘）
+    const items = getJobItems(id);
+    const toDelete: string[] = [];
+    for (const it of items) {
+      if (it.result_image_url && it.result_image_url.startsWith("/assets/")) {
+        toDelete.push(it.result_image_url);
+      }
+    }
+
+    // 删 DB（items 随 foreign key CASCADE 自动删）
+    const db = getDb();
+    db.prepare(`DELETE FROM render_jobs WHERE id = ?`).run(id);
+
+    // 顺便删 generations 里这个 job 写的那条（如果有）
+    // params 是 JSON 字符串包含 job_id。用 JSON 搜索 api 匹配
+    db.prepare(
+      `DELETE FROM generations WHERE json_extract(params, '$.job_id') = ?`,
+    ).run(id);
+
+    // 异步删文件（不阻塞响应）
+    void (async () => {
+      for (const url of toDelete) {
+        const rel = url.slice("/assets/".length);
+        try {
+          await fs.unlink(path.join(DATA_DIR_PATH, rel));
+        } catch {}
+      }
+    })();
+
+    return NextResponse.json({
+      deleted: 1,
+      removed_files: toDelete.length,
+    });
+  } catch (e) {
+    const status = (e as { status?: number }).status || 500;
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : String(e) },
+      { status },
+    );
+  }
 }

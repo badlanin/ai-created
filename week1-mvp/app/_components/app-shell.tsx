@@ -61,7 +61,7 @@ export function AppShell({
   }, [narrow, manuallyCollapsed]);
 
   return (
-    <div className="flex h-[calc(100vh-0px)] w-full overflow-hidden bg-gray-50">
+    <div className="flex h-full w-full overflow-hidden bg-gray-50">
       {/* 左栏 */}
       <LeftNav
         {...leftNav}

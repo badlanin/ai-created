@@ -310,6 +310,24 @@ function migrate(db: Database.Database) {
       ON render_job_items(job_id, idx);
     CREATE INDEX IF NOT EXISTS idx_render_job_items_status
       ON render_job_items(status);
+
+    -- ==========================================
+    -- P3-2: 公告栏（管理员可编辑，所有用户可见）
+    -- ==========================================
+    CREATE TABLE IF NOT EXISTS announcements (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      content    TEXT NOT NULL,                         -- 正文（支持简单换行）
+      tone       TEXT NOT NULL DEFAULT 'info',          -- 'info'|'success'|'warn'|'danger'
+      enabled    INTEGER NOT NULL DEFAULT 1,            -- 是否启用（0 = 草稿/归档）
+      dismissible INTEGER NOT NULL DEFAULT 1,           -- 用户能否关闭（本次会话）
+      starts_at  INTEGER,                                -- 生效开始（unix 秒，null = 立即）
+      ends_at    INTEGER,                                -- 生效结束（unix 秒，null = 永久）
+      created_by INTEGER REFERENCES users(id),
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_announcements_enabled
+      ON announcements(enabled, created_at DESC);
   `);
 
   // 启动时恢复：把被进程重启打断的 item 标为 failed

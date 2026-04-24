@@ -3,6 +3,19 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import {
+  Home,
+  Palette,
+  Camera,
+  History as HistoryIcon,
+  Wallet,
+  Library,
+  Settings,
+  ChevronRight,
+  PanelLeftClose,
+  PanelLeftOpen,
+  LogOut,
+} from "lucide-react";
 
 type NavUser = {
   id: number;
@@ -11,7 +24,6 @@ type NavUser = {
   role: "admin" | "user";
 };
 
-/** 左栏最近历史记录条目（通常由父组件从 /api/history 拉取后传入） */
 export interface RecentHistoryItem {
   id: string | number;
   title: string;
@@ -21,27 +33,12 @@ export interface RecentHistoryItem {
 
 export interface LeftNavProps {
   user: NavUser;
-  /** 折叠状态下是否仅显示图标 */
   collapsed?: boolean;
-  /** 最近历史（最多 5 条，组件自行截断） */
   recentHistory?: RecentHistoryItem[];
-  /** 折叠切换回调（传了就显示折叠按钮） */
   onToggleCollapse?: () => void;
-  /** 当前活跃任务数量（>0 时在顶部显示徽标） */
   activeJobCount?: number;
 }
 
-/**
- * 左栏导航
- *
- * 区域：
- *   1. 顶部：品牌 + 活跃任务徽标 + 折叠按钮
- *   2. 主导航：换色 / 批量摄影图 / 历史 / 账单
- *   3. 素材库（可展开二级菜单）：颜色 / 材质 / 真实感 / 模特 / 场景 / 姿势 / 摄影 / Prompt / AI 模型
- *   4. 管理（admin 可见）：用户 / 单价汇率 / 团队账单
- *   5. 最近 5 条历史
- *   6. 底部：用户信息 + 退出
- */
 export function LeftNav({
   user,
   collapsed = false,
@@ -63,7 +60,6 @@ export function LeftNav({
     router.refresh();
   }
 
-  // 素材库二级菜单：路径命中时自动展开
   const libraryPaths = useMemo(
     () => [
       "/admin/colors",
@@ -88,8 +84,12 @@ export function LeftNav({
     if (libraryExpanded) setLibraryOpen(true);
   }, [libraryExpanded]);
 
-  // 管理二级菜单
-  const adminPaths = ["/admin/users", "/admin/billing", "/admin/model-prices"];
+  const adminPaths = [
+    "/admin/users",
+    "/admin/billing",
+    "/admin/model-prices",
+    "/admin/announcements",
+  ];
   const adminExpanded = adminPaths.some((p) => isActive(p));
   const [adminOpen, setAdminOpen] = useState(adminExpanded);
   useEffect(() => {
@@ -98,65 +98,69 @@ export function LeftNav({
 
   const displayName = user.display_name || user.username;
 
-  // 折叠态：只显示图标，宽度 56px
+  // ===== 折叠态 =====
   if (collapsed) {
     return (
       <aside
         aria-label="侧边导航"
-        className="h-full bg-white border-r border-gray-200 flex flex-col items-center py-3 w-14 flex-shrink-0"
+        className="h-full bg-white border-r border-gray-150 flex flex-col items-center py-3 w-14 flex-shrink-0"
       >
         <button
           onClick={onToggleCollapse}
-          className="w-9 h-9 rounded-md hover:bg-gray-100 flex items-center justify-center text-gray-500 mb-3"
+          className="w-9 h-9 rounded-lg hover:bg-gray-100 flex items-center justify-center text-gray-500 mb-4 transition-colors"
           aria-label="展开侧边栏"
           title="展开"
         >
-          ☰
+          <PanelLeftOpen size={16} strokeWidth={2} />
         </button>
-        <CollapsedNavIcon href="/" label="首页" glyph="⌂" active={isActive("/")} />
-        <CollapsedNavIcon
+        <CollapsedIcon href="/" label="首页" Icon={Home} active={isActive("/")} />
+        <CollapsedIcon
           href="/recolor"
           label="换色"
-          glyph="🎨"
+          Icon={Palette}
           active={isActive("/recolor")}
         />
-        <CollapsedNavIcon
+        <CollapsedIcon
           href="/batch-photo"
           label="批量摄影"
-          glyph="📷"
+          Icon={Camera}
           active={isActive("/batch-photo")}
         />
-        <CollapsedNavIcon
+        <CollapsedIcon
           href="/history"
           label="历史"
-          glyph="🕘"
+          Icon={HistoryIcon}
           active={isActive("/history")}
           badge={activeJobCount > 0 ? activeJobCount : undefined}
         />
-        <CollapsedNavIcon
+        <CollapsedIcon
           href="/billing"
           label="账单"
-          glyph="¥"
+          Icon={Wallet}
           active={isActive("/billing")}
         />
       </aside>
     );
   }
 
+  // ===== 展开态 =====
   return (
     <aside
       aria-label="侧边导航"
-      className="h-full bg-white border-r border-gray-200 flex flex-col w-[260px] flex-shrink-0"
+      className="h-full bg-white border-r border-gray-150 flex flex-col w-[240px] flex-shrink-0"
     >
-      {/* 顶部：品牌 + 折叠按钮 */}
+      {/* 顶部：品牌 + 折叠 */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-        <Link href="/" className="font-semibold text-gray-900 truncate">
+        <Link
+          href="/"
+          className="font-semibold text-gray-900 truncate text-[15px] tracking-tight"
+        >
           伴娘服 AI
         </Link>
         <div className="flex items-center gap-1">
           {activeJobCount > 0 ? (
             <span
-              className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-blue-600 text-white"
+              className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-blue-600 text-white"
               title={`${activeJobCount} 个任务进行中`}
             >
               {activeJobCount}
@@ -165,142 +169,144 @@ export function LeftNav({
           {onToggleCollapse ? (
             <button
               onClick={onToggleCollapse}
-              className="w-7 h-7 rounded-md hover:bg-gray-100 flex items-center justify-center text-gray-400"
-              aria-label="折叠侧边栏"
+              className="w-7 h-7 rounded-md hover:bg-gray-100 flex items-center justify-center text-gray-400 transition-colors"
+              aria-label="折叠"
               title="折叠"
             >
-              ‹
+              <PanelLeftClose size={14} strokeWidth={2} />
             </button>
           ) : null}
         </div>
       </div>
 
-      {/* 主导航 */}
       <nav className="flex-1 overflow-y-auto py-2">
-        <NavGroup>
-          <NavItem href="/" label="首页" active={isActive("/")} glyph="⌂" />
+        <div className="px-2 space-y-0.5">
+          <NavItem href="/" Icon={Home} label="首页" active={isActive("/")} />
           <NavItem
             href="/recolor"
+            Icon={Palette}
             label="换色"
             active={isActive("/recolor")}
-            glyph="🎨"
           />
           <NavItem
             href="/batch-photo"
+            Icon={Camera}
             label="批量摄影图"
             active={isActive("/batch-photo")}
-            glyph="📷"
           />
           <NavItem
             href="/history"
+            Icon={HistoryIcon}
             label="历史记录"
             active={isActive("/history")}
-            glyph="🕘"
             badge={activeJobCount > 0 ? `${activeJobCount} 进行中` : undefined}
           />
           <NavItem
             href="/billing"
+            Icon={Wallet}
             label="我的账单"
             active={isActive("/billing")}
-            glyph="¥"
           />
-        </NavGroup>
+        </div>
 
-        {/* 素材库（admin 可见）*/}
         {user.role === "admin" ? (
           <>
-            <NavDivider label="素材库" />
-            <NavCollapse
+            <Divider label="素材" />
+            <Collapsible
               label="素材管理"
-              glyph="▦"
+              Icon={Library}
               open={libraryOpen}
               onToggle={() => setLibraryOpen((v) => !v)}
               hasActive={libraryExpanded}
             >
-              <SubNavItem
+              <SubItem
                 href="/admin/colors"
                 label="颜色"
                 active={isActive("/admin/colors")}
               />
-              <SubNavItem
+              <SubItem
                 href="/admin/materials"
                 label="材质"
                 active={isActive("/admin/materials")}
               />
-              <SubNavItem
+              <SubItem
                 href="/admin/realism"
                 label="真实感"
                 active={isActive("/admin/realism")}
               />
-              <SubNavItem
+              <SubItem
                 href="/admin/models"
                 label="模特"
                 active={isActive("/admin/models")}
               />
-              <SubNavItem
+              <SubItem
                 href="/admin/scenes"
                 label="场景"
                 active={isActive("/admin/scenes")}
               />
-              <SubNavItem
+              <SubItem
                 href="/admin/poses"
                 label="姿势"
                 active={isActive("/admin/poses")}
               />
-              <SubNavItem
+              <SubItem
                 href="/admin/photography"
                 label="摄影"
                 active={isActive("/admin/photography")}
               />
-              <SubNavItem
+              <SubItem
                 href="/admin/prompts"
                 label="Prompt"
                 active={isActive("/admin/prompts")}
               />
-              <SubNavItem
+              <SubItem
                 href="/admin/ai-models"
                 label="AI 模型"
                 active={isActive("/admin/ai-models")}
               />
-            </NavCollapse>
+            </Collapsible>
 
-            <NavDivider label="管理" />
-            <NavCollapse
+            <Divider label="管理" />
+            <Collapsible
               label="团队管理"
-              glyph="⚙"
+              Icon={Settings}
               open={adminOpen}
               onToggle={() => setAdminOpen((v) => !v)}
               hasActive={adminExpanded}
             >
-              <SubNavItem
+              <SubItem
                 href="/admin/users"
                 label="用户"
                 active={isActive("/admin/users")}
               />
-              <SubNavItem
+              <SubItem
                 href="/admin/billing"
                 label="团队账单"
                 active={isActive("/admin/billing")}
               />
-              <SubNavItem
+              <SubItem
                 href="/admin/model-prices"
-                label="单价/汇率"
+                label="单价 / 汇率"
                 active={isActive("/admin/model-prices")}
               />
-            </NavCollapse>
+              <SubItem
+                href="/admin/announcements"
+                label="公告栏"
+                active={isActive("/admin/announcements")}
+              />
+            </Collapsible>
           </>
         ) : null}
 
-        {/* 最近历史 */}
         {recentHistory.length > 0 ? (
           <>
-            <NavDivider label="最近记录" />
+            <Divider label="最近记录" />
             <div className="px-2 space-y-0.5">
               {recentHistory.slice(0, 5).map((item) => (
                 <Link
                   key={item.id}
                   href={item.href}
-                  className="block px-2 py-1.5 rounded-md hover:bg-gray-100 group"
+                  className="block px-2 py-1.5 rounded-md hover:bg-gray-50 group"
                   title={item.title}
                 >
                   <div className="text-[12px] text-gray-700 truncate group-hover:text-gray-900">
@@ -316,65 +322,76 @@ export function LeftNav({
         ) : null}
       </nav>
 
-      {/* 底部：用户 + 退出 */}
-      <div className="border-t border-gray-100 px-3 py-2.5 flex items-center gap-2">
-        <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 text-white text-xs font-medium flex items-center justify-center flex-shrink-0">
+      {/* 底部 */}
+      <div className="border-t border-gray-100 px-3 py-2.5 flex items-center gap-2.5">
+        <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 text-white text-[11px] font-semibold flex items-center justify-center flex-shrink-0">
           {displayName.slice(0, 1).toUpperCase()}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-sm text-gray-900 truncate">{displayName}</div>
+          <div className="text-[13px] text-gray-900 truncate font-medium leading-tight">
+            {displayName}
+          </div>
           {user.role === "admin" ? (
-            <div className="text-[10px] text-amber-700">管理员</div>
-          ) : null}
+            <div className="text-[10px] text-amber-600 leading-tight">
+              管理员
+            </div>
+          ) : (
+            <div className="text-[10px] text-gray-400 leading-tight">
+              成员
+            </div>
+          )}
         </div>
         <button
           onClick={handleLogout}
-          className="text-gray-400 hover:text-red-600 text-xs px-2 py-1"
+          className="w-7 h-7 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-colors"
           title="退出登录"
         >
-          退出
+          <LogOut size={14} strokeWidth={2} />
         </button>
       </div>
     </aside>
   );
 }
 
-/* ─────────── 内部小组件 ─────────── */
+/* ═════════════ 内部小件 ═════════════ */
 
-function NavGroup({ children }: { children: React.ReactNode }) {
-  return <div className="px-2 space-y-0.5">{children}</div>;
+interface NavIconProps {
+  size?: number;
+  strokeWidth?: number;
+  className?: string;
 }
+type IconCmp = React.ComponentType<NavIconProps>;
 
 function NavItem({
   href,
+  Icon,
   label,
   active,
-  glyph,
   badge,
 }: {
   href: string;
+  Icon: IconCmp;
   label: string;
   active: boolean;
-  glyph?: string;
   badge?: string;
 }) {
   return (
     <Link
       href={href}
-      className={`flex items-center gap-2 px-2.5 py-2 rounded-md text-sm ${
+      className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] transition-colors ${
         active
-          ? "bg-blue-50 text-blue-800 font-medium"
-          : "text-gray-700 hover:bg-gray-100"
+          ? "bg-blue-50 text-blue-700 font-medium"
+          : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
       }`}
     >
-      {glyph ? (
-        <span className="w-4 text-center text-gray-500" aria-hidden>
-          {glyph}
-        </span>
-      ) : null}
+      <Icon
+        size={16}
+        strokeWidth={active ? 2.2 : 1.8}
+        className={active ? "text-blue-600" : "text-gray-400"}
+      />
       <span className="flex-1 truncate">{label}</span>
       {badge ? (
-        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-600 text-white">
+        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-600 text-white font-medium">
           {badge}
         </span>
       ) : null}
@@ -382,7 +399,7 @@ function NavItem({
   );
 }
 
-function SubNavItem({
+function SubItem({
   href,
   label,
   active,
@@ -394,10 +411,10 @@ function SubNavItem({
   return (
     <Link
       href={href}
-      className={`block pl-9 pr-2.5 py-1.5 rounded-md text-[13px] ${
+      className={`block pl-10 pr-2.5 py-1.5 rounded-lg text-[12.5px] transition-colors ${
         active
-          ? "bg-blue-50 text-blue-800 font-medium"
-          : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+          ? "bg-blue-50 text-blue-700 font-medium"
+          : "text-gray-500 hover:bg-gray-50 hover:text-gray-900"
       }`}
     >
       {label}
@@ -405,16 +422,16 @@ function SubNavItem({
   );
 }
 
-function NavCollapse({
+function Collapsible({
   label,
-  glyph,
+  Icon,
   open,
   onToggle,
   hasActive,
   children,
 }: {
   label: string;
-  glyph?: string;
+  Icon: IconCmp;
   open: boolean;
   onToggle: () => void;
   hasActive: boolean;
@@ -425,50 +442,49 @@ function NavCollapse({
       <button
         type="button"
         onClick={onToggle}
-        className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-md text-sm ${
+        className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] transition-colors ${
           hasActive
-            ? "text-blue-800 font-medium"
-            : "text-gray-700 hover:bg-gray-100"
+            ? "text-blue-700 font-medium"
+            : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
         }`}
       >
-        {glyph ? (
-          <span className="w-4 text-center text-gray-500" aria-hidden>
-            {glyph}
-          </span>
-        ) : null}
+        <Icon
+          size={16}
+          strokeWidth={hasActive ? 2.2 : 1.8}
+          className={hasActive ? "text-blue-600" : "text-gray-400"}
+        />
         <span className="flex-1 text-left truncate">{label}</span>
-        <span
-          className={`text-gray-400 transition-transform ${
+        <ChevronRight
+          size={14}
+          strokeWidth={2}
+          className={`text-gray-400 transition-transform duration-200 ${
             open ? "rotate-90" : ""
           }`}
-          aria-hidden
-        >
-          ›
-        </span>
+        />
       </button>
       {open ? <div className="mt-0.5 space-y-0.5">{children}</div> : null}
     </div>
   );
 }
 
-function NavDivider({ label }: { label: string }) {
+function Divider({ label }: { label: string }) {
   return (
-    <div className="mt-4 mb-1 px-4 text-[10px] uppercase tracking-wide text-gray-400">
+    <div className="mt-5 mb-1.5 px-4 text-[10px] uppercase tracking-wider text-gray-400 font-medium">
       {label}
     </div>
   );
 }
 
-function CollapsedNavIcon({
+function CollapsedIcon({
   href,
   label,
-  glyph,
+  Icon,
   active,
   badge,
 }: {
   href: string;
   label: string;
-  glyph: string;
+  Icon: IconCmp;
   active: boolean;
   badge?: number;
 }) {
@@ -476,15 +492,15 @@ function CollapsedNavIcon({
     <Link
       href={href}
       title={label}
-      className={`relative w-9 h-9 rounded-md flex items-center justify-center mb-1 text-lg ${
+      className={`relative w-9 h-9 rounded-lg flex items-center justify-center mb-1 transition-colors ${
         active
-          ? "bg-blue-50 text-blue-700"
-          : "text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+          ? "bg-blue-50 text-blue-600"
+          : "text-gray-400 hover:bg-gray-50 hover:text-gray-800"
       }`}
     >
-      <span aria-hidden>{glyph}</span>
+      <Icon size={16} strokeWidth={active ? 2.2 : 1.8} />
       {badge ? (
-        <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-blue-600 text-white text-[10px] font-medium flex items-center justify-center">
+        <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-blue-600 text-white text-[10px] font-semibold flex items-center justify-center">
           {badge}
         </span>
       ) : null}

@@ -4,8 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ImageCropper } from "@/app/_components/image-cropper";
 import { AppShell } from "@/app/_components/app-shell";
 import { NotificationStack, useNotifications, notifyHelpers } from "@/app/_components/notification-stack";
-import { JobProgressPanel } from "@/app/_components/job-progress-panel";
-import { JobResultsGrid } from "@/app/_components/job-results-grid";
+import { TaskViewport } from "@/app/_components/task-viewport";
 import { Thumbnail, ThumbnailBadge } from "@/app/_components/thumbnail";
 import { ResetButton } from "@/app/_components/reset-button";
 import { useCurrentUser } from "@/lib/hooks/use-current-user";
@@ -156,6 +155,8 @@ export default function RecolorPage() {
     slotStore.get<string>("activeJobId") ?? null,
   );
   const [activeJobCount, setActiveJobCount] = useState(0);
+  /** 中栏显示模式：'form' 表单（默认）或 'task' 任务视窗 */
+  const [viewMode, setViewMode] = useState<"form" | "task">("form");
 
   // ─── 估价 ───
   const [estimate, setEstimate] = useState<CostEstimate | null>(null);
@@ -517,10 +518,11 @@ export default function RecolorPage() {
       setActiveJobId(body.job_id);
       slotStore.setActiveJob(body.job_id);
       setActiveJobCount((v) => v + 1);
+      setViewMode("task"); // 自动切到任务视窗，消除黑盒感
       notifyHelpers.info(
         push,
         `任务已提交`,
-        `共 ${totalCount} 张，进度看右栏 · Google quota 2/分钟，预计耗时 ${Math.ceil(totalCount / 2)}+ 分钟`,
+        `共 ${totalCount} 张 · Google quota 2/分钟，预计耗时 ${Math.ceil(totalCount / 2)}+ 分钟`,
       );
     } catch (e) {
       notifyHelpers.error(
@@ -562,6 +564,9 @@ export default function RecolorPage() {
 
   /* ─────────── 渲染 ─────────── */
 
+  // 动态中栏：有活跃任务且 viewMode='task' 时，中栏整个换成 TaskViewport
+  const showTaskViewport = viewMode === "task" && polling.data;
+
   return (
     <AppShell
       leftNav={{
@@ -590,9 +595,33 @@ export default function RecolorPage() {
           poll={polling.data}
           pollError={polling.error}
           onDismissJob={dismissCurrentJob}
+          hasActiveTask={Boolean(polling.data)}
+          viewMode={viewMode}
+          onSwitchView={() => setViewMode((m) => (m === "task" ? "form" : "task"))}
         />
       }
     >
+      {showTaskViewport && polling.data ? (
+        <TaskViewport
+          job={polling.data.job}
+          items={polling.data.items}
+          nextTokenReadyAtMs={polling.data.next_token_ready_at_ms}
+          serverTimeMs={polling.data.server_time_ms}
+          onBackToForm={() => setViewMode("form")}
+          onStartNew={() => {
+            resetAll();
+            setViewMode("form");
+          }}
+          zipPrefix="recolor"
+          makeFilename={(it) => {
+            const safe = (it.label || `item_${it.idx + 1}`).replace(
+              /[/\\?%*:|"<>]/g,
+              "_",
+            );
+            return `${safe}.png`;
+          }}
+        />
+      ) : (
       <div className="p-4 md:p-6 max-w-4xl mx-auto">
         <header className="mb-6">
           <h1 className="text-2xl font-bold text-gray-900">HEX 精准换色</h1>
@@ -949,24 +978,8 @@ export default function RecolorPage() {
             </div>
           </div>
         </section>
-
-        {/* 结果区（轮询拿到后展示） */}
-        {polling.data && polling.data.items.length > 0 && (
-          <section className="mt-6 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">生成结果</h2>
-            <JobResultsGrid
-              items={polling.data.items}
-              groupBy="label-prefix"
-              zipFilenamePrefix="recolor"
-              subtitle={
-                polling.data.job.status === "completed"
-                  ? `已完成 · 共 ${polling.data.job.completed_count}/${polling.data.job.total_count}`
-                  : undefined
-              }
-            />
-          </section>
-        )}
       </div>
+      )}
     </AppShell>
   );
 }
@@ -994,6 +1007,9 @@ function RightPanel({
   poll,
   pollError,
   onDismissJob,
+  hasActiveTask,
+  viewMode,
+  onSwitchView,
 }: {
   aiModels: AiModel[];
   model: string;
@@ -1015,27 +1031,33 @@ function RightPanel({
   poll: import("@/lib/hooks/use-job-polling").PollResult | null;
   pollError: string | null;
   onDismissJob: () => void;
+  hasActiveTask: boolean;
+  viewMode: "form" | "task";
+  onSwitchView: () => void;
 }) {
   return (
     <div className="p-3 space-y-3 text-sm">
       <NotificationStack />
 
-      {/* 进度看板 */}
-      {poll ? (
-        <JobProgressPanel
-          job={poll.job}
-          items={poll.items}
-          nextTokenReadyAtMs={poll.next_token_ready_at_ms}
-          serverTimeMs={poll.server_time_ms}
-          onCancelDone={
-            poll.job.status === "completed" ||
-            poll.job.status === "canceled" ||
-            poll.job.status === "failed"
-              ? onDismissJob
-              : undefined
-          }
-        />
+      {/* 任务切换提示条 */}
+      {hasActiveTask ? (
+        <button
+          type="button"
+          onClick={onSwitchView}
+          className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-blue-50 hover:bg-blue-100 border border-blue-200 text-xs text-blue-900 transition-colors"
+        >
+          <span className="flex items-center gap-2">
+            {poll && (poll.job.status === "running" || poll.job.status === "canceling") ? (
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+            ) : null}
+            {viewMode === "task" ? "切到「表单」编辑" : "切到「任务视窗」看进度"}
+          </span>
+          <span className="text-[11px] font-mono text-blue-600">
+            {poll ? `${poll.job.completed_count}/${poll.job.total_count}` : ""}
+          </span>
+        </button>
       ) : null}
+
       {pollError ? (
         <div className="p-2 rounded border border-red-200 bg-red-50 text-xs text-red-700">
           轮询失败：{pollError}

@@ -1,31 +1,113 @@
-/* 裁剪组件样式（@import 必须放在最前，PostCSS 会在编译时处理） */
+/* 裁剪组件样式（@import 必须在最前） */
 @import "react-image-crop/dist/ReactCrop.css";
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* PS 风格大方块锚点，比默认的 10px 灰色小点更显眼 */
-.ReactCrop__drag-handle {
-  width: 14px !important;
-  height: 14px !important;
-  background-color: #ffffff !important;
-  border: 2px solid #2563eb !important;
-  box-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
-  opacity: 1 !important;
-}
-.ReactCrop__crop-selection {
-  border: 2px dashed #2563eb !important;
-}
-.ReactCrop .ord-nw { top: 0; left: 0; margin-top: -7px; margin-left: -7px; cursor: nw-resize; }
-.ReactCrop .ord-n  { top: 0; left: 50%; margin-top: -7px; margin-left: -7px; cursor: n-resize; }
-.ReactCrop .ord-ne { top: 0; right: 0; margin-top: -7px; margin-right: -7px; cursor: ne-resize; }
-.ReactCrop .ord-e  { top: 50%; right: 0; margin-top: -7px; margin-right: -7px; cursor: e-resize; }
-.ReactCrop .ord-se { bottom: 0; right: 0; margin-bottom: -7px; margin-right: -7px; cursor: se-resize; }
-.ReactCrop .ord-s  { bottom: 0; left: 50%; margin-bottom: -7px; margin-left: -7px; cursor: s-resize; }
-.ReactCrop .ord-sw { bottom: 0; left: 0; margin-bottom: -7px; margin-left: -7px; cursor: sw-resize; }
-.ReactCrop .ord-w  { top: 50%; left: 0; margin-top: -7px; margin-left: -7px; cursor: w-resize; }
+/* ════════════════════════════════════════════════════════
+   设计 token
+   Apple/iOS 极简风，以蓝为强调色，克制的灰度层级
+   ════════════════════════════════════════════════════════ */
+:root {
+  /* ── 强调色（所有 CTA / 选中 / 链接）── */
+  --brand-50:  #eff6ff;
+  --brand-100: #dbeafe;
+  --brand-200: #bfdbfe;
+  --brand-400: #60a5fa;
+  --brand-500: #3b82f6;
+  --brand-600: #2563eb;
+  --brand-700: #1d4ed8;
 
+  /* ── 语义色 ── */
+  --success-50:  #ecfdf5;
+  --success-500: #10b981;
+  --success-600: #059669;
+  --warn-50:     #fffbeb;
+  --warn-500:    #f59e0b;
+  --warn-600:    #d97706;
+  --danger-50:   #fef2f2;
+  --danger-500:  #ef4444;
+  --danger-600:  #dc2626;
+
+  /* ── 灰度层级（iOS 风克制 tonal）── */
+  --gray-0:   #ffffff;
+  --gray-50:  #fafafa;
+  --gray-100: #f5f5f5;
+  --gray-150: #eeeeee;
+  --gray-200: #e5e5e5;
+  --gray-300: #d4d4d4;
+  --gray-400: #a3a3a3;
+  --gray-500: #737373;
+  --gray-600: #525252;
+  --gray-700: #404040;
+  --gray-800: #262626;
+  --gray-900: #171717;
+
+  /* ── 表面色（背景 / 面板 / 浮层）── */
+  --surface-canvas: var(--gray-50);        /* 页面底色 */
+  --surface-panel:  var(--gray-0);         /* 卡片 / 面板 */
+  --surface-hover:  var(--gray-100);       /* 列表 hover */
+  --surface-muted:  var(--gray-50);        /* 次级区块 */
+  --surface-overlay: rgba(17, 24, 39, 0.5); /* modal 遮罩 */
+
+  /* ── 边框 / 分割线 ── */
+  --border-subtle: var(--gray-150);
+  --border-base:   var(--gray-200);
+  --border-strong: var(--gray-300);
+
+  /* ── 文字色 ── */
+  --text-primary:   var(--gray-900);
+  --text-secondary: var(--gray-600);
+  --text-tertiary:  var(--gray-400);
+  --text-on-brand:  #ffffff;
+
+  /* ── 圆角（iOS 风较大圆角）── */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+  --radius-full: 9999px;
+
+  /* ── 间距（4 / 8 / 12 / 16 节奏）── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+
+  /* ── 投影层级（克制，iOS 风柔和）── */
+  --shadow-xs:  0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-sm:  0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.03);
+  --shadow-md:  0 4px 12px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04);
+  --shadow-lg:  0 10px 30px rgba(0, 0, 0, 0.08), 0 4px 10px rgba(0, 0, 0, 0.04);
+  --shadow-xl:  0 20px 50px rgba(0, 0, 0, 0.10), 0 8px 16px rgba(0, 0, 0, 0.04);
+  --shadow-focus: 0 0 0 3px rgba(59, 130, 246, 0.25);
+
+  /* ── Z 轴 ── */
+  --z-nav:     40;
+  --z-sticky:  30;
+  --z-dropdown: 50;
+  --z-overlay: 60;
+  --z-modal:   70;
+  --z-tooltip: 80;
+  --z-toast:   90;
+
+  /* ── 动画 ── */
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+}
+
+/* ════════════════════════════════════════════════════════
+   基础重置
+   ════════════════════════════════════════════════════════ */
 html,
 body {
   height: 100%;
@@ -35,6 +117,207 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-family:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
-    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+    "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    system-ui, sans-serif;
+  color: var(--text-primary);
+  background: var(--surface-canvas);
+  font-feature-settings:
+    "cv02" on,
+    "cv03" on,
+    "cv04" on,
+    "cv11" on,
+    "ss01" on;
+  -webkit-tap-highlight-color: transparent;
 }
+
+/* 滚动条（Webkit）：极细、半透明 */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.08);
+  border-radius: 10px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.18);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+
+/* 聚焦环，使用强调色 */
+*:focus-visible {
+  outline: 2px solid var(--brand-500);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+/* ════════════════════════════════════════════════════════
+   组件基础类（Tailwind @layer 扩展）
+   ════════════════════════════════════════════════════════ */
+@layer components {
+  /* 卡片容器 */
+  .card {
+    @apply bg-white rounded-xl border border-gray-200;
+    box-shadow: var(--shadow-xs);
+  }
+  .card-elevated {
+    @apply bg-white rounded-xl border border-gray-200;
+    box-shadow: var(--shadow-md);
+  }
+
+  /* 按钮基础 */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-weight: 500;
+    border-radius: var(--radius-md);
+    transition:
+      background var(--duration-fast) var(--ease-out-quart),
+      color var(--duration-fast) var(--ease-out-quart),
+      border-color var(--duration-fast) var(--ease-out-quart),
+      box-shadow var(--duration-fast) var(--ease-out-quart),
+      transform var(--duration-fast) var(--ease-out-quart);
+    white-space: nowrap;
+    user-select: none;
+  }
+  .btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .btn:not(:disabled):active {
+    transform: scale(0.97);
+  }
+  /* 按钮尺寸 */
+  .btn-sm { padding: 4px 10px; font-size: 12px; height: 28px; }
+  .btn-md { padding: 6px 14px; font-size: 13px; height: 34px; }
+  .btn-lg { padding: 10px 20px; font-size: 14px; height: 42px; }
+  /* 按钮变体 */
+  .btn-primary {
+    background: var(--brand-600);
+    color: #fff;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--brand-700);
+  }
+  .btn-secondary {
+    background: var(--gray-100);
+    color: var(--text-primary);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    background: var(--gray-150);
+  }
+  .btn-outline {
+    background: transparent;
+    border: 1px solid var(--border-base);
+    color: var(--text-secondary);
+  }
+  .btn-outline:hover:not(:disabled) {
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+    background: var(--surface-hover);
+  }
+  .btn-ghost {
+    background: transparent;
+    color: var(--text-secondary);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--surface-hover);
+    color: var(--text-primary);
+  }
+  .btn-danger {
+    background: var(--danger-600);
+    color: #fff;
+  }
+  .btn-danger:hover:not(:disabled) {
+    background: #b91c1c;
+  }
+  .btn-danger-outline {
+    background: transparent;
+    border: 1px solid var(--border-base);
+    color: var(--danger-600);
+  }
+  .btn-danger-outline:hover:not(:disabled) {
+    border-color: var(--danger-500);
+    background: var(--danger-50);
+  }
+
+  /* 状态 chip */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    height: 22px;
+    font-size: 11px;
+    font-weight: 500;
+    border-radius: var(--radius-full);
+    line-height: 1;
+  }
+  .chip-brand   { background: var(--brand-50);   color: var(--brand-700); }
+  .chip-success { background: var(--success-50); color: var(--success-600); }
+  .chip-warn    { background: var(--warn-50);    color: var(--warn-600); }
+  .chip-danger  { background: var(--danger-50);  color: var(--danger-600); }
+  .chip-gray    { background: var(--gray-100);   color: var(--gray-700); }
+
+  /* 分区标题 */
+  .section-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+  }
+
+  /* 表单输入 */
+  .input {
+    width: 100%;
+    padding: 8px 12px;
+    font-size: 13px;
+    border: 1px solid var(--border-base);
+    border-radius: var(--radius-md);
+    background: #fff;
+    transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+  }
+  .input:focus {
+    outline: none;
+    border-color: var(--brand-500);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+  }
+  .input:disabled {
+    background: var(--gray-50);
+    color: var(--text-tertiary);
+    cursor: not-allowed;
+  }
+}
+
+/* ════════════════════════════════════════════════════════
+   react-image-crop 样式微调（保留 P5-1 原有修饰）
+   ════════════════════════════════════════════════════════ */
+.ReactCrop__drag-handle {
+  width: 14px !important;
+  height: 14px !important;
+  background-color: #ffffff !important;
+  border: 2px solid var(--brand-600) !important;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
+  opacity: 1 !important;
+}
+.ReactCrop__crop-selection {
+  border: 2px dashed var(--brand-600) !important;
+}
+.ReactCrop .ord-nw { top: 0; left: 0; margin-top: -7px; margin-left: -7px; cursor: nw-resize; }
+.ReactCrop .ord-n  { top: 0; left: 50%; margin-top: -7px; margin-left: -7px; cursor: n-resize; }
+.ReactCrop .ord-ne { top: 0; right: 0; margin-top: -7px; margin-right: -7px; cursor: ne-resize; }
+.ReactCrop .ord-e  { top: 50%; right: 0; margin-top: -7px; margin-right: -7px; cursor: e-resize; }
+.ReactCrop .ord-se { bottom: 0; right: 0; margin-bottom: -7px; margin-right: -7px; cursor: se-resize; }
+.ReactCrop .ord-s  { bottom: 0; left: 50%; margin-bottom: -7px; margin-left: -7px; cursor: s-resize; }
+.ReactCrop .ord-sw { bottom: 0; left: 0; margin-bottom: -7px; margin-left: -7px; cursor: sw-resize; }
+.ReactCrop .ord-w  { top: 50%; left: 0; margin-top: -7px; margin-left: -7px; cursor: w-resize; }

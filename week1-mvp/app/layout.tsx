@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { ConditionalNav } from "./_components/conditional-nav";
 import { AppProviders } from "./_components/providers";
+import { GlobalShell } from "./_components/global-shell";
 import { getCurrentUser, ensureInitialAdmin } from "@/lib/auth";
 
 export const metadata: Metadata = {
@@ -14,18 +14,21 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // 确保初始管理员存在（幂等，仅在第一次数据库为空时生效）
+  // 确保初始管理员存在（幂等）
   await ensureInitialAdmin();
 
-  // 未登录时 user 为 null，不显示导航栏（/login 页就是这种情况）
+  // 未登录时 user 为 null —— GlobalShell 会检测 /login 不套 shell
   const user = await getCurrentUser();
 
   return (
     <html lang="zh-CN">
       <body className="bg-gray-50 min-h-screen">
         <AppProviders>
-          {user && <ConditionalNav user={user} />}
-          {children}
+          {user ? (
+            <GlobalShell user={user}>{children}</GlobalShell>
+          ) : (
+            children
+          )}
         </AppProviders>
       </body>
     </html>

@@ -32,6 +32,7 @@
 import {
   getJob,
   getJobItemByIdx,
+  getJobItems,
   readJobStatus,
   recomputeJobStats,
   finalizeCanceledJob,
@@ -40,6 +41,7 @@ import {
   type JobItemRow,
 } from "./jobs-db";
 import { acquireToken, peekNextTokenAtMs } from "./rate-limiter";
+import { getDb } from "./db";
 
 /** 单条 item 成功后 handler 返回的结果 */
 export interface ItemResult {
@@ -220,6 +222,13 @@ async function runLoop(
       `completed=${finalJob.completed_count} failed=${finalJob.failed_count} canceled=${finalJob.canceled_count}`,
   );
 
+  // 写入 generations 表（兼容老 /history 页面）
+  try {
+    writeGenerationFromJob(finalJob);
+  } catch (e) {
+    console.error(`[job-runner] 写 generations ${jobId} 失败:`, e);
+  }
+
   if (options.onJobEnd) {
     try {
       await options.onJobEnd(finalJob);
@@ -236,4 +245,65 @@ function safeParse(s: string): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+/**
+ * 把 render_job 的结果落一份到 generations 表
+ *
+ * 老的 /history 页面从 generations 表读。新的任务队列只写
+ * render_jobs + render_job_items，不写 generations，所以历史页看不到新任务。
+ *
+ * 这里在 job 结束时把成功的结果整合成一条 generations 记录插入，
+ * 保证历史页能看到所有任务（新老接口都兼容）。
+ */
+function writeGenerationFromJob(job: JobRow): void {
+  const items = getJobItems(job.id);
+  const successful = items.filter(
+    (it) => it.status === "completed" && it.result_image_url,
+  );
+
+  // 把 feature 映射成老 kind 字段值（兼容老 UI）
+  const kind = job.feature === "recolor" ? "recolor" : "on_model";
+
+  const outputImages = JSON.stringify(
+    successful.map((it) => it.result_image_url),
+  );
+
+  // 从 job.params（里面可能有 colors/poses 等元信息）+ 新增 job_id / item_summary 融合 params
+  const params = safeParse(job.params || "{}");
+  params.job_id = job.id;
+  params.total_count = job.total_count;
+  params.completed_count = job.completed_count;
+  params.failed_count = job.failed_count;
+  params.canceled_count = job.canceled_count;
+  params.total_cost_cny = job.total_cost_cny;
+  params.model = job.model;
+
+  const durationMs =
+    job.started_at !== null && job.finished_at !== null
+      ? (job.finished_at - job.started_at) * 1000
+      : null;
+
+  const success = successful.length > 0 ? 1 : 0;
+  const errorMsg =
+    successful.length === 0
+      ? job.error_message ||
+        items.find((it) => it.error_message)?.error_message ||
+        `全部 ${job.total_count} 张失败`
+      : null;
+
+  const db = getDb();
+  db.prepare(
+    `INSERT INTO generations (user_id, kind, input_images, output_images, params, duration_ms, success, error)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    job.user_id,
+    kind,
+    null, // input_images：新版任务不保留输入图路径到历史（避免暴露临时文件）
+    outputImages,
+    JSON.stringify(params),
+    durationMs,
+    success,
+    errorMsg,
+  );
 }

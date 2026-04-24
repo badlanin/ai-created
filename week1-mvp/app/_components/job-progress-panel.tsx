@@ -4,6 +4,10 @@ import { useEffect, useState } from "react";
 import type { PolledJob, PolledJobItem } from "@/lib/hooks/use-job-polling";
 import { cancelJob } from "@/lib/hooks/use-job-polling";
 import { Thumbnail, ThumbnailBadge } from "./thumbnail";
+import {
+  downloadImagesAsZip,
+  downloadSingleImage,
+} from "@/lib/download-zip";
 
 export interface JobProgressPanelProps {
   job: PolledJob;
@@ -34,6 +38,12 @@ export function JobProgressPanel({
 }: JobProgressPanelProps) {
   const [cancelling, setCancelling] = useState(false);
   const [showLog, setShowLog] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [zipping, setZipping] = useState(false);
+  const [zipProgress, setZipProgress] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
 
   // 服务端时钟 vs 本地时钟的偏差校正
   const clockSkewMs = serverTimeMs ? serverTimeMs - Date.now() : 0;
@@ -209,30 +219,92 @@ export function JobProgressPanel({
         </div>
       ) : null}
 
-      {/* 结果缩略图网格（排序：完成 → 失败；取消和排队中不展示在结果区，避免杂乱） */}
+      {/* 结果缩略图网格（排序：完成 → 失败） */}
       {completed.length > 0 || failed.length > 0 ? (
         <div>
-          <div className="text-[11px] text-gray-500 mb-1.5">
-            已完成（{completed.length}）
-            {failed.length > 0 ? `· 失败 ${failed.length}` : ""}
+          <div className="flex items-center justify-between mb-1.5 gap-2">
+            <div className="text-[11px] text-gray-500">
+              已完成（{completed.length}）
+              {failed.length > 0 ? `· 失败 ${failed.length}` : ""}
+            </div>
+            {completed.length > 0 ? (
+              <div className="flex gap-1">
+                {selectedIds.size > 0 ? (
+                  <button
+                    onClick={() => downloadChosen(completed.filter((it) => selectedIds.has(it.id)))}
+                    disabled={zipping}
+                    className="text-[10px] px-1.5 py-0.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {zipping && zipProgress
+                      ? `打包 ${zipProgress.done}/${zipProgress.total}`
+                      : `ZIP 选中 (${selectedIds.size})`}
+                  </button>
+                ) : null}
+                <button
+                  onClick={() => downloadChosen(completed)}
+                  disabled={zipping}
+                  className="text-[10px] px-1.5 py-0.5 rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
+                >
+                  {zipping && zipProgress
+                    ? `打包 ${zipProgress.done}/${zipProgress.total}`
+                    : "下载全部"}
+                </button>
+              </div>
+            ) : null}
           </div>
           <div className="grid grid-cols-3 gap-1.5">
-            {completed.map((it) => (
-              <Thumbnail
-                key={it.id}
-                src={it.result_image_url || ""}
-                alt={it.label || `#${it.idx + 1}`}
-                ratio="3/4"
-                fit="contain"
-                badge={
-                  it.cost_cny !== null ? (
-                    <ThumbnailBadge tone="gray">
-                      ¥{it.cost_cny.toFixed(2)}
-                    </ThumbnailBadge>
-                  ) : undefined
-                }
-              />
-            ))}
+            {completed.map((it) => {
+              const isSel = selectedIds.has(it.id);
+              return (
+                <Thumbnail
+                  key={it.id}
+                  src={it.result_image_url || ""}
+                  alt={it.label || `#${it.idx + 1}`}
+                  ratio="3/4"
+                  fit="contain"
+                  selected={isSel}
+                  onClick={() => toggleSelect(it.id)}
+                  checkbox={
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleSelect(it.id);
+                      }}
+                      className={`w-4 h-4 rounded border-2 flex items-center justify-center text-[9px] ${
+                        isSel
+                          ? "bg-blue-600 border-blue-600 text-white"
+                          : "bg-white/90 border-gray-400"
+                      }`}
+                    >
+                      {isSel ? "✓" : ""}
+                    </button>
+                  }
+                  badge={
+                    it.cost_cny !== null ? (
+                      <ThumbnailBadge tone="gray">
+                        ¥{it.cost_cny.toFixed(2)}
+                      </ThumbnailBadge>
+                    ) : undefined
+                  }
+                  hoverOverlay={
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (it.result_image_url) {
+                          downloadSingleImage(
+                            it.result_image_url,
+                            filenameOf(it),
+                          );
+                        }
+                      }}
+                      className="px-2 py-0.5 bg-white/90 text-gray-800 text-[10px] rounded"
+                    >
+                      下载
+                    </button>
+                  }
+                />
+              );
+            })}
             {failed.map((it) => (
               <div
                 key={it.id}
@@ -250,6 +322,44 @@ export function JobProgressPanel({
       ) : null}
     </div>
   );
+
+  /* ─── 内部函数 ─── */
+
+  function toggleSelect(id: number) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function filenameOf(it: PolledJobItem): string {
+    const safe = (it.label || `item_${it.idx + 1}`).replace(/[/\\?%*:|"<>]/g, "_");
+    return `${safe}.png`;
+  }
+
+  async function downloadChosen(items: PolledJobItem[]) {
+    const entries = items
+      .filter((it) => it.result_image_url)
+      .map((it) => ({
+        url: it.result_image_url!,
+        filename: filenameOf(it),
+      }));
+    if (entries.length === 0) return;
+    setZipping(true);
+    setZipProgress({ done: 0, total: entries.length });
+    try {
+      await downloadImagesAsZip(
+        entries,
+        `${job.feature}_${job.id.slice(0, 8)}.zip`,
+        (done, total) => setZipProgress({ done, total }),
+      );
+    } finally {
+      setZipping(false);
+      setZipProgress(null);
+    }
+  }
 }
 
 /* ─────────── 内部小件 ─────────── */
