@@ -1,7 +1,13 @@
 "use client";
 
-import { useCallback, useState } from "react";
-import Cropper, { Area } from "react-easy-crop";
+import { useRef, useState } from "react";
+import ReactCrop, {
+  type Crop,
+  type PixelCrop,
+  centerCrop,
+  makeAspectCrop,
+} from "react-image-crop";
+import "react-image-crop/dist/ReactCrop.css";
 import { getCroppedBlob } from "@/lib/crop";
 
 export interface ImageCropperProps {
@@ -25,7 +31,12 @@ const ASPECT_PRESETS: Array<{ label: string; value: number }> = [
 ];
 
 /**
- * 裁剪模态。全屏遮罩 + 居中操作台 + 底部确认/取消
+ * 裁剪模态
+ *
+ * 使用 react-image-crop：PS 风格的交互
+ * - 4 个角 + 4 条边，共 8 个拖拽锚点
+ * - 自由比例下可任意拉伸裁剪框
+ * - 选中比例后，拖拽锚点时会锁定该比例
  */
 export function ImageCropper({
   imageSrc,
@@ -33,22 +44,104 @@ export function ImageCropper({
   onConfirm,
   onCancel,
 }: ImageCropperProps) {
-  const [crop, setCrop] = useState({ x: 0, y: 0 });
-  const [zoom, setZoom] = useState(1);
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  const [crop, setCrop] = useState<Crop>();
+  const [completedCrop, setCompletedCrop] = useState<PixelCrop | null>(null);
   const [aspect, setAspect] = useState<number>(initialAspect);
-  const [croppedArea, setCroppedArea] = useState<Area | null>(null);
   const [processing, setProcessing] = useState(false);
+  const [imgNaturalSize, setImgNaturalSize] = useState<{
+    w: number;
+    h: number;
+  } | null>(null);
 
-  const onCropComplete = useCallback(
-    (_percent: Area, px: Area) => setCroppedArea(px),
-    [],
-  );
+  function onImageLoad(e: React.SyntheticEvent<HTMLImageElement>) {
+    const { naturalWidth, naturalHeight, width, height } = e.currentTarget;
+    setImgNaturalSize({ w: naturalWidth, h: naturalHeight });
+
+    // 初始默认选中 80% 区域居中
+    const initial = aspect > 0
+      ? centerCrop(
+          makeAspectCrop(
+            {
+              unit: "%",
+              width: 80,
+            },
+            aspect,
+            width,
+            height,
+          ),
+          width,
+          height,
+        )
+      : centerCrop(
+          {
+            unit: "%" as const,
+            x: 10,
+            y: 10,
+            width: 80,
+            height: 80,
+          },
+          width,
+          height,
+        );
+    setCrop(initial);
+  }
+
+  function handleAspectChange(next: number) {
+    setAspect(next);
+    if (imgRef.current) {
+      const { width, height } = imgRef.current;
+      const nextCrop = next > 0
+        ? centerCrop(
+            makeAspectCrop(
+              {
+                unit: "%",
+                width: 80,
+              },
+              next,
+              width,
+              height,
+            ),
+            width,
+            height,
+          )
+        : centerCrop(
+            {
+              unit: "%" as const,
+              x: 10,
+              y: 10,
+              width: 80,
+              height: 80,
+            },
+            width,
+            height,
+          );
+      setCrop(nextCrop);
+    }
+  }
 
   async function handleConfirm() {
-    if (!croppedArea) return;
+    if (!completedCrop || !imgRef.current || !imgNaturalSize) return;
+
+    // react-image-crop 的 completedCrop 是「显示尺寸下的像素」
+    // 需要换算到原图像素
+    const scaleX = imgNaturalSize.w / imgRef.current.width;
+    const scaleY = imgNaturalSize.h / imgRef.current.height;
+    const area = {
+      x: Math.round(completedCrop.x * scaleX),
+      y: Math.round(completedCrop.y * scaleY),
+      width: Math.round(completedCrop.width * scaleX),
+      height: Math.round(completedCrop.height * scaleY),
+    };
+
+    if (area.width < 8 || area.height < 8) {
+      alert("裁剪区域太小");
+      return;
+    }
+
     setProcessing(true);
     try {
-      const blob = await getCroppedBlob(imageSrc, croppedArea);
+      const blob = await getCroppedBlob(imageSrc, area);
       onConfirm(blob);
     } catch (e) {
       alert(e instanceof Error ? e.message : String(e));
@@ -64,19 +157,29 @@ export function ImageCropper({
         if (e.target === e.currentTarget) onCancel();
       }}
     >
-      <div className="flex-1 relative">
-        <Cropper
-          image={imageSrc}
+      {/* 图片 + 裁剪区域 */}
+      <div className="flex-1 flex items-center justify-center p-4 overflow-hidden">
+        <ReactCrop
           crop={crop}
-          zoom={zoom}
+          onChange={(_pixelCrop, percentCrop) => setCrop(percentCrop)}
+          onComplete={(c) => setCompletedCrop(c)}
           aspect={aspect > 0 ? aspect : undefined}
-          onCropChange={setCrop}
-          onZoomChange={setZoom}
-          onCropComplete={onCropComplete}
-          restrictPosition={false}
-        />
+          ruleOfThirds
+          minWidth={20}
+          minHeight={20}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            ref={imgRef}
+            src={imageSrc}
+            alt="待裁剪"
+            onLoad={onImageLoad}
+            style={{ maxHeight: "calc(100vh - 180px)", maxWidth: "100%" }}
+          />
+        </ReactCrop>
       </div>
 
+      {/* 底部操作台 */}
       <div className="bg-white border-t border-gray-300 px-4 py-3">
         <div className="max-w-4xl mx-auto space-y-3">
           {/* 比例切换 */}
@@ -85,7 +188,7 @@ export function ImageCropper({
             {ASPECT_PRESETS.map((p) => (
               <button
                 key={p.label}
-                onClick={() => setAspect(p.value)}
+                onClick={() => handleAspectChange(p.value)}
                 className={`px-3 py-1 rounded-md border text-xs ${
                   aspect === p.value
                     ? "border-blue-500 bg-blue-50 text-blue-800"
@@ -95,24 +198,25 @@ export function ImageCropper({
                 {p.label}
               </button>
             ))}
-            <span className="text-xs text-gray-500 ml-4 mr-1">缩放</span>
-            <input
-              type="range"
-              min={1}
-              max={3}
-              step={0.05}
-              value={zoom}
-              onChange={(e) => setZoom(Number(e.target.value))}
-              className="flex-1 max-w-xs"
-            />
-            <span className="text-xs text-gray-500 font-mono">
-              {zoom.toFixed(2)}x
-            </span>
+            {completedCrop && imgNaturalSize ? (
+              <span className="ml-auto text-xs text-gray-500 font-mono">
+                {Math.round(
+                  (completedCrop.width * imgNaturalSize.w) /
+                    (imgRef.current?.width || 1),
+                )}
+                {" × "}
+                {Math.round(
+                  (completedCrop.height * imgNaturalSize.h) /
+                    (imgRef.current?.height || 1),
+                )}
+                {" px"}
+              </span>
+            ) : null}
           </div>
 
           <div className="flex items-center justify-between">
             <p className="text-xs text-gray-500">
-              拖动图片选择要保留的区域。建议把原图上的人物 / 水印裁掉，只留服装部分。
+              拖拽裁剪框四角或四边的锚点调整大小；拖动中间移动位置。建议把原图上的人物 / 水印裁掉，只留服装部分。
             </p>
             <div className="flex gap-2">
               <button
@@ -123,7 +227,7 @@ export function ImageCropper({
               </button>
               <button
                 onClick={handleConfirm}
-                disabled={!croppedArea || processing}
+                disabled={!completedCrop || processing}
                 className="px-5 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
               >
                 {processing ? "处理中..." : "确认裁剪"}
