@@ -7,7 +7,7 @@ import ReactCrop, {
   centerCrop,
   makeAspectCrop,
 } from "react-image-crop";
-import "react-image-crop/dist/ReactCrop.css";
+// 注意：ReactCrop.css 在 app/globals.css 里统一引入，这里不要重复 import
 import { getCroppedBlob } from "@/lib/crop";
 
 export interface ImageCropperProps {

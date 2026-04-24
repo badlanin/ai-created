@@ -1,6 +1,30 @@
+/* 裁剪组件样式（@import 必须放在最前，PostCSS 会在编译时处理） */
+@import "react-image-crop/dist/ReactCrop.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* PS 风格大方块锚点，比默认的 10px 灰色小点更显眼 */
+.ReactCrop__drag-handle {
+  width: 14px !important;
+  height: 14px !important;
+  background-color: #ffffff !important;
+  border: 2px solid #2563eb !important;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
+  opacity: 1 !important;
+}
+.ReactCrop__crop-selection {
+  border: 2px dashed #2563eb !important;
+}
+.ReactCrop .ord-nw { top: 0; left: 0; margin-top: -7px; margin-left: -7px; cursor: nw-resize; }
+.ReactCrop .ord-n  { top: 0; left: 50%; margin-top: -7px; margin-left: -7px; cursor: n-resize; }
+.ReactCrop .ord-ne { top: 0; right: 0; margin-top: -7px; margin-right: -7px; cursor: ne-resize; }
+.ReactCrop .ord-e  { top: 50%; right: 0; margin-top: -7px; margin-right: -7px; cursor: e-resize; }
+.ReactCrop .ord-se { bottom: 0; right: 0; margin-bottom: -7px; margin-right: -7px; cursor: se-resize; }
+.ReactCrop .ord-s  { bottom: 0; left: 50%; margin-bottom: -7px; margin-left: -7px; cursor: s-resize; }
+.ReactCrop .ord-sw { bottom: 0; left: 0; margin-bottom: -7px; margin-left: -7px; cursor: sw-resize; }
+.ReactCrop .ord-w  { top: 50%; left: 0; margin-top: -7px; margin-left: -7px; cursor: w-resize; }
 
 html,
 body {
