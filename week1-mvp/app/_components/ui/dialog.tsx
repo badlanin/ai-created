@@ -82,27 +82,25 @@ export function Dialog({
         aria-modal="true"
         className={`bg-white rounded-2xl shadow-xl w-full ${WIDTH_MAP[width]} flex flex-col max-h-[calc(100vh-2rem)] overflow-hidden animate-[slideUp_180ms_cubic-bezier(0.25,1,0.5,1)]`}
       >
-        {(title || onClose) && (
-          <div className="flex items-start justify-between gap-3 px-5 pt-4 pb-2">
-            <div className="min-w-0 flex-1">
-              {title ? (
-                <h2 className="text-base font-semibold text-gray-900">
-                  {title}
-                </h2>
-              ) : null}
-              {description ? (
-                <p className="mt-1 text-sm text-gray-500">{description}</p>
-              ) : null}
-            </div>
-            <IconButton
-              icon={<X size={16} strokeWidth={2.2} />}
-              aria-label="关闭"
-              size="sm"
-              variant="ghost"
-              onClick={onClose}
-            />
+        <div className="flex items-start justify-between gap-3 px-5 pt-4 pb-2">
+          <div className="min-w-0 flex-1">
+            {title ? (
+              <h2 className="text-base font-semibold text-gray-900">
+                {title}
+              </h2>
+            ) : null}
+            {description ? (
+              <p className="mt-1 text-sm text-gray-500">{description}</p>
+            ) : null}
           </div>
-        )}
+          <IconButton
+            icon={<X size={16} strokeWidth={2.2} />}
+            aria-label="关闭"
+            size="sm"
+            variant="ghost"
+            onClick={onClose}
+          />
+        </div>
         <div className="flex-1 overflow-y-auto px-5 py-3 text-sm text-gray-700 leading-relaxed">
           {children}
         </div>
