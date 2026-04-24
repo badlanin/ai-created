@@ -1,27 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
 import { analyzeGarment } from "@/lib/gemini";
 import { resolveModelId } from "@/lib/ai-models";
+import { requireUser } from "@/lib/auth";
+import { recordUsage } from "@/lib/usage";
+import { assertWithinBudget } from "@/lib/pricing";
 
-// 强制 Node.js 运行时（因为用到 Buffer 和长超时）
 export const runtime = "nodejs";
-// 允许长达 60 秒（默认 10 秒不够 Gemini 调用）
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
+  let user: { id: number; role: string } | null = null;
+  let model = "unknown";
   try {
+    user = await requireUser();
+    assertWithinBudget(user.id, user.role);
     const formData = await req.formData();
     const images: { buffer: Buffer; mimeType: string }[] = [];
 
     for (const [key, value] of formData.entries()) {
       if (key.startsWith("image") && value instanceof File) {
         const buffer = Buffer.from(await value.arrayBuffer());
-        // 客户端已压缩为 JPEG，这里默认 image/jpeg
         images.push({ buffer, mimeType: value.type || "image/jpeg" });
       }
     }
 
     const modelRaw = formData.get("model");
-    const model = resolveModelId(
+    model = resolveModelId(
       "vision",
       typeof modelRaw === "string" ? modelRaw : undefined,
     );
@@ -40,13 +44,35 @@ export async function POST(req: NextRequest) {
     }
 
     const result = await analyzeGarment(images, model);
+
+    // 计费：从 _meta.usageMetadata 拿 tokens
+    const meta = (result as { _meta?: { usageMetadata?: unknown } })._meta;
+    recordUsage({
+      userId: user.id,
+      model,
+      feature: "analyze",
+      usageMetadata: meta?.usageMetadata as never,
+      success: true,
+      notes: { image_count: images.length },
+    });
+
     return NextResponse.json({ ...result, _model: model });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    const status = (e as { status?: number }).status || 500;
     console.error("[/api/analyze] 失败:", msg);
+    if (user && status !== 429) {
+      recordUsage({
+        userId: user.id,
+        model,
+        feature: "analyze",
+        success: false,
+        error: msg,
+      });
+    }
     return NextResponse.json(
-      { error: `解析失败：${msg}` },
-      { status: 500 },
+      { error: status === 429 ? msg : `解析失败：${msg}` },
+      { status },
     );
   }
 }

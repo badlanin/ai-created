@@ -181,6 +181,58 @@ function migrate(db: Database.Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_materials_sort ON materials(sort_order);
 
+    -- ==========================================
+    -- P2: 计费 + 预算 体系
+    -- ==========================================
+
+    -- 每次 AI 调用的使用记录（原子级审计 + 计费底表）
+    CREATE TABLE IF NOT EXISTS usage_records (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id           INTEGER REFERENCES users(id),
+      generation_id     INTEGER REFERENCES generations(id),
+      model             TEXT NOT NULL,         -- 如 'gemini-3-pro-image-preview'
+      feature           TEXT NOT NULL,         -- 'analyze' | 'recolor' | 'batch_photo'
+      prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+      completion_tokens INTEGER NOT NULL DEFAULT 0,
+      total_tokens      INTEGER NOT NULL DEFAULT 0,
+      cost_usd          REAL NOT NULL DEFAULT 0,  -- 调用时按当时价格算
+      cost_cny          REAL NOT NULL DEFAULT 0,  -- 调用时按当时汇率算（锁定不追溯）
+      success           INTEGER NOT NULL DEFAULT 1,
+      error             TEXT,
+      notes             TEXT,                  -- JSON 额外信息（aspect/quality/image_size）
+      created_at        INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_usage_user ON usage_records(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_usage_model ON usage_records(model, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_usage_feature ON usage_records(feature, created_at DESC);
+
+    -- 模型单价表（标准档位为主，管理员可调）
+    CREATE TABLE IF NOT EXISTS model_prices (
+      model_id             TEXT PRIMARY KEY,
+      input_per_1m_usd     REAL NOT NULL,  -- 每 1M input tokens 美金
+      output_per_1m_usd    REAL NOT NULL,  -- 每 1M output tokens 美金
+      tier                 TEXT NOT NULL DEFAULT 'standard',  -- 'standard' | 'priority' | 'batch'
+      notes                TEXT,
+      updated_at           INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    -- 用户预算（月度，超限禁用）
+    CREATE TABLE IF NOT EXISTS user_budgets (
+      user_id            INTEGER PRIMARY KEY REFERENCES users(id),
+      monthly_budget_cny REAL NOT NULL DEFAULT 0,  -- 0 配合 is_unlimited=1 = 无限
+      is_unlimited       INTEGER NOT NULL DEFAULT 1,
+      notes              TEXT,
+      updated_at         INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    -- 全局配置（汇率等）
+    CREATE TABLE IF NOT EXISTS settings (
+      key        TEXT PRIMARY KEY,
+      value      TEXT NOT NULL,
+      notes      TEXT,
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
     -- AI 模型（可配置模型库）
     -- category='vision'    : 视觉理解（/analyze 解析图片）
     -- category='image_gen' : 图像生成（/recolor 换色、/on-model 换模特）
@@ -206,6 +258,8 @@ function migrate(db: Database.Database) {
   seedPromptTemplates(db);
   seedRealismPresets(db);
   seedMaterials(db);
+  seedModelPrices(db);
+  seedSettings(db);
 }
 
 /**
@@ -979,6 +1033,112 @@ function seedMaterials(db: Database.Database) {
   );
   const tx = db.transaction(() => {
     for (const m of materials) stmt.run(m);
+  });
+  tx();
+}
+
+/**
+ * 种子模型单价（Google 标准档位）
+ * 数据来源：2026-04 官方 + 用户实测的 token 计数反算
+ */
+function seedModelPrices(db: Database.Database) {
+  const prices: Array<{
+    model_id: string;
+    input_per_1m_usd: number;
+    output_per_1m_usd: number;
+    tier: string;
+    notes: string;
+  }> = [
+    // 纯文本模型（Vision 解析用）
+    {
+      model_id: "gemini-2.5-flash",
+      input_per_1m_usd: 0.15,
+      output_per_1m_usd: 0.6,
+      tier: "standard",
+      notes: "Gemini 2.5 Flash 视觉解析首选（便宜快）",
+    },
+    {
+      model_id: "gemini-2.5-pro",
+      input_per_1m_usd: 1.25,
+      output_per_1m_usd: 10.0,
+      tier: "standard",
+      notes: "Gemini 2.5 Pro 复杂识别（<=200K ctx）",
+    },
+    {
+      model_id: "gemini-3-pro-preview",
+      input_per_1m_usd: 1.25,
+      output_per_1m_usd: 10.0,
+      tier: "standard",
+      notes: "Gemini 3 Pro 文本预览版",
+    },
+
+    // 图像生成模型（图片输出按 token 计，费率高）
+    {
+      model_id: "gemini-3-pro-image-preview",
+      input_per_1m_usd: 2.0,
+      output_per_1m_usd: 120.0,
+      tier: "standard",
+      notes:
+        "Nano Banana Pro - 每张输入图 560 tokens；输出 1K/2K 1120 tokens($0.134)，4K 2000 tokens($0.24)",
+    },
+    {
+      model_id: "gemini-3.1-flash-image-preview",
+      input_per_1m_usd: 0.3,
+      output_per_1m_usd: 60.0,
+      tier: "standard",
+      notes:
+        "Nano Banana 2 - 每张输入图 1120 tokens；输出 512~4K 约 747~2520 tokens，$0.045~$0.15",
+    },
+    {
+      model_id: "gemini-2.5-flash-image",
+      input_per_1m_usd: 0.3,
+      output_per_1m_usd: 60.0,
+      tier: "standard",
+      notes: "Nano Banana GA 旧版，费率类似 Flash Image",
+    },
+    {
+      model_id: "gemini-2.5-flash-image-preview",
+      input_per_1m_usd: 0.3,
+      output_per_1m_usd: 60.0,
+      tier: "standard",
+      notes: "Nano Banana 初代 preview",
+    },
+  ];
+
+  const stmt = db.prepare(
+    `INSERT OR IGNORE INTO model_prices
+       (model_id, input_per_1m_usd, output_per_1m_usd, tier, notes)
+     VALUES (@model_id, @input_per_1m_usd, @output_per_1m_usd, @tier, @notes)`,
+  );
+  const tx = db.transaction(() => {
+    for (const p of prices) stmt.run(p);
+  });
+  tx();
+}
+
+/**
+ * 种子全局配置
+ */
+function seedSettings(db: Database.Database) {
+  const settings: Array<{ key: string; value: string; notes: string }> = [
+    {
+      key: "usd_to_cny",
+      value: "6.83",
+      notes: "美元兑人民币汇率（用于账单换算，管理员可改）",
+    },
+    {
+      key: "default_budget_cny",
+      value: "0",
+      notes:
+        "新用户默认月度预算（人民币，0 = 无限。管理员可在用户管理页单独调整）",
+    },
+  ];
+
+  const stmt = db.prepare(
+    `INSERT OR IGNORE INTO settings (key, value, notes) VALUES (@key, @value, @notes)`,
+  );
+  const tx = db.transaction(() => {
+    for (const s of settings) stmt.run(s);
   });
   tx();
 }

@@ -35,6 +35,11 @@ export interface GenImageResult {
   data: Buffer; // 生成图的原始字节
   textResponse?: string; // 模型附带的文本（通常有一段描述）
   model: string; // 实际用到的模型 ID（记录到 generations 表）
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    totalTokenCount?: number;
+  }; // Vertex AI 返回的真实 token 计数，用于计费
 }
 
 /**
@@ -168,6 +173,7 @@ export async function generateImage(
     data: imageData.data,
     textResponse,
     model: MODEL,
+    usageMetadata: response.usageMetadata,
   };
 }
 

@@ -15,9 +15,13 @@ const NAV_ITEMS = [
   { href: "/recolor", label: "换色" },
   { href: "/batch-photo", label: "批量摄影图" },
   { href: "/history", label: "历史" },
+  { href: "/billing", label: "账单" },
 ] as const;
 
 const ADMIN_ITEMS = [
+  { href: "/admin/billing", label: "团队账单" },
+  { href: "/admin/users", label: "用户" },
+  { href: "/admin/model-prices", label: "单价/汇率" },
   { href: "/admin/colors", label: "颜色" },
   { href: "/admin/materials", label: "材质" },
   { href: "/admin/models", label: "模特" },
@@ -27,7 +31,6 @@ const ADMIN_ITEMS = [
   { href: "/admin/realism", label: "真实感" },
   { href: "/admin/prompts", label: "Prompt" },
   { href: "/admin/ai-models", label: "AI 模型" },
-  { href: "/admin/users", label: "用户" },
 ] as const;
 
 export function NavBar({ user }: { user: NavUser }) {

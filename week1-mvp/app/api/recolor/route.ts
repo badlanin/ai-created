@@ -18,6 +18,8 @@ import {
 } from "@/lib/materials";
 import { retryWithBackoff } from "@/lib/retry";
 import { runWithConcurrency, recommendConcurrency } from "@/lib/concurrency";
+import { recordUsage } from "@/lib/usage";
+import { assertWithinBudget } from "@/lib/pricing";
 
 export const runtime = "nodejs";
 // 换色每张：Flash Image 5-15 秒，Pro Image 带 Thinking 可达 3-5 分钟
@@ -49,6 +51,7 @@ export async function POST(req: NextRequest) {
   const startedAt = Date.now();
   try {
     const user = await requireUser();
+    assertWithinBudget(user.id, user.role);
     const db = getDb();
 
     const formData = await req.formData();
@@ -281,6 +284,23 @@ export async function POST(req: NextRequest) {
         .slice(2, 8)}.${ext}`;
       const filePath = path.join(outputsDir, filename);
       await fs.writeFile(filePath, gen.data);
+
+      // 每个图片一条 usage_records
+      recordUsage({
+        userId: user.id,
+        model,
+        feature: "recolor",
+        usageMetadata: gen.usageMetadata,
+        success: true,
+        notes: {
+          color: c.name,
+          hex: c.hex,
+          image_index: imgIdx,
+          aspect_ratio: aspectRatio,
+          quality_level: qualityLevel,
+          image_size: imageSize,
+        },
+      });
 
       return {
         filename,

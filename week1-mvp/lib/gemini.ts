@@ -111,7 +111,13 @@ export async function analyzeGarment(
   }
 
   try {
-    return JSON.parse(text);
+    const parsed = JSON.parse(text);
+    // 把 usageMetadata 塞到 _meta 字段里，供计费用
+    parsed._meta = {
+      model: MODEL,
+      usageMetadata: response.usageMetadata,
+    };
+    return parsed;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     throw new Error(`模型返回的 JSON 无法解析：${msg}\n原始响应：${text}`);
