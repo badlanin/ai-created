@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Palette,
   Camera,
@@ -137,7 +138,14 @@ export default function HistoryPage() {
     total: 0,
   });
   const [loading, setLoading] = useState(true);
-  const [statusTab, setStatusTab] = useState<StatusTab>("all");
+  const searchParams = useSearchParams();
+  /** 支持 ?status=active|completed|failed|all URL 参数初始化 tab */
+  const initialStatus = (() => {
+    const s = searchParams?.get("status");
+    if (s === "active" || s === "completed" || s === "failed") return s;
+    return "all";
+  })();
+  const [statusTab, setStatusTab] = useState<StatusTab>(initialStatus);
   const [featureTab, setFeatureTab] = useState<FeatureTab>("all");
   const [scope, setScope] = useState<"me" | "all">("me");
   const [search, setSearch] = useState("");

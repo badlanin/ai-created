@@ -151,12 +151,19 @@ export default function RecolorPage() {
 
   // ─── 提交 / 任务 ───
   const [submitting, setSubmitting] = useState(false);
+  /** 初始化：如果 slotStore 里有活跃 job_id，恢复；否则 null */
   const [activeJobId, setActiveJobId] = useState<string | null>(
-    slotStore.get<string>("activeJobId") ?? null,
+    () => slotStore.get<string>("activeJobId") ?? null,
   );
   const [activeJobCount, setActiveJobCount] = useState(0);
-  /** 中栏显示模式：'form' 表单（默认）或 'task' 任务视窗 */
-  const [viewMode, setViewMode] = useState<"form" | "task">("form");
+  /**
+   * 中栏显示模式：
+   *   - 有 activeJobId 时初始 = "task"（让用户回来直接看到进度）
+   *   - 没有时初始 = "form"（正常编辑）
+   */
+  const [viewMode, setViewMode] = useState<"form" | "task">(
+    () => (slotStore.get<string>("activeJobId") ? "task" : "form"),
+  );
 
   // ─── 估价 ───
   const [estimate, setEstimate] = useState<CostEstimate | null>(null);
@@ -320,6 +327,7 @@ export default function RecolorPage() {
     intervalMs: 1500,
     onFinished: (result) => {
       handleJobFinished();
+      // 注意：onFinished 由 useJobPolling 在 job 进入终态时调用一次
       const { job } = result;
       if (job.status === "completed") {
         notifyHelpers.success(
@@ -344,6 +352,22 @@ export default function RecolorPage() {
       }
     },
   });
+
+  // 轮询错误自恢复：如果轮询报"任务不存在"（被删了或后台清理了），
+  // 清掉 activeJobId 并切回表单，避免用户卡在空视窗
+  useEffect(() => {
+    if (polling.error && polling.error.includes("不存在")) {
+      setActiveJobId(null);
+      slotStore.setActiveJob(null);
+      setViewMode("form");
+      notifyHelpers.warn(
+        push,
+        "任务已被清理",
+        "任务不存在或已被删除，已回到表单",
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [polling.error]);
 
   /* ─── 文件处理 ─── */
   async function onPickFiles(fileList: FileList | null) {

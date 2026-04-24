@@ -183,11 +183,15 @@ export default function BatchPhotoPage() {
   // ─── 估价 + 提交 ───
   const [estimate, setEstimate] = useState<CostEstimate | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  /** 初始化：如果 slotStore 里有活跃 job_id，恢复；否则 null */
   const [activeJobId, setActiveJobId] = useState<string | null>(
-    slotStore.get<string>("activeJobId") ?? null,
+    () => slotStore.get<string>("activeJobId") ?? null,
   );
   const [activeJobCount, setActiveJobCount] = useState(0);
-  const [viewMode, setViewMode] = useState<"form" | "task">("form");
+  /** 有 activeJobId 时初始 viewMode = "task"，让用户切回来直接看到进度 */
+  const [viewMode, setViewMode] = useState<"form" | "task">(
+    () => (slotStore.get<string>("activeJobId") ? "task" : "form"),
+  );
 
   /* ─── 初始加载 + slot 恢复 ─── */
   useEffect(() => {
@@ -376,6 +380,21 @@ export default function BatchPhotoPage() {
       }
     },
   });
+
+  // 轮询错误自恢复：任务不存在时自动回到表单
+  useEffect(() => {
+    if (polling.error && polling.error.includes("不存在")) {
+      setActiveJobId(null);
+      slotStore.setActiveJob(null);
+      setViewMode("form");
+      notifyHelpers.warn(
+        push,
+        "任务已被清理",
+        "任务不存在或已被删除，已回到表单",
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [polling.error]);
 
   /* ─── 槽位操作 ─── */
 

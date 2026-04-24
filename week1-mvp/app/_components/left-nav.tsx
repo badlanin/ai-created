@@ -15,6 +15,8 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   LogOut,
+  Loader2,
+  Activity,
 } from "lucide-react";
 
 type NavUser = {
@@ -113,6 +115,21 @@ export function LeftNav({
         >
           <PanelLeftOpen size={16} strokeWidth={2} />
         </button>
+
+        {/* 进行中任务 */}
+        {activeJobCount > 0 ? (
+          <Link
+            href="/history?status=active"
+            title={`${activeJobCount} 个任务进行中 · 点击查看`}
+            className="relative w-9 h-9 rounded-lg flex items-center justify-center mb-2 bg-blue-50 text-blue-600 hover:bg-blue-100"
+          >
+            <Loader2 size={16} strokeWidth={2.2} className="animate-spin" />
+            <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-blue-600 text-white text-[10px] font-semibold flex items-center justify-center">
+              {activeJobCount}
+            </span>
+          </Link>
+        ) : null}
+
         <CollapsedIcon href="/" label="首页" Icon={Home} active={isActive("/")} />
         <CollapsedIcon
           href="/recolor"
@@ -131,7 +148,6 @@ export function LeftNav({
           label="历史"
           Icon={HistoryIcon}
           active={isActive("/history")}
-          badge={activeJobCount > 0 ? activeJobCount : undefined}
         />
         <CollapsedIcon
           href="/billing"
@@ -180,6 +196,35 @@ export function LeftNav({
       </div>
 
       <nav className="flex-1 overflow-y-auto py-2">
+        {/* 进行中任务 —— 有任务时显示在顶部，脉冲提醒 */}
+        {activeJobCount > 0 ? (
+          <div className="px-2 mb-2">
+            <Link
+              href="/history?status=active"
+              className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg bg-blue-50 border border-blue-200 hover:bg-blue-100 hover:border-blue-300 transition-colors ${
+                isActive("/history") ? "ring-1 ring-blue-400" : ""
+              }`}
+              title="查看所有进行中任务"
+            >
+              <span className="relative inline-flex">
+                <Loader2
+                  size={16}
+                  strokeWidth={2.2}
+                  className="text-blue-600 animate-spin"
+                />
+              </span>
+              <span className="flex-1 text-[13px] font-medium text-blue-900 truncate">
+                {activeJobCount} 个任务进行中
+              </span>
+              <ChevronRight
+                size={14}
+                strokeWidth={2}
+                className="text-blue-500"
+              />
+            </Link>
+          </div>
+        ) : null}
+
         <div className="px-2 space-y-0.5">
           <NavItem href="/" Icon={Home} label="首页" active={isActive("/")} />
           <NavItem
@@ -199,7 +244,6 @@ export function LeftNav({
             Icon={HistoryIcon}
             label="历史记录"
             active={isActive("/history")}
-            badge={activeJobCount > 0 ? `${activeJobCount} 进行中` : undefined}
           />
           <NavItem
             href="/billing"
