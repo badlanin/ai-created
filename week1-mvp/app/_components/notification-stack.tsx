@@ -202,18 +202,6 @@ function NotificationCard({
       >
         <X size={12} strokeWidth={2.2} />
       </button>
-      <style jsx global>{`
-        @keyframes slideInRight {
-          from {
-            opacity: 0;
-            transform: translateX(12px);
-          }
-          to {
-            opacity: 1;
-            transform: translateX(0);
-          }
-        }
-      `}</style>
     </div>
   );
 }

@@ -1,6 +1,8 @@
-import { forwardRef } from "react";
+"use client";
 
-export interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
+import { forwardRef, type HTMLAttributes, type ReactNode } from "react";
+
+export interface CardProps extends HTMLAttributes<HTMLDivElement> {
   elevated?: boolean;
   padding?: "none" | "sm" | "md" | "lg";
 }
@@ -42,9 +44,9 @@ export function CardHeader({
   action,
   className = "",
 }: {
-  title: React.ReactNode;
-  subtitle?: React.ReactNode;
-  action?: React.ReactNode;
+  title: ReactNode;
+  subtitle?: ReactNode;
+  action?: ReactNode;
   className?: string;
 }) {
   return (
@@ -68,8 +70,8 @@ export function SectionLabel({
   action,
   className = "",
 }: {
-  children: React.ReactNode;
-  action?: React.ReactNode;
+  children: ReactNode;
+  action?: ReactNode;
   className?: string;
 }) {
   return (

@@ -300,6 +300,38 @@ body {
 }
 
 /* ════════════════════════════════════════════════════════
+   动画关键帧
+   ════════════════════════════════════════════════════════ */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* ════════════════════════════════════════════════════════
    react-image-crop 样式微调（保留 P5-1 原有修饰）
    ════════════════════════════════════════════════════════ */
 .ReactCrop__drag-handle {

@@ -1006,7 +1006,7 @@ function RightPanel({
   onReset,
   poll,
   pollError,
-  onDismissJob,
+  onDismissJob: _onDismissJob,
   hasActiveTask,
   viewMode,
   onSwitchView,
