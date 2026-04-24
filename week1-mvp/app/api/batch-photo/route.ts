@@ -161,9 +161,9 @@ export async function POST(req: NextRequest) {
 
     const qualityLevelRaw = formData.get("quality_level");
     const qualityLevel: "hd" | "2k" | "4k" =
-      qualityLevelRaw === "hd" || qualityLevelRaw === "2k"
+      qualityLevelRaw === "hd" || qualityLevelRaw === "4k"
         ? qualityLevelRaw
-        : "4k";
+        : "2k";
 
     const userSeed =
       typeof formData.get("user_seed") === "string"
@@ -283,7 +283,12 @@ export async function POST(req: NextRequest) {
 - 即使输入模糊也要 REDRAW / 重新渲染整张图，让它清晰锐利
 - 所有细节（面料纹理 / 蕾丝针脚 / 发丝 / 皮肤毛孔）必须清晰可辨
 - 参考标准：专业电商摄影 / 时尚杂志精修直出
-- 关键词：sharp focus, crystal clear, ultra-detailed, high-resolution, photorealistic`;
+- 关键词：sharp focus, crystal clear, ultra-detailed, high-resolution, photorealistic
+
+【构图约束 / Composition - 非常重要】
+- **模特必须位于画面中心区域**，水平居中或居中偏左 40-60%，不靠边缘
+- 模特完整呈现，**不能被裁切**（头顶 / 脚 / 手臂 / 裙摆都要在画面内）
+- 高分辨率输出时保持构图稳定，不因画幅变大而偏移主体或留过多空白`;
 
     // ---------- 确保输出目录 ----------
     const outputsDir = path.join(DATA_DIR_PATH, "outputs");

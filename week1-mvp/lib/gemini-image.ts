@@ -197,7 +197,7 @@ export interface RecolorPromptOptions {
  * 输出质量指令 · 关键：告诉模型**重绘而不是改图**，按目标分辨率渲染
  * 这是让"糊图变清晰"的核心——模型不会拘泥于原图的像素，而是按指令级别重新生成
  */
-function buildQualityHint(level: "hd" | "2k" | "4k" = "4k"): string {
+function buildQualityHint(level: "hd" | "2k" | "4k" = "2k"): string {
   const levelLabel = level === "4k" ? "4K 超清" : level === "2k" ? "2K 高清" : "HD 清晰";
   return `【输出质量 / Output Quality】${levelLabel}
 - 必须输出 ${level.toUpperCase()} 级别的清晰锐利图像（${level.toUpperCase()} ultra-high resolution, tack-sharp）
@@ -205,7 +205,13 @@ function buildQualityHint(level: "hd" | "2k" | "4k" = "4k"): string {
 - 所有细节必须清晰可辨：面料纹理 / 蕾丝针脚 / 珠片反光 / 发丝 / 皮肤毛孔
 - 不保留输入图的任何瑕疵：模糊、压缩块、噪点、色带都必须被重新生成的清晰版本覆盖
 - 参考标准：专业电商摄影或时尚杂志的精修直出，印刷级清晰度 (magazine-quality, print-ready)
-- 关键词强化：sharp focus, crystal clear, ultra-detailed, high-resolution, photorealistic, 8K textures`;
+- 关键词强化：sharp focus, crystal clear, ultra-detailed, high-resolution, photorealistic, 8K textures
+
+【构图约束 / Composition - 非常重要】
+- **主体（服装 / 模特）必须位于画面中心区域**，水平居中或居中偏左 40-60%，不要靠画面边缘
+- 主体完整呈现，**不能被裁切**（包括头顶、脚部、手臂、裙摆等）
+- 高分辨率 (${level.toUpperCase()}) 输出时，保持构图稳定，**不要因画幅变大而让主体偏离中心或变小留太多空白**
+- 关键词：subject centered, stable composition, full subject visible, no cropping of subject`;
 }
 
 export function buildRecolorPrompt(
@@ -246,7 +252,7 @@ export function buildRecolorPrompt(
   }
 
   // 清晰度指令（关键）——告诉模型按 2K/4K 重绘，不要复刻输入图的模糊
-  parts.push("", buildQualityHint(options.qualityLevel ?? "4k"));
+  parts.push("", buildQualityHint(options.qualityLevel ?? "2k"));
 
   parts.push(
     "",

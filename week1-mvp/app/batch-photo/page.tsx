@@ -89,12 +89,16 @@ const QUALITY_LEVELS: Array<{
   desc: string;
 }> = [
   {
+    value: "2k",
+    label: "2K（推荐）",
+    desc: "~1792×2400 · 性价比最佳",
+  },
+  {
     value: "4k",
     label: "4K 超清",
-    desc: "仅 Pro 真输出 4K（Flash 仍 1K）",
+    desc: "~3584×4800 · 慢 + 贵 15x",
   },
-  { value: "2k", label: "2K 高清", desc: "仅 Pro 生效" },
-  { value: "hd", label: "HD 清晰", desc: "所有模型默认档位" },
+  { value: "hd", label: "HD", desc: "~896×1200 · 最快" },
 ];
 
 // ============ Helpers ============
@@ -152,7 +156,7 @@ export default function BatchPhotoPage() {
   );
   const [modelId, setModelId] = useState<string>("");
   const [aspectRatio, setAspectRatio] = useState<string>("3:4");
-  const [qualityLevel, setQualityLevel] = useState<QualityLevel>("4k");
+  const [qualityLevel, setQualityLevel] = useState<QualityLevel>("2k");
   const [userSeed, setUserSeed] = useState("");
 
   // ---- Submission state ----

@@ -142,12 +142,12 @@ export async function POST(req: NextRequest) {
         ? aspectRatioRaw
         : undefined;
 
-    // 新：输出清晰度档位（给模型"按 4K 重绘"的指令，不是真 4K 输出）
+    // 输出清晰度档位（通过 imageConfig.imageSize 传给 Nano Banana）
     const qualityLevelRaw = formData.get("quality_level");
     const qualityLevel: "hd" | "2k" | "4k" =
-      qualityLevelRaw === "hd" || qualityLevelRaw === "2k"
+      qualityLevelRaw === "hd" || qualityLevelRaw === "4k"
         ? qualityLevelRaw
-        : "4k";
+        : "2k";
 
     // 读材质 + 真实感
     const materials = getMaterialsByIds(materialIds);

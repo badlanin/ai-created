@@ -86,19 +86,19 @@ const QUALITY_LEVELS: Array<{
   desc: string;
 }> = [
   {
-    value: "4k",
-    label: "4K 超清（推荐）",
-    desc: "约 2048×2880 · 仅 Pro 模型真输出 4K，Flash 仍是 1K",
+    value: "2k",
+    label: "2K 高清（推荐）",
+    desc: "约 1792×2400 · 速度/成本/清晰度平衡最佳",
   },
   {
-    value: "2k",
-    label: "2K 高清",
-    desc: "约 1448×2048 · 仅 Pro 生效",
+    value: "4k",
+    label: "4K 超清",
+    desc: "约 3584×4800 · 最大清晰度，速度慢 2-3x 成本高 ~15x",
   },
   {
     value: "hd",
     label: "HD 清晰",
-    desc: "约 896×1200 · 所有模型默认档位",
+    desc: "约 896×1200 · 最快最省，网页小图够用",
   },
 ];
 
@@ -113,8 +113,8 @@ export default function RecolorPage() {
 
   // 输出比例
   const [aspectRatio, setAspectRatio] = useState<string>("3:4");
-  // 输出清晰度档位
-  const [qualityLevel, setQualityLevel] = useState<QualityLevel>("4k");
+  // 输出清晰度档位（默认 2K 性价比最佳）
+  const [qualityLevel, setQualityLevel] = useState<QualityLevel>("2k");
 
   // Step 3: Materials
   const [allMaterials, setAllMaterials] = useState<Material[]>([]);
