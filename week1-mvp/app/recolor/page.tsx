@@ -140,6 +140,10 @@ export default function RecolorPage() {
   const [selectedColorIds, setSelectedColorIds] = useState<Set<number>>(
     new Set(),
   );
+  /** 临时颜色列表（点"添加"后入栈）。提交时会作为 custom_colors 发送 */
+  const [customColors, setCustomColors] = useState<
+    Array<{ name: string; hex: string }>
+  >([]);
   const [customName, setCustomName] = useState("");
   const [customHex, setCustomHex] = useState("#722F37");
 
@@ -198,6 +202,9 @@ export default function RecolorPage() {
     if (savedSeed) setUserSeed(savedSeed);
     const savedColorIds = slotStore.get<number[]>("selectedColorIds");
     if (savedColorIds) setSelectedColorIds(new Set(savedColorIds));
+    const savedCustomColors =
+      slotStore.get<Array<{ name: string; hex: string }>>("customColors");
+    if (savedCustomColors) setCustomColors(savedCustomColors);
     const savedGarment = slotStore.get<GarmentAttrs>("garmentAttrs");
     if (savedGarment) setGarmentAttrs(savedGarment);
     const savedMatIds = slotStore.get<number[]>("selectedMaterialIds");
@@ -220,6 +227,7 @@ export default function RecolorPage() {
       model,
       realismId,
       selectedColorIds: Array.from(selectedColorIds),
+      customColors,
       selectedMaterialIds,
       garmentAttrs,
     });
@@ -231,16 +239,39 @@ export default function RecolorPage() {
     model,
     realismId,
     selectedColorIds,
+    customColors,
     selectedMaterialIds,
     garmentAttrs,
   ]);
 
   /* ─── 估价（参数变化时 debounce 查询） ─── */
   const totalCount = useMemo(() => {
-    const useCustom = customName.trim().length > 0;
-    const c = selectedColorIds.size + (useCustom ? 1 : 0);
+    const c = selectedColorIds.size + customColors.length;
     return files.length * c;
-  }, [files.length, selectedColorIds, customName]);
+  }, [files.length, selectedColorIds, customColors.length]);
+
+  /* ─── 临时颜色操作 ─── */
+  function addCustomColor() {
+    const name = customName.trim();
+    if (!name) {
+      notifyHelpers.warn(push, "请先输入颜色名");
+      return;
+    }
+    if (
+      customColors.some(
+        (c) => c.name === name || c.hex.toLowerCase() === customHex.toLowerCase(),
+      )
+    ) {
+      notifyHelpers.warn(push, "已有同名或同色号的临时色");
+      return;
+    }
+    setCustomColors((prev) => [...prev, { name, hex: customHex }]);
+    setCustomName(""); // 加完清空名字，色号保留方便下一个微调
+  }
+
+  function removeCustomColor(i: number) {
+    setCustomColors((prev) => prev.filter((_, idx) => idx !== i));
+  }
 
   useEffect(() => {
     if (totalCount === 0 || !model) {
@@ -437,10 +468,9 @@ export default function RecolorPage() {
       notifyHelpers.warn(push, "请先上传产品图");
       return;
     }
-    const useCustom = customName.trim().length > 0;
-    const colorCount = selectedColorIds.size + (useCustom ? 1 : 0);
+    const colorCount = selectedColorIds.size + customColors.length;
     if (colorCount === 0) {
-      notifyHelpers.warn(push, "请至少选择一个颜色，或填一个临时颜色");
+      notifyHelpers.warn(push, "请至少选择一个颜色，或添加临时颜色");
       return;
     }
 
@@ -463,11 +493,8 @@ export default function RecolorPage() {
       if (selectedColorIds.size > 0) {
         fd.append("color_ids", JSON.stringify([...selectedColorIds]));
       }
-      if (useCustom) {
-        fd.append(
-          "custom_colors",
-          JSON.stringify([{ name: customName.trim(), hex: customHex }]),
-        );
+      if (customColors.length > 0) {
+        fd.append("custom_colors", JSON.stringify(customColors));
       }
       fd.append("model", model);
       if (aspectRatio) fd.append("aspect_ratio", aspectRatio);
@@ -514,6 +541,7 @@ export default function RecolorPage() {
     setGarmentAttrs(null);
     setSelectedMaterialIds([]);
     setSelectedColorIds(new Set());
+    setCustomColors([]);
     setCustomName("");
     setUserSeed("");
     setActiveJobId(null);
@@ -553,7 +581,7 @@ export default function RecolorPage() {
           onUserSeedChange={setUserSeed}
           totalCount={totalCount}
           filesLen={files.length}
-          colorsLen={selectedColorIds.size + (customName.trim() ? 1 : 0)}
+          colorsLen={selectedColorIds.size + customColors.length}
           estimate={estimate}
           submitting={submitting}
           canSubmit={files.length > 0 && totalCount > 0 && !analyzing}
@@ -848,19 +876,59 @@ export default function RecolorPage() {
             )}
             {/* 临时颜色 */}
             <div className="mt-3 p-3 bg-gray-50 rounded-md border border-gray-200">
-              <div className="text-xs text-gray-500 mb-2">临时颜色（可选）</div>
+              <div className="text-xs text-gray-500 mb-2">
+                临时颜色（可选） · 不保存到颜色库，但本次任务会参与生成
+              </div>
+
+              {/* 已添加的临时色 chip 列表 */}
+              {customColors.length > 0 && (
+                <div className="mb-2 flex flex-wrap gap-2">
+                  {customColors.map((c, i) => (
+                    <span
+                      key={i}
+                      className="inline-flex items-center gap-1.5 pl-1 pr-2 py-1 rounded-full bg-white border border-blue-300 text-xs text-gray-700"
+                    >
+                      <span
+                        className="w-4 h-4 rounded-full border border-gray-300"
+                        style={{ backgroundColor: c.hex }}
+                      />
+                      <span>{c.name}</span>
+                      <span className="text-[10px] text-gray-400 font-mono">
+                        {c.hex}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => removeCustomColor(i)}
+                        className="ml-0.5 text-gray-400 hover:text-red-600"
+                        aria-label="移除"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* 输入行 */}
               <div className="flex flex-wrap gap-2 items-center">
                 <input
                   type="color"
                   value={customHex}
                   onChange={(e) => setCustomHex(e.target.value)}
                   className="w-10 h-10 rounded cursor-pointer border-0"
+                  title="选色号"
                 />
                 <input
                   type="text"
-                  placeholder="颜色名（为空不生成）"
+                  placeholder="颜色名"
                   value={customName}
                   onChange={(e) => setCustomName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addCustomColor();
+                    }
+                  }}
                   className="flex-1 min-w-[140px] px-2 py-1.5 text-sm border border-gray-300 rounded"
                 />
                 <input
@@ -869,6 +937,14 @@ export default function RecolorPage() {
                   onChange={(e) => setCustomHex(e.target.value)}
                   className="w-24 px-2 py-1.5 text-sm font-mono border border-gray-300 rounded"
                 />
+                <button
+                  type="button"
+                  onClick={addCustomColor}
+                  disabled={!customName.trim()}
+                  className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  + 添加
+                </button>
               </div>
             </div>
           </div>

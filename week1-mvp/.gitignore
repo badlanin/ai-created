@@ -25,3 +25,6 @@ logs/
 .vscode/
 .idea/
 next-env.d.ts
+
+# typescript
+tsconfig.tsbuildinfo

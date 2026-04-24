@@ -67,6 +67,10 @@ export interface PollState {
  * - 间隔默认 1500ms
  * - 组件卸载时自动清理
  *
+ * 关键实现：
+ *   onFinished 用 ref 存，**不放进 useEffect 依赖**，避免调用方传内联函数
+ *   导致 useEffect 每次 re-render 都重新订阅（那会造成无限循环卡死浏览器）。
+ *
  * @example
  *   const { data, loading, error } = useJobPolling(jobId);
  */
@@ -79,6 +83,14 @@ export function useJobPolling(
   } = {},
 ): PollState {
   const { intervalMs = 1500, onFinished } = options;
+
+  // 用 ref 存最新的 onFinished，让内部 poll() 总能拿到最新闭包，
+  // 但 useEffect 不需要把它放进 deps。
+  const onFinishedRef = useRef(onFinished);
+  useEffect(() => {
+    onFinishedRef.current = onFinished;
+  }, [onFinished]);
+
   const [state, setState] = useState<PollState>({
     loading: false,
     data: null,
@@ -88,7 +100,11 @@ export function useJobPolling(
 
   useEffect(() => {
     if (!jobId) {
-      setState({ loading: false, data: null, error: null });
+      // 只有在真的变过的时候才 setState，避免无意义的 re-render
+      setState((prev) => {
+        if (!prev.loading && !prev.data && !prev.error) return prev;
+        return { loading: false, data: null, error: null };
+      });
       finishedFiredRef.current = false;
       return;
     }
@@ -99,19 +115,15 @@ export function useJobPolling(
     async function poll() {
       if (!alive) return;
       try {
-        const res = await fetch(`/api/jobs/${jobId}`, {
-          cache: "no-store",
-        });
+        const res = await fetch(`/api/jobs/${jobId}`, { cache: "no-store" });
         if (!res.ok) {
           const msg =
             res.status === 404
               ? "任务不存在"
               : ((await res.json().catch(() => ({}))).error as string) ||
                 `HTTP ${res.status}`;
-          if (alive) {
-            setState({ loading: false, data: null, error: msg });
-          }
-          return; // 不再续轮询
+          if (alive) setState({ loading: false, data: null, error: msg });
+          return;
         }
         const data = (await res.json()) as PollResult;
         if (!alive) return;
@@ -126,15 +138,14 @@ export function useJobPolling(
           if (!finishedFiredRef.current) {
             finishedFiredRef.current = true;
             try {
-              onFinished?.(data);
+              onFinishedRef.current?.(data);
             } catch (e) {
               console.error("[use-job-polling] onFinished 回调异常:", e);
             }
           }
-          return; // 不再续
+          return;
         }
 
-        // 继续轮询
         timer = setTimeout(poll, intervalMs);
       } catch (e) {
         if (!alive) return;
@@ -143,7 +154,6 @@ export function useJobPolling(
           loading: false,
           error: e instanceof Error ? e.message : String(e),
         }));
-        // 网络失败也继续尝试（5 秒后）
         timer = setTimeout(poll, 5000);
       }
     }
@@ -156,7 +166,8 @@ export function useJobPolling(
       alive = false;
       if (timer) clearTimeout(timer);
     };
-  }, [jobId, intervalMs, onFinished]);
+    // 注意：只依赖真正会变的 jobId 和 intervalMs，不包含 onFinished（用 ref）
+  }, [jobId, intervalMs]);
 
   return state;
 }
