@@ -5,6 +5,7 @@ import {
   downloadImagesAsZip,
   downloadSingleImage,
 } from "@/lib/download-zip";
+import { ImageCropper } from "@/app/_components/image-cropper";
 
 type Color = { id: number; name: string; hex: string };
 type AiModel = {
@@ -106,6 +107,8 @@ export default function RecolorPage() {
   // Step 1: Images (多图)
   const [files, setFiles] = useState<File[]>([]);
   const [compressedBlobs, setCompressedBlobs] = useState<Blob[]>([]);
+  const [croppedFlags, setCroppedFlags] = useState<boolean[]>([]);
+  const [croppingIndex, setCroppingIndex] = useState<number | null>(null);
 
   // Step 2: Analysis（只对第一张做解析，节省成本和时间）
   const [analyzing, setAnalyzing] = useState(false);
@@ -115,6 +118,16 @@ export default function RecolorPage() {
   const [aspectRatio, setAspectRatio] = useState<string>("3:4");
   // 输出清晰度档位（默认 2K 性价比最佳）
   const [qualityLevel, setQualityLevel] = useState<QualityLevel>("2k");
+
+  // 成本预估
+  const [estimate, setEstimate] = useState<{
+    per_image_cny: number;
+    total_cost_cny: number;
+    affordable: boolean;
+    can_afford_count: number;
+    is_unlimited: boolean;
+    remaining_cny: number;
+  } | null>(null);
 
   // Step 3: Materials
   const [allMaterials, setAllMaterials] = useState<Material[]>([]);
@@ -193,6 +206,7 @@ export default function RecolorPage() {
     const picked = Array.from(fileList).slice(0, 5);
     setFiles(picked);
     setCompressedBlobs([]);
+    setCroppedFlags(new Array(picked.length).fill(false));
     setGarmentAttrs(null);
     setSelectedMaterialIds([]);
     setResults(null);
@@ -204,6 +218,20 @@ export default function RecolorPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
+  }
+
+  function onCropConfirm(i: number, blob: Blob) {
+    setCompressedBlobs((prev) => {
+      const next = [...prev];
+      next[i] = blob;
+      return next;
+    });
+    setCroppedFlags((prev) => {
+      const next = [...prev];
+      next[i] = true;
+      return next;
+    });
+    setCroppingIndex(null);
   }
 
   // 手动触发款式解析（用户点按钮）
@@ -300,6 +328,17 @@ export default function RecolorPage() {
       return;
     }
 
+    // 预算拦截：预估成本 > 余额，弹窗让用户确认减少或取消
+    if (estimate && !estimate.affordable && !estimate.is_unlimited) {
+      const ok = confirm(
+        `预估花费 ¥${estimate.total_cost_cny.toFixed(2)}，` +
+          `超过你当前余额 ¥${estimate.remaining_cny.toFixed(2)}。\n\n` +
+          `建议把任务数减到 ${estimate.can_afford_count} 张以内。\n\n` +
+          `仍要提交吗？（服务端会拒绝或只完成一部分）`,
+      );
+      if (!ok) return;
+    }
+
     setLoading(true);
     setError(null);
     setResults(null);
@@ -359,6 +398,39 @@ export default function RecolorPage() {
     return files.length * colors;
   })();
 
+  // 参数变化时，实时查询预估成本
+  useEffect(() => {
+    if (totalCount === 0 || !model) {
+      setEstimate(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      fetch("/api/billing/estimate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model,
+          quality_level: qualityLevel,
+          image_count: totalCount,
+        }),
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (!data) return;
+          setEstimate({
+            per_image_cny: data.estimate.per_image_cny,
+            total_cost_cny: data.estimate.total_cost_cny,
+            affordable: data.affordable,
+            can_afford_count: data.can_afford_count,
+            is_unlimited: data.budget.is_unlimited,
+            remaining_cny: data.budget.remaining_cny,
+          });
+        })
+        .catch(() => setEstimate(null));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [totalCount, model, qualityLevel]);
+
   return (
     <main className="max-w-5xl mx-auto p-4 md:p-8">
       <header className="mb-6">
@@ -393,16 +465,38 @@ export default function RecolorPage() {
             <div className="mt-3">
               <div className="flex flex-wrap gap-2">
                 {files.map((f, i) => (
-                  <div key={i} className="relative">
+                  <div key={i} className="relative group">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={URL.createObjectURL(f)}
+                      src={
+                        compressedBlobs[i]
+                          ? URL.createObjectURL(compressedBlobs[i])
+                          : URL.createObjectURL(f)
+                      }
                       alt={`原图 ${i + 1}`}
-                      className="w-28 h-28 object-cover rounded-md border border-gray-200"
+                      className={`w-28 h-28 object-cover rounded-md border-2 ${
+                        croppedFlags[i]
+                          ? "border-green-500"
+                          : "border-gray-200"
+                      }`}
                     />
                     <div className="absolute top-1 left-1 bg-black/60 text-white text-[10px] px-1.5 rounded">
                       #{i + 1}
                     </div>
+                    {croppedFlags[i] && (
+                      <div className="absolute top-1 right-1 bg-green-600 text-white text-[10px] px-1.5 rounded">
+                        已裁
+                      </div>
+                    )}
+                    {compressedBlobs[i] && (
+                      <button
+                        type="button"
+                        onClick={() => setCroppingIndex(i)}
+                        className="absolute bottom-1 right-1 px-2 py-0.5 bg-white/90 hover:bg-white text-[10px] text-gray-700 rounded border border-gray-300"
+                      >
+                        裁剪
+                      </button>
+                    )}
                     <div className="mt-1 text-[10px] text-gray-500 truncate w-28">
                       {f.name}
                     </div>
@@ -412,6 +506,16 @@ export default function RecolorPage() {
             </div>
           )}
         </div>
+
+        {/* 裁剪模态 */}
+        {croppingIndex !== null && compressedBlobs[croppingIndex] && (
+          <ImageCropper
+            imageSrc={URL.createObjectURL(compressedBlobs[croppingIndex])}
+            initialAspect={0}
+            onConfirm={(blob) => onCropConfirm(croppingIndex, blob)}
+            onCancel={() => setCroppingIndex(null)}
+          />
+        )}
 
         {/* Step 2: 款式解析（手动触发 + 可编辑） */}
         {files.length > 0 && (
@@ -778,6 +882,43 @@ export default function RecolorPage() {
             className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
           />
         </div>
+
+        {/* 成本预估展示 */}
+        {estimate && totalCount > 0 && (
+          <div
+            className={`mb-3 p-3 rounded border text-sm ${
+              estimate.is_unlimited
+                ? "bg-gray-50 border-gray-200 text-gray-700"
+                : estimate.affordable
+                  ? "bg-blue-50 border-blue-200 text-blue-900"
+                  : "bg-red-50 border-red-200 text-red-900"
+            }`}
+          >
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div>
+                预计花费{" "}
+                <b className="text-base">
+                  ¥{estimate.total_cost_cny.toFixed(2)}
+                </b>
+                <span className="text-xs ml-2 opacity-75">
+                  （¥{estimate.per_image_cny.toFixed(2)} × {totalCount} 张）
+                </span>
+              </div>
+              {estimate.is_unlimited ? (
+                <span className="text-xs">无限额度</span>
+              ) : estimate.affordable ? (
+                <span className="text-xs">
+                  余额 ¥{estimate.remaining_cny.toFixed(2)} · 充足
+                </span>
+              ) : (
+                <span className="text-xs font-medium">
+                  ⚠ 余额不足（剩 ¥{estimate.remaining_cny.toFixed(2)}），建议减到{" "}
+                  {estimate.can_afford_count} 张
+                </span>
+              )}
+            </div>
+          </div>
+        )}
 
         <button
           onClick={handleSubmit}

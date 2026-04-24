@@ -202,3 +202,75 @@ export function assertWithinBudget(
   }
   return status;
 }
+
+/**
+ * 预估单张图片生成成本（用于前端点击前预警）
+ *
+ * 基于用户实测数据的 token 估算：
+ *   - Pro Image:   1K/2K 约 1120 output tokens，4K 约 2000 tokens
+ *   - Flash Image: 1K ~1120, 2K ~1680, 4K ~2520 tokens
+ *   - 每张图输入约 2000 tokens（prompt + 参考图）
+ */
+export function estimateImageCost(
+  modelId: string,
+  qualityLevel: "hd" | "2k" | "4k",
+): { cost_usd: number; cost_cny: number; price_found: boolean } {
+  const price = getModelPrice(modelId);
+  const usdToCny = getUsdToCny();
+  if (!price) {
+    return { cost_usd: 0, cost_cny: 0, price_found: false };
+  }
+
+  const isProImage = modelId.includes("pro-image");
+  const isFlashImage = modelId.includes("flash-image") || modelId.includes("image");
+
+  // 输出 tokens 估算
+  let outputTokens = 1200;
+  if (isProImage) {
+    outputTokens =
+      qualityLevel === "4k" ? 2000 : qualityLevel === "2k" ? 1120 : 1120;
+  } else if (isFlashImage) {
+    outputTokens =
+      qualityLevel === "4k"
+        ? 2520
+        : qualityLevel === "2k"
+          ? 1680
+          : 1120;
+  }
+
+  // 输入 tokens 约 2000（prompt + 参考图 ~560~1120/图）
+  const inputTokens = 2000;
+
+  const inputCostUsd = (inputTokens * price.input_per_1m_usd) / 1_000_000;
+  const outputCostUsd = (outputTokens * price.output_per_1m_usd) / 1_000_000;
+  const cost_usd = inputCostUsd + outputCostUsd;
+  return {
+    cost_usd,
+    cost_cny: cost_usd * usdToCny,
+    price_found: true,
+  };
+}
+
+/**
+ * 预估一批任务总成本
+ */
+export function estimateBatchCost(
+  modelId: string,
+  qualityLevel: "hd" | "2k" | "4k",
+  imageCount: number,
+): {
+  image_count: number;
+  per_image_cny: number;
+  total_cost_usd: number;
+  total_cost_cny: number;
+  price_found: boolean;
+} {
+  const single = estimateImageCost(modelId, qualityLevel);
+  return {
+    image_count: imageCount,
+    per_image_cny: single.cost_cny,
+    total_cost_usd: single.cost_usd * imageCount,
+    total_cost_cny: single.cost_cny * imageCount,
+    price_found: single.price_found,
+  };
+}

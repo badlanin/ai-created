@@ -16,7 +16,8 @@
     "jszip": "^3.10.1",
     "next": "15.1.6",
     "react": "19.0.0",
-    "react-dom": "19.0.0"
+    "react-dom": "19.0.0",
+    "react-easy-crop": "^5.4.2"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

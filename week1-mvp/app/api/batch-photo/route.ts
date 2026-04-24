@@ -18,7 +18,7 @@ import {
 import { retryWithBackoff } from "@/lib/retry";
 import { runWithConcurrency, recommendConcurrency } from "@/lib/concurrency";
 import { recordUsage } from "@/lib/usage";
-import { assertWithinBudget } from "@/lib/pricing";
+import { assertWithinBudget, getUserBudgetStatus } from "@/lib/pricing";
 
 export const runtime = "nodejs";
 // 批量摄影图：Pro + N 个姿势时可能累计 15-30 分钟，留足
@@ -304,6 +304,16 @@ export async function POST(req: NextRequest) {
     );
 
     const outcomes = await runWithConcurrency(poses, concurrency, async (pose) => {
+      // 兜底：每张图前检查预算，耗尽则跳过
+      if (user.role !== "admin") {
+        const status = getUserBudgetStatus(user.id);
+        if (!status.is_unlimited && status.remaining_cny <= 0) {
+          throw new Error(
+            `本月预算已用完（¥${status.used_this_month_cny.toFixed(2)}），剩余任务已跳过`,
+          );
+        }
+      }
+
       const poseStartedAt = Date.now();
       const promptVars: Record<string, string> = {
         n: "1",

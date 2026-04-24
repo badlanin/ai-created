@@ -19,7 +19,7 @@ import {
 import { retryWithBackoff } from "@/lib/retry";
 import { runWithConcurrency, recommendConcurrency } from "@/lib/concurrency";
 import { recordUsage } from "@/lib/usage";
-import { assertWithinBudget } from "@/lib/pricing";
+import { assertWithinBudget, getUserBudgetStatus } from "@/lib/pricing";
 
 export const runtime = "nodejs";
 // 换色每张：Flash Image 5-15 秒，Pro Image 带 Thinking 可达 3-5 分钟
@@ -239,6 +239,17 @@ export async function POST(req: NextRequest) {
 
     const outcomes = await runWithConcurrency(tasks, concurrency, async (task) => {
       const { color: c, imgIdx, label } = task;
+
+      // 兜底：每张图生成前检查一次预算。如果耗尽了就直接跳过
+      // （避免长批次把用户额度打爆到负数）
+      if (user.role !== "admin") {
+        const status = getUserBudgetStatus(user.id);
+        if (!status.is_unlimited && status.remaining_cny <= 0) {
+          throw new Error(
+            `本月预算已用完（¥${status.used_this_month_cny.toFixed(2)}），剩余任务已跳过`,
+          );
+        }
+      }
       const reordered: GenImageInput[] = [
         inputImages[imgIdx],
         ...inputImages.filter((_, i) => i !== imgIdx),

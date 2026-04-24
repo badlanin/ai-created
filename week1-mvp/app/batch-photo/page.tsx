@@ -5,6 +5,7 @@ import {
   downloadImagesAsZip,
   downloadSingleImage,
 } from "@/lib/download-zip";
+import { ImageCropper } from "@/app/_components/image-cropper";
 
 // ============ Types ============
 type AiModel = {
@@ -141,6 +142,8 @@ export default function BatchPhotoPage() {
   // ---- Selections ----
   const [files, setFiles] = useState<File[]>([]);
   const [compressedBlobs, setCompressedBlobs] = useState<Blob[]>([]);
+  const [croppedFlags, setCroppedFlags] = useState<boolean[]>([]);
+  const [croppingIndex, setCroppingIndex] = useState<number | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [garmentAttrs, setGarmentAttrs] = useState<GarmentAttrs | null>(null);
   const [selectedMaterialIds, setSelectedMaterialIds] = useState<number[]>([]);
@@ -158,6 +161,16 @@ export default function BatchPhotoPage() {
   const [aspectRatio, setAspectRatio] = useState<string>("3:4");
   const [qualityLevel, setQualityLevel] = useState<QualityLevel>("2k");
   const [userSeed, setUserSeed] = useState("");
+
+  // 成本预估
+  const [estimate, setEstimate] = useState<{
+    per_image_cny: number;
+    total_cost_cny: number;
+    affordable: boolean;
+    can_afford_count: number;
+    is_unlimited: boolean;
+    remaining_cny: number;
+  } | null>(null);
 
   // ---- Submission state ----
   const [loading, setLoading] = useState(false);
@@ -231,6 +244,7 @@ export default function BatchPhotoPage() {
     const picked = Array.from(fl).slice(0, 3);
     setFiles(picked);
     setCompressedBlobs([]);
+    setCroppedFlags(new Array(picked.length).fill(false));
     setGarmentAttrs(null);
     setSelectedMaterialIds([]);
     setResults(null);
@@ -242,6 +256,20 @@ export default function BatchPhotoPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
+  }
+
+  function onCropConfirm(i: number, blob: Blob) {
+    setCompressedBlobs((prev) => {
+      const next = [...prev];
+      next[i] = blob;
+      return next;
+    });
+    setCroppedFlags((prev) => {
+      const next = [...prev];
+      next[i] = true;
+      return next;
+    });
+    setCroppingIndex(null);
   }
 
   async function handleAnalyze() {
@@ -328,11 +356,57 @@ export default function BatchPhotoPage() {
     );
   }
 
+  // 实时预估成本
+  useEffect(() => {
+    const count = selectedPoseIds.size;
+    if (count === 0 || !modelId) {
+      setEstimate(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      fetch("/api/billing/estimate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: modelId,
+          quality_level: qualityLevel,
+          image_count: count,
+        }),
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (!data) return;
+          setEstimate({
+            per_image_cny: data.estimate.per_image_cny,
+            total_cost_cny: data.estimate.total_cost_cny,
+            affordable: data.affordable,
+            can_afford_count: data.can_afford_count,
+            is_unlimited: data.budget.is_unlimited,
+            remaining_cny: data.budget.remaining_cny,
+          });
+        })
+        .catch(() => setEstimate(null));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [selectedPoseIds.size, modelId, qualityLevel]);
+
   async function handleSubmit() {
     if (!canSubmit()) {
       setError("请完成所有必填项");
       return;
     }
+
+    // 预算拦截
+    if (estimate && !estimate.affordable && !estimate.is_unlimited) {
+      const ok = confirm(
+        `预估花费 ¥${estimate.total_cost_cny.toFixed(2)}，` +
+          `超过余额 ¥${estimate.remaining_cny.toFixed(2)}。\n\n` +
+          `建议把姿势减到 ${estimate.can_afford_count} 个以内。\n\n` +
+          `仍要提交吗？（服务端可能会拒绝或只完成一部分）`,
+      );
+      if (!ok) return;
+    }
+
     setLoading(true);
     setError(null);
     setResults(null);
@@ -410,16 +484,48 @@ export default function BatchPhotoPage() {
                 <div key={i} className="relative">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src={URL.createObjectURL(f)}
+                    src={
+                      compressedBlobs[i]
+                        ? URL.createObjectURL(compressedBlobs[i])
+                        : URL.createObjectURL(f)
+                    }
                     alt={`产品 ${i + 1}`}
-                    className="w-24 h-24 object-cover rounded-md border border-gray-200"
+                    className={`w-24 h-24 object-cover rounded-md border-2 ${
+                      croppedFlags[i]
+                        ? "border-green-500"
+                        : "border-gray-200"
+                    }`}
                   />
                   <div className="absolute top-1 left-1 bg-black/60 text-white text-[10px] px-1.5 rounded">
                     #{i + 1}
                   </div>
+                  {croppedFlags[i] && (
+                    <div className="absolute top-1 right-1 bg-green-600 text-white text-[10px] px-1.5 rounded">
+                      已裁
+                    </div>
+                  )}
+                  {compressedBlobs[i] && (
+                    <button
+                      type="button"
+                      onClick={() => setCroppingIndex(i)}
+                      className="absolute bottom-1 right-1 px-1.5 py-0.5 bg-white/90 hover:bg-white text-[10px] text-gray-700 rounded border border-gray-300"
+                    >
+                      裁剪
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
+          )}
+
+          {/* 裁剪模态 */}
+          {croppingIndex !== null && compressedBlobs[croppingIndex] && (
+            <ImageCropper
+              imageSrc={URL.createObjectURL(compressedBlobs[croppingIndex])}
+              initialAspect={0}
+              onConfirm={(blob) => onCropConfirm(croppingIndex, blob)}
+              onCancel={() => setCroppingIndex(null)}
+            />
           )}
         </StepBlock>
 
@@ -769,6 +875,44 @@ export default function BatchPhotoPage() {
 
         {/* === Submit === */}
         <div className="border-t border-gray-200 pt-4">
+          {/* 成本预估 */}
+          {estimate && selectedPoseIds.size > 0 && (
+            <div
+              className={`mb-3 p-3 rounded border text-sm ${
+                estimate.is_unlimited
+                  ? "bg-gray-50 border-gray-200 text-gray-700"
+                  : estimate.affordable
+                    ? "bg-blue-50 border-blue-200 text-blue-900"
+                    : "bg-red-50 border-red-200 text-red-900"
+              }`}
+            >
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  预计花费{" "}
+                  <b className="text-base">
+                    ¥{estimate.total_cost_cny.toFixed(2)}
+                  </b>
+                  <span className="text-xs ml-2 opacity-75">
+                    （¥{estimate.per_image_cny.toFixed(2)} ×{" "}
+                    {selectedPoseIds.size} 张）
+                  </span>
+                </div>
+                {estimate.is_unlimited ? (
+                  <span className="text-xs">无限额度</span>
+                ) : estimate.affordable ? (
+                  <span className="text-xs">
+                    余额 ¥{estimate.remaining_cny.toFixed(2)} · 充足
+                  </span>
+                ) : (
+                  <span className="text-xs font-medium">
+                    ⚠ 余额不足（剩 ¥{estimate.remaining_cny.toFixed(2)}），建议减到{" "}
+                    {estimate.can_afford_count} 张
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
           <button
             onClick={handleSubmit}
             disabled={!canSubmit()}
