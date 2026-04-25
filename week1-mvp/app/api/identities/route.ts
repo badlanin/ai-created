@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { requireAdmin, requireUser } from "@/lib/auth";
-import {
-  saveUploadFile,
-  checkPngTransparency,
-  deleteUploadFile,
-} from "@/lib/uploads";
+import { saveUploadFile } from "@/lib/uploads";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -56,7 +52,9 @@ export async function GET() {
 /**
  * POST /api/identities
  * formData: { image: File, name, tags?, notes?, sort_order? }
- * 强制 PNG 透明底（否则模特背景会污染场景）
+ *
+ * 接受 PNG / JPG / WebP。透明底 PNG 合成效果最好但不强制 ——
+ * 用户也可能用 AI 生成的带背景模特图（如假人模特带影棚背景）
  */
 export async function POST(req: NextRequest) {
   try {
@@ -72,23 +70,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "名称必填" }, { status: 400 });
     }
 
-    // 透明 PNG 校验
-    const { isPng, hasAlphaChannel } = await checkPngTransparency(image);
-    if (!isPng) {
+    // 文件类型基础校验（图像即可）
+    const mimeType = image.type || "";
+    const isImage =
+      mimeType.startsWith("image/") &&
+      ["image/png", "image/jpeg", "image/jpg", "image/webp"].includes(mimeType);
+    if (!isImage) {
       return NextResponse.json(
-        {
-          error:
-            "请上传 PNG 透明背景图。模特图若带背景会污染最终场景。可用 Remove.bg 或 Photoshop 抠图后再上传。",
-        },
-        { status: 400 },
-      );
-    }
-    if (!hasAlphaChannel) {
-      return NextResponse.json(
-        {
-          error:
-            "PNG 文件不包含透明通道（Alpha channel）。请确认是透明背景 PNG，而不是带白底的 PNG。",
-        },
+        { error: "请上传 PNG / JPG / WebP 格式的图片" },
         { status: 400 },
       );
     }

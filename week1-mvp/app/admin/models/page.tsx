@@ -112,13 +112,10 @@ export default function ModelsAdminPage() {
         <h1 className="text-2xl font-bold text-gray-900">模特形象库</h1>
         <p className="mt-1 text-sm text-gray-500">
           模特的身份参考图（脸 / 肤色 / 发型 / 体型）。
-          <strong className="text-red-600">
-            必须上传 PNG 透明背景图
-          </strong>
-          ——否则背景会污染最终场景
+          支持 <strong>PNG（推荐透明底）</strong> 或 <strong>JPG</strong>。
         </p>
         <p className="mt-1 text-xs text-gray-500">
-          抠图工具推荐：
+          💡 透明底（PNG 抠图后）合成效果最干净；带背景的图也能用，AI 会自己识别主体。抠图工具推荐：
           <a
             href="https://www.remove.bg/zh"
             target="_blank"
@@ -153,12 +150,15 @@ export default function ModelsAdminPage() {
         <form onSubmit={handleUpload} className="space-y-3">
           <div>
             <label className="block text-xs text-gray-600 mb-1">
-              PNG 透明底图片 <span className="text-red-500">*</span>
+              图片 <span className="text-red-500">*</span>
+              <span className="ml-2 text-gray-400 font-normal">
+                PNG（推荐透明底）/ JPG / WebP
+              </span>
             </label>
             <input
               id="identity-file-input"
               type="file"
-              accept="image/png"
+              accept="image/png,image/jpeg,image/webp"
               onChange={(e) => setFile(e.target.files?.[0] || null)}
               className="block w-full text-sm text-gray-600
                 file:mr-4 file:py-2 file:px-4
