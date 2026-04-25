@@ -1,0 +1,282 @@
+[
+  {
+    "file": "identities/universal/universal_01.webp",
+    "name": "通用 01",
+    "category": "universal",
+    "category_label": "通用",
+    "tags": "通用",
+    "sort_order": 1001
+  },
+  {
+    "file": "identities/universal/universal_02.webp",
+    "name": "通用 02",
+    "category": "universal",
+    "category_label": "通用",
+    "tags": "通用",
+    "sort_order": 1002
+  },
+  {
+    "file": "identities/universal/universal_03.webp",
+    "name": "通用 03",
+    "category": "universal",
+    "category_label": "通用",
+    "tags": "通用",
+    "sort_order": 1003
+  },
+  {
+    "file": "identities/universal/universal_04.webp",
+    "name": "通用 04",
+    "category": "universal",
+    "category_label": "通用",
+    "tags": "通用",
+    "sort_order": 1004
+  },
+  {
+    "file": "identities/universal/universal_05.webp",
+    "name": "通用 05",
+    "category": "universal",
+    "category_label": "通用",
+    "tags": "通用",
+    "sort_order": 1005
+  },
+  {
+    "file": "identities/universal/universal_06.webp",
+    "name": "通用 06",
+    "category": "universal",
+    "category_label": "通用",
+    "tags": "通用",
+    "sort_order": 1006
+  },
+  {
+    "file": "identities/universal/universal_07.webp",
+    "name": "通用 07",
+    "category": "universal",
+    "category_label": "通用",
+    "tags": "通用",
+    "sort_order": 1007
+  },
+  {
+    "file": "identities/universal/universal_08.webp",
+    "name": "通用 08",
+    "category": "universal",
+    "category_label": "通用",
+    "tags": "通用",
+    "sort_order": 1008
+  },
+  {
+    "file": "identities/universal/universal_09.webp",
+    "name": "通用 09",
+    "category": "universal",
+    "category_label": "通用",
+    "tags": "通用",
+    "sort_order": 1009
+  },
+  {
+    "file": "identities/universal/universal_10.webp",
+    "name": "通用 10",
+    "category": "universal",
+    "category_label": "通用",
+    "tags": "通用",
+    "sort_order": 1010
+  },
+  {
+    "file": "identities/universal/universal_11.webp",
+    "name": "通用 11",
+    "category": "universal",
+    "category_label": "通用",
+    "tags": "通用",
+    "sort_order": 1011
+  },
+  {
+    "file": "identities/universal/universal_12.webp",
+    "name": "通用 12",
+    "category": "universal",
+    "category_label": "通用",
+    "tags": "通用",
+    "sort_order": 1012
+  },
+  {
+    "file": "identities/universal/universal_13.webp",
+    "name": "通用 13",
+    "category": "universal",
+    "category_label": "通用",
+    "tags": "通用",
+    "sort_order": 1013
+  },
+  {
+    "file": "identities/universal/universal_14.webp",
+    "name": "通用 14",
+    "category": "universal",
+    "category_label": "通用",
+    "tags": "通用",
+    "sort_order": 1014
+  },
+  {
+    "file": "identities/universal/universal_15.webp",
+    "name": "通用 15",
+    "category": "universal",
+    "category_label": "通用",
+    "tags": "通用",
+    "sort_order": 1015
+  },
+  {
+    "file": "identities/universal/universal_16.webp",
+    "name": "通用 16",
+    "category": "universal",
+    "category_label": "通用",
+    "tags": "通用",
+    "sort_order": 1016
+  },
+  {
+    "file": "identities/plus_size/plus_size_01.webp",
+    "name": "大码 01",
+    "category": "plus_size",
+    "category_label": "大码",
+    "tags": "大码",
+    "sort_order": 2001
+  },
+  {
+    "file": "identities/plus_size/plus_size_02.webp",
+    "name": "大码 02",
+    "category": "plus_size",
+    "category_label": "大码",
+    "tags": "大码",
+    "sort_order": 2002
+  },
+  {
+    "file": "identities/plus_size/plus_size_03.webp",
+    "name": "大码 03",
+    "category": "plus_size",
+    "category_label": "大码",
+    "tags": "大码",
+    "sort_order": 2003
+  },
+  {
+    "file": "identities/plus_size/plus_size_04.webp",
+    "name": "大码 04",
+    "category": "plus_size",
+    "category_label": "大码",
+    "tags": "大码",
+    "sort_order": 2004
+  },
+  {
+    "file": "identities/plus_size/plus_size_05.webp",
+    "name": "大码 05",
+    "category": "plus_size",
+    "category_label": "大码",
+    "tags": "大码",
+    "sort_order": 2005
+  },
+  {
+    "file": "identities/plus_size/plus_size_06.webp",
+    "name": "大码 06",
+    "category": "plus_size",
+    "category_label": "大码",
+    "tags": "大码",
+    "sort_order": 2006
+  },
+  {
+    "file": "identities/plus_size/plus_size_07.webp",
+    "name": "大码 07",
+    "category": "plus_size",
+    "category_label": "大码",
+    "tags": "大码",
+    "sort_order": 2007
+  },
+  {
+    "file": "identities/maternity/maternity_01.webp",
+    "name": "孕妇 01",
+    "category": "maternity",
+    "category_label": "孕妇",
+    "tags": "孕妇",
+    "sort_order": 3001
+  },
+  {
+    "file": "identities/maternity/maternity_02.webp",
+    "name": "孕妇 02",
+    "category": "maternity",
+    "category_label": "孕妇",
+    "tags": "孕妇",
+    "sort_order": 3002
+  },
+  {
+    "file": "identities/maternity/maternity_03.webp",
+    "name": "孕妇 03",
+    "category": "maternity",
+    "category_label": "孕妇",
+    "tags": "孕妇",
+    "sort_order": 3003
+  },
+  {
+    "file": "identities/teen/teen_01.webp",
+    "name": "青少年 01",
+    "category": "teen",
+    "category_label": "青少年",
+    "tags": "青少年",
+    "sort_order": 4001
+  },
+  {
+    "file": "identities/teen/teen_02.webp",
+    "name": "青少年 02",
+    "category": "teen",
+    "category_label": "青少年",
+    "tags": "青少年",
+    "sort_order": 4002
+  },
+  {
+    "file": "identities/teen/teen_03.webp",
+    "name": "青少年 03",
+    "category": "teen",
+    "category_label": "青少年",
+    "tags": "青少年",
+    "sort_order": 4003
+  },
+  {
+    "file": "identities/teen/teen_04.webp",
+    "name": "青少年 04",
+    "category": "teen",
+    "category_label": "青少年",
+    "tags": "青少年",
+    "sort_order": 4004
+  },
+  {
+    "file": "identities/teen/teen_05.webp",
+    "name": "青少年 05",
+    "category": "teen",
+    "category_label": "青少年",
+    "tags": "青少年",
+    "sort_order": 4005
+  },
+  {
+    "file": "identities/teen/teen_06.webp",
+    "name": "青少年 06",
+    "category": "teen",
+    "category_label": "青少年",
+    "tags": "青少年",
+    "sort_order": 4006
+  },
+  {
+    "file": "identities/teen/teen_07.webp",
+    "name": "青少年 07",
+    "category": "teen",
+    "category_label": "青少年",
+    "tags": "青少年",
+    "sort_order": 4007
+  },
+  {
+    "file": "identities/teen/teen_08.webp",
+    "name": "青少年 08",
+    "category": "teen",
+    "category_label": "青少年",
+    "tags": "青少年",
+    "sort_order": 4008
+  },
+  {
+    "file": "identities/teen/teen_09.webp",
+    "name": "青少年 09",
+    "category": "teen",
+    "category_label": "青少年",
+    "tags": "青少年",
+    "sort_order": 4009
+  }
+]
