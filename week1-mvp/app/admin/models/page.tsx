@@ -10,8 +10,18 @@ type Identity = {
   image_url: string;
   tags: string | null;
   notes: string | null;
+  category: string | null;
+  category_label: string | null;
   sort_order: number;
 };
+
+const CATEGORY_OPTIONS = [
+  { value: "", label: "未分类" },
+  { value: "universal", label: "通用" },
+  { value: "plus_size", label: "大码" },
+  { value: "maternity", label: "孕妇" },
+  { value: "teen", label: "青少年" },
+];
 
 export default function ModelsAdminPage() {
   const [items, setItems] = useState<Identity[]>([]);
@@ -23,6 +33,7 @@ export default function ModelsAdminPage() {
   const [name, setName] = useState("");
   const [tags, setTags] = useState("");
   const [notes, setNotes] = useState("");
+  const [category, setCategory] = useState("");
   const [sortOrder, setSortOrder] = useState(0);
   const [uploading, setUploading] = useState(false);
 
@@ -58,6 +69,7 @@ export default function ModelsAdminPage() {
       fd.append("name", name.trim());
       if (tags.trim()) fd.append("tags", tags.trim());
       if (notes.trim()) fd.append("notes", notes.trim());
+      if (category) fd.append("category", category);
       fd.append("sort_order", String(sortOrder));
 
       const res = await fetch("/api/identities", {
@@ -69,6 +81,7 @@ export default function ModelsAdminPage() {
       setName("");
       setTags("");
       setNotes("");
+      setCategory("");
       setSortOrder(0);
       // reset file input
       const input = document.getElementById("identity-file-input") as HTMLInputElement | null;
@@ -209,7 +222,21 @@ export default function ModelsAdminPage() {
               />
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-4 gap-3">
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">分类</label>
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm bg-white"
+              >
+                {CATEGORY_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div className="col-span-2">
               <label className="block text-xs text-gray-600 mb-1">备注</label>
               <input
@@ -282,6 +309,7 @@ function IdentityCard({
     name: item.name,
     tags: item.tags || "",
     notes: item.notes || "",
+    category: item.category || "",
   });
 
   return (
@@ -312,10 +340,27 @@ function IdentityCard({
             placeholder="备注"
             className="w-full px-2 py-1 border border-gray-300 rounded text-xs"
           />
+          <select
+            value={draft.category}
+            onChange={(e) =>
+              setDraft({ ...draft, category: e.target.value })
+            }
+            className="w-full px-2 py-1 border border-gray-300 rounded text-xs bg-white"
+          >
+            {CATEGORY_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
           <div className="flex gap-1">
             <button
               onClick={() => {
-                onPatch(item.id, draft);
+                onPatch(item.id, {
+                  ...draft,
+                  // category 空字符串显式映射成 null（清空分类）
+                  category: draft.category || null,
+                });
                 setEditing(false);
               }}
               className="flex-1 px-2 py-1 bg-blue-600 text-white text-xs rounded"
@@ -332,8 +377,13 @@ function IdentityCard({
         </div>
       ) : (
         <div className="p-3">
-          <div className="text-sm font-medium text-gray-900 truncate">
-            {item.name}
+          <div className="text-sm font-medium text-gray-900 truncate flex items-center gap-1.5">
+            <span className="truncate">{item.name}</span>
+            {item.category_label && (
+              <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                {item.category_label}
+              </span>
+            )}
           </div>
           {item.tags && (
             <div className="flex flex-wrap gap-1 mt-1">

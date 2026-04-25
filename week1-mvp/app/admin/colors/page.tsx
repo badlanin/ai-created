@@ -6,8 +6,22 @@ type Color = {
   id: number;
   name: string;
   hex: string;
+  color_group: string | null;
+  color_group_label: string | null;
+  is_popular: number;
   sort_order: number;
 };
+
+const COLOR_GROUP_OPTIONS = [
+  { value: "", label: "未分类" },
+  { value: "Blues", label: "蓝色系" },
+  { value: "Greens", label: "绿色系" },
+  { value: "Neutrals", label: "中性色系" },
+  { value: "Pinks & Reds", label: "粉/红色系" },
+  { value: "Purples", label: "紫色系" },
+  { value: "Yellow", label: "黄色系" },
+  { value: "Darks", label: "深色系" },
+];
 
 export default function ColorsAdminPage() {
   const [colors, setColors] = useState<Color[]>([]);
@@ -17,6 +31,8 @@ export default function ColorsAdminPage() {
   // 新增表单
   const [newName, setNewName] = useState("");
   const [newHex, setNewHex] = useState("#D4A574");
+  const [newGroup, setNewGroup] = useState("");
+  const [newPopular, setNewPopular] = useState(false);
   const [creating, setCreating] = useState(false);
 
   async function load() {
@@ -49,11 +65,14 @@ export default function ColorsAdminPage() {
         body: JSON.stringify({
           name: newName.trim(),
           hex: newHex,
+          color_group: newGroup || null,
+          is_popular: newPopular,
           sort_order: colors.length,
         }),
       });
       if (!res.ok) throw new Error((await res.json()).error || res.statusText);
       setNewName("");
+      setNewPopular(false);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -129,6 +148,29 @@ export default function ColorsAdminPage() {
               />
             </div>
           </div>
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">色系</label>
+            <select
+              value={newGroup}
+              onChange={(e) => setNewGroup(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-md text-sm bg-white min-w-[120px]"
+            >
+              {COLOR_GROUP_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <label className="flex items-center gap-1.5 text-xs text-gray-700 self-end mb-2.5">
+            <input
+              type="checkbox"
+              checked={newPopular}
+              onChange={(e) => setNewPopular(e.target.checked)}
+              className="rounded"
+            />
+            流行色
+          </label>
           <button
             type="submit"
             disabled={creating || !newName.trim()}
@@ -187,6 +229,8 @@ function ColorRow({
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(color.name);
   const [hex, setHex] = useState(color.hex);
+  const [group, setGroup] = useState(color.color_group || "");
+  const [popular, setPopular] = useState(color.is_popular === 1);
 
   return (
     <li className="px-6 py-3 flex items-center gap-4">
@@ -214,9 +258,33 @@ function ColorRow({
             onChange={(e) => setHex(e.target.value.toUpperCase())}
             className="w-24 px-2 py-1 border border-gray-300 rounded text-sm font-mono"
           />
+          <select
+            value={group}
+            onChange={(e) => setGroup(e.target.value)}
+            className="px-2 py-1 border border-gray-300 rounded text-xs bg-white"
+          >
+            {COLOR_GROUP_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <label className="flex items-center gap-1 text-xs text-gray-700">
+            <input
+              type="checkbox"
+              checked={popular}
+              onChange={(e) => setPopular(e.target.checked)}
+            />
+            流行
+          </label>
           <button
             onClick={() => {
-              onUpdate(color.id, { name, hex });
+              onUpdate(color.id, {
+                name,
+                hex,
+                color_group: group || null,
+                is_popular: popular ? 1 : 0,
+              } as Partial<Color>);
               setEditing(false);
             }}
             className="px-3 py-1 bg-blue-600 text-white text-xs rounded"
@@ -227,6 +295,8 @@ function ColorRow({
             onClick={() => {
               setName(color.name);
               setHex(color.hex);
+              setGroup(color.color_group || "");
+              setPopular(color.is_popular === 1);
               setEditing(false);
             }}
             className="px-3 py-1 text-gray-600 text-xs rounded hover:bg-gray-100"
@@ -237,8 +307,18 @@ function ColorRow({
       ) : (
         <>
           <div className="flex-1">
-            <div className="text-sm font-medium text-gray-900">
-              {color.name}
+            <div className="text-sm font-medium text-gray-900 flex items-center gap-1.5 flex-wrap">
+              <span>{color.name}</span>
+              {color.color_group_label && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 border border-gray-200 font-normal">
+                  {color.color_group_label}
+                </span>
+              )}
+              {color.is_popular === 1 && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-200 font-normal">
+                  流行
+                </span>
+              )}
             </div>
             <div className="text-xs text-gray-500 font-mono">{color.hex}</div>
           </div>

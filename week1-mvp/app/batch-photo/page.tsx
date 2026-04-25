@@ -48,6 +48,8 @@ type Identity = {
   name: string;
   image_url: string;
   tags: string | null;
+  category: string | null;
+  category_label: string | null;
 };
 type Scene = {
   id: number;
@@ -815,25 +817,57 @@ export default function BatchPhotoPage() {
                 label="去添加模特形象（需 PNG 透明底）"
               />
             ) : (
-              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
-                {identities.map((m) => (
-                  <Thumbnail
-                    key={m.id}
-                    src={m.image_url}
-                    alt={m.name}
-                    ratio="3/4"
-                    fit="contain"
-                    selected={identityId === m.id}
-                    onClick={() => setIdentityId(m.id)}
-                    badge={
-                      identityId === m.id ? (
-                        <ThumbnailBadge tone="blue">已选</ThumbnailBadge>
-                      ) : undefined
-                    }
-                    className="cursor-pointer"
-                  />
-                ))}
-              </div>
+              (() => {
+                // 按分类分组：通用 → 大码 → 孕妇 → 青少年，未分类放最后
+                const CATEGORY_ORDER = ["通用", "大码", "孕妇", "青少年"];
+                const groups = new Map<string, Identity[]>();
+                for (const m of identities) {
+                  const key = m.category_label || "未分类";
+                  if (!groups.has(key)) groups.set(key, []);
+                  groups.get(key)!.push(m);
+                }
+                const orderedKeys = [
+                  ...CATEGORY_ORDER.filter((k) => groups.has(k)),
+                  ...Array.from(groups.keys()).filter(
+                    (k) => !CATEGORY_ORDER.includes(k),
+                  ),
+                ];
+                return (
+                  <div className="space-y-3">
+                    {orderedKeys.map((cat) => (
+                      <div key={cat}>
+                        <div className="text-xs text-gray-500 mb-1.5 flex items-center gap-1.5">
+                          <span>{cat}</span>
+                          <span className="text-gray-400">
+                            · {groups.get(cat)!.length}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
+                          {groups.get(cat)!.map((m) => (
+                            <Thumbnail
+                              key={m.id}
+                              src={m.image_url}
+                              alt={m.name}
+                              ratio="3/4"
+                              fit="contain"
+                              selected={identityId === m.id}
+                              onClick={() => setIdentityId(m.id)}
+                              badge={
+                                identityId === m.id ? (
+                                  <ThumbnailBadge tone="blue">
+                                    已选
+                                  </ThumbnailBadge>
+                                ) : undefined
+                              }
+                              className="cursor-pointer"
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()
             )}
           </StepBlock>
 

@@ -330,6 +330,16 @@ function migrate(db: Database.Database) {
       ON announcements(enabled, created_at DESC);
   `);
 
+  // 增量迁移：新增列（已存在时跳过）
+  ensureColumn(db, "models", "category", "TEXT");
+  ensureColumn(db, "colors", "color_group", "TEXT");
+  ensureColumn(db, "colors", "is_popular", "INTEGER NOT NULL DEFAULT 0");
+  // 新增索引
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_models_category ON models(kind, category, sort_order);
+    CREATE INDEX IF NOT EXISTS idx_colors_group ON colors(color_group, sort_order);
+  `);
+
   // 启动时恢复：把被进程重启打断的 item 标为 failed
   recoverOrphanJobs(db);
 
@@ -341,6 +351,29 @@ function migrate(db: Database.Database) {
   seedMaterials(db);
   seedModelPrices(db);
   seedSettings(db);
+  // 新实例预设：色卡 + 模特图 + 场景图（来自 seed-assets/）
+  seedColors(db);
+  seedIdentitiesFromAssets(db);
+  seedScenesFromAssets(db);
+}
+
+/**
+ * 幂等地给 table 添加列。已存在则跳过。
+ * SQLite 的 ALTER TABLE ADD COLUMN 不支持 IF NOT EXISTS，
+ * 所以必须先查 pragma_table_info。
+ */
+function ensureColumn(
+  db: Database.Database,
+  table: string,
+  column: string,
+  definition: string,
+) {
+  const cols = db
+    .prepare(`PRAGMA table_info(${table})`)
+    .all() as Array<{ name: string }>;
+  if (cols.some((c) => c.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  console.log(`[db] ALTER TABLE ${table} ADD COLUMN ${column}`);
 }
 
 /**
@@ -1346,3 +1379,197 @@ function seedSettings(db: Database.Database) {
 }
 
 export const DATA_DIR_PATH = DATA_DIR;
+
+// ==========================================
+// Seed: 色卡 / 模特 / 场景 —— 来自 seed-assets/
+// ==========================================
+
+interface SeedColorEntry {
+  name: string;
+  hex: string;
+  color_group: string;
+  color_group_label?: string;
+  is_popular?: boolean;
+  note?: string;
+  sort_order: number;
+}
+
+interface SeedIdentityEntry {
+  file: string;
+  name: string;
+  category: string;
+  category_label: string;
+  tags?: string;
+  sort_order: number;
+}
+
+interface SeedSceneEntry {
+  file: string;
+  name: string;
+  tags?: string;
+  sort_order: number;
+}
+
+/**
+ * 种子色卡（50 个，按色系分组）
+ *
+ * 数据来源：seed-assets/colors.json（由 预设/色卡.xlsx 编译）
+ * 仅在 colors 表为空时执行，不会覆盖管理员后续添加的颜色
+ */
+function seedColors(db: Database.Database) {
+  const exists = db.prepare(`SELECT COUNT(*) AS c FROM colors`).get() as {
+    c: number;
+  };
+  if (exists.c > 0) return;
+
+  let colors: SeedColorEntry[];
+  try {
+    // 延迟 import 避免在没有 seed-assets 时影响其他 seed
+    const seedAssets = require("./seed-assets") as typeof import("./seed-assets");
+    if (!seedAssets.hasSeedAssets()) {
+      console.log("[db] seed-assets/ not found, 跳过 seedColors");
+      return;
+    }
+    colors = seedAssets.readManifest<SeedColorEntry[]>("colors.json");
+  } catch (err) {
+    console.warn("[db] seedColors 读取 colors.json 失败:", err);
+    return;
+  }
+
+  const stmt = db.prepare(
+    `INSERT INTO colors (name, hex, color_group, is_popular, sort_order)
+     VALUES (@name, @hex, @color_group, @is_popular, @sort_order)`,
+  );
+  const tx = db.transaction(() => {
+    for (const c of colors) {
+      stmt.run({
+        name: c.name,
+        hex: c.hex,
+        color_group: c.color_group,
+        is_popular: c.is_popular ? 1 : 0,
+        sort_order: c.sort_order,
+      });
+    }
+  });
+  tx();
+  console.log(`[db] seedColors: 写入 ${colors.length} 个色卡`);
+}
+
+/**
+ * 种子模特图（来自 seed-assets/identities/）
+ *
+ * 步骤：
+ *   1. 表为空才跑
+ *   2. 读 manifest.json
+ *   3. 把每张图从 seed-assets/ 复制到 data/uploads/identities/
+ *   4. INSERT 一行 models（kind='identity'）
+ */
+function seedIdentitiesFromAssets(db: Database.Database) {
+  const exists = db
+    .prepare(`SELECT COUNT(*) AS c FROM models WHERE kind = 'identity'`)
+    .get() as { c: number };
+  if (exists.c > 0) return;
+
+  let entries: SeedIdentityEntry[];
+  let copySeedAsset: typeof import("./seed-assets").copySeedAsset;
+  try {
+    const seedAssets = require("./seed-assets") as typeof import("./seed-assets");
+    if (!seedAssets.hasSeedAssets()) {
+      console.log("[db] seed-assets/ not found, 跳过 seedIdentitiesFromAssets");
+      return;
+    }
+    entries = seedAssets.readManifest<SeedIdentityEntry[]>(
+      "identities/manifest.json",
+    );
+    copySeedAsset = seedAssets.copySeedAsset;
+  } catch (err) {
+    console.warn("[db] seedIdentitiesFromAssets 读取 manifest 失败:", err);
+    return;
+  }
+
+  // 1) 先把图复制好，记下每条对应的 image_path
+  const prepared: Array<SeedIdentityEntry & { image_path: string }> = [];
+  for (const e of entries) {
+    try {
+      const { relPath } = copySeedAsset(e.file, "identities");
+      prepared.push({ ...e, image_path: relPath });
+    } catch (err) {
+      console.warn(`[db] 模特图复制失败 (${e.file}):`, err);
+    }
+  }
+
+  // 2) 一次性写库
+  const stmt = db.prepare(
+    `INSERT INTO models (kind, name, image_path, tags, category, sort_order)
+     VALUES ('identity', @name, @image_path, @tags, @category, @sort_order)`,
+  );
+  const tx = db.transaction(() => {
+    for (const p of prepared) {
+      stmt.run({
+        name: p.name,
+        image_path: p.image_path,
+        tags: p.tags || null,
+        category: p.category,
+        sort_order: p.sort_order,
+      });
+    }
+  });
+  tx();
+  console.log(
+    `[db] seedIdentitiesFromAssets: 写入 ${prepared.length} 张模特图`,
+  );
+}
+
+/**
+ * 种子场景背景图（来自 seed-assets/scenes/）
+ */
+function seedScenesFromAssets(db: Database.Database) {
+  const exists = db.prepare(`SELECT COUNT(*) AS c FROM scenes`).get() as {
+    c: number;
+  };
+  if (exists.c > 0) return;
+
+  let entries: SeedSceneEntry[];
+  let copySeedAsset: typeof import("./seed-assets").copySeedAsset;
+  try {
+    const seedAssets = require("./seed-assets") as typeof import("./seed-assets");
+    if (!seedAssets.hasSeedAssets()) {
+      console.log("[db] seed-assets/ not found, 跳过 seedScenesFromAssets");
+      return;
+    }
+    entries = seedAssets.readManifest<SeedSceneEntry[]>(
+      "scenes/manifest.json",
+    );
+    copySeedAsset = seedAssets.copySeedAsset;
+  } catch (err) {
+    console.warn("[db] seedScenesFromAssets 读取 manifest 失败:", err);
+    return;
+  }
+
+  const prepared: Array<SeedSceneEntry & { image_path: string }> = [];
+  for (const e of entries) {
+    try {
+      const { relPath } = copySeedAsset(e.file, "scenes");
+      prepared.push({ ...e, image_path: relPath });
+    } catch (err) {
+      console.warn(`[db] 场景图复制失败 (${e.file}):`, err);
+    }
+  }
+
+  const stmt = db.prepare(
+    `INSERT INTO scenes (name, image_path, tags, sort_order)
+     VALUES (@name, @image_path, @tags, @sort_order)`,
+  );
+  const tx = db.transaction(() => {
+    for (const p of prepared) {
+      stmt.run({
+        name: p.name,
+        image_path: p.image_path,
+        tags: p.tags || null,
+        sort_order: p.sort_order,
+      });
+    }
+  });
+  tx();
+  console.log(`[db] seedScenesFromAssets: 写入 ${prepared.length} 张场景图`);
+}

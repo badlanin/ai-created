@@ -13,7 +13,14 @@ import { useSlotStore } from "@/lib/stores/task-store";
 
 /* ─────────── 类型 ─────────── */
 
-type Color = { id: number; name: string; hex: string };
+type Color = {
+  id: number;
+  name: string;
+  hex: string;
+  color_group: string | null;
+  color_group_label: string | null;
+  is_popular?: number | boolean;
+};
 type AiModel = {
   id: number;
   model_id: string;
@@ -900,31 +907,75 @@ export default function RecolorPage() {
                 ，或使用下面的「临时颜色」
               </div>
             ) : (
-              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
-                {colors.map((c) => {
-                  const active = selectedColorIds.has(c.id);
-                  return (
-                    <button
-                      key={c.id}
-                      type="button"
-                      onClick={() => toggleColor(c.id)}
-                      className={`p-2 rounded-md border text-left transition ${
-                        active
-                          ? "border-blue-500 ring-1 ring-blue-500 bg-blue-50"
-                          : "border-gray-300 hover:border-gray-400"
-                      }`}
-                    >
-                      <div
-                        className="w-full h-10 rounded border border-gray-200"
-                        style={{ backgroundColor: c.hex }}
-                      />
-                      <div className="text-xs mt-1 truncate">{c.name}</div>
-                      <div className="text-[10px] text-gray-400 font-mono truncate">
-                        {c.hex}
+              <div className="space-y-3">
+                {(() => {
+                  // 按色系分组（保持后端 sort_order 顺序），无分组的归到「未分类」
+                  const GROUP_ORDER = [
+                    "蓝色系",
+                    "绿色系",
+                    "中性色系",
+                    "粉/红色系",
+                    "紫色系",
+                    "黄色系",
+                    "深色系",
+                  ];
+                  const groups = new Map<string, Color[]>();
+                  for (const c of colors) {
+                    const key = c.color_group_label || "未分类";
+                    if (!groups.has(key)) groups.set(key, []);
+                    groups.get(key)!.push(c);
+                  }
+                  // 已知色系按预设顺序，未知色系追加到末尾
+                  const orderedKeys = [
+                    ...GROUP_ORDER.filter((k) => groups.has(k)),
+                    ...Array.from(groups.keys()).filter(
+                      (k) => !GROUP_ORDER.includes(k),
+                    ),
+                  ];
+                  return orderedKeys.map((groupLabel) => (
+                    <div key={groupLabel}>
+                      <div className="text-xs text-gray-500 mb-1.5 flex items-center gap-1.5">
+                        <span>{groupLabel}</span>
+                        <span className="text-gray-400">
+                          · {groups.get(groupLabel)!.length}
+                        </span>
                       </div>
-                    </button>
-                  );
-                })}
+                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
+                        {groups.get(groupLabel)!.map((c) => {
+                          const active = selectedColorIds.has(c.id);
+                          return (
+                            <button
+                              key={c.id}
+                              type="button"
+                              onClick={() => toggleColor(c.id)}
+                              className={`relative p-2 rounded-md border text-left transition ${
+                                active
+                                  ? "border-blue-500 ring-1 ring-blue-500 bg-blue-50"
+                                  : "border-gray-300 hover:border-gray-400"
+                              }`}
+                            >
+                              {c.is_popular ? (
+                                <span className="absolute top-1 right-1 px-1 py-px rounded text-[9px] font-medium leading-none bg-amber-100 text-amber-700 border border-amber-200">
+                                  流行
+                                </span>
+                              ) : null}
+                              <div
+                                className="w-full h-10 rounded border border-gray-200"
+                                style={{ backgroundColor: c.hex }}
+                              />
+                              <div className="text-xs mt-1 truncate">
+                                {c.name}
+                              </div>
+                              <div className="text-[10px] text-gray-400 font-mono truncate">
+                                {c.hex}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ));
+                })()}
               </div>
             )}
             {/* 临时颜色 */}

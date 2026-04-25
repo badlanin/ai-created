@@ -27,6 +27,14 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       push("tags", body.tags.trim() || null);
     if (typeof body.notes === "string")
       push("notes", body.notes.trim() || null);
+    if (typeof body.category === "string" || body.category === null) {
+      // 允许显式传 null 清空分类
+      const v =
+        body.category === null
+          ? null
+          : (body.category as string).trim() || null;
+      push("category", v);
+    }
     if (typeof body.sort_order === "number")
       push("sort_order", body.sort_order);
 
@@ -45,7 +53,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     }
     const row = db
       .prepare(
-        `SELECT id, name, image_path, tags, notes, sort_order, created_at FROM models WHERE id = ?`,
+        `SELECT id, name, image_path, tags, notes, category, sort_order, created_at FROM models WHERE id = ?`,
       )
       .get(id);
     return NextResponse.json(row);

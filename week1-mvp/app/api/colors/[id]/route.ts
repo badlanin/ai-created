@@ -8,6 +8,8 @@ type ColorRow = {
   id: number;
   name: string;
   hex: string;
+  color_group: string | null;
+  is_popular: number;
   sort_order: number;
 };
 
@@ -38,11 +40,13 @@ export async function PATCH(
     const body = (await req.json()) as {
       name?: string;
       hex?: string;
+      color_group?: string | null;
+      is_popular?: boolean;
       sort_order?: number;
     };
 
     const updates: string[] = [];
-    const values: (string | number)[] = [];
+    const values: (string | number | null)[] = [];
 
     if (body.name !== undefined) {
       const name = body.name.trim();
@@ -61,6 +65,16 @@ export async function PATCH(
       updates.push("hex = ?");
       values.push(hex);
     }
+    if (body.color_group !== undefined) {
+      const cg =
+        body.color_group === null ? null : (body.color_group || "").trim() || null;
+      updates.push("color_group = ?");
+      values.push(cg);
+    }
+    if (body.is_popular !== undefined) {
+      updates.push("is_popular = ?");
+      values.push(body.is_popular ? 1 : 0);
+    }
     if (body.sort_order !== undefined) {
       updates.push("sort_order = ?");
       values.push(body.sort_order);
@@ -78,7 +92,8 @@ export async function PATCH(
 
     const row = db
       .prepare(
-        "SELECT id, name, hex, sort_order FROM colors WHERE id = ?",
+        `SELECT id, name, hex, color_group, is_popular, sort_order
+         FROM colors WHERE id = ?`,
       )
       .get(id) as ColorRow | undefined;
 

@@ -8,9 +8,32 @@ type ColorRow = {
   id: number;
   name: string;
   hex: string;
+  color_group: string | null;
+  is_popular: number;
   sort_order: number;
   created_at: number;
 };
+
+// 7 个核心色系的中文显示名（与 seed-assets/colors.json 保持一致）
+const COLOR_GROUP_LABELS: Record<string, string> = {
+  Blues: "蓝色系",
+  Greens: "绿色系",
+  Neutrals: "中性色系",
+  "Pinks & Reds": "粉/红色系",
+  Purples: "紫色系",
+  Yellow: "黄色系",
+  Darks: "深色系",
+};
+
+function withGroupLabel<T extends { color_group: string | null }>(row: T) {
+  return {
+    ...row,
+    color_group_label:
+      row.color_group && COLOR_GROUP_LABELS[row.color_group]
+        ? COLOR_GROUP_LABELS[row.color_group]
+        : row.color_group || null,
+  };
+}
 
 function normalizeHex(input: string): string | null {
   let s = input.trim().toUpperCase();
@@ -34,10 +57,11 @@ export async function GET() {
     const db = getDb();
     const rows = db
       .prepare(
-        "SELECT id, name, hex, sort_order, created_at FROM colors ORDER BY sort_order ASC, id ASC",
+        `SELECT id, name, hex, color_group, is_popular, sort_order, created_at
+         FROM colors ORDER BY sort_order ASC, id ASC`,
       )
       .all() as ColorRow[];
-    return NextResponse.json(rows);
+    return NextResponse.json(rows.map(withGroupLabel));
   } catch (e) {
     const status = (e as { status?: number }).status || 500;
     return NextResponse.json(
@@ -57,6 +81,8 @@ export async function POST(req: NextRequest) {
     const body = (await req.json()) as {
       name?: string;
       hex?: string;
+      color_group?: string;
+      is_popular?: boolean;
       sort_order?: number;
     };
 
@@ -71,21 +97,25 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
+    const colorGroup = (body.color_group || "").trim() || null;
+    const isPopular = body.is_popular ? 1 : 0;
 
     const db = getDb();
     const result = db
       .prepare(
-        "INSERT INTO colors (name, hex, sort_order, created_by) VALUES (?, ?, ?, ?)",
+        `INSERT INTO colors (name, hex, color_group, is_popular, sort_order, created_by)
+         VALUES (?, ?, ?, ?, ?, ?)`,
       )
-      .run(name, hex, body.sort_order ?? 0, user.id);
+      .run(name, hex, colorGroup, isPopular, body.sort_order ?? 0, user.id);
 
     const row = db
       .prepare(
-        "SELECT id, name, hex, sort_order, created_at FROM colors WHERE id = ?",
+        `SELECT id, name, hex, color_group, is_popular, sort_order, created_at
+         FROM colors WHERE id = ?`,
       )
       .get(result.lastInsertRowid) as ColorRow;
 
-    return NextResponse.json(row, { status: 201 });
+    return NextResponse.json(withGroupLabel(row), { status: 201 });
   } catch (e) {
     const status = (e as { status?: number }).status || 500;
     return NextResponse.json(

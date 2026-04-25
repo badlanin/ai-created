@@ -12,8 +12,17 @@ type IdentityRow = {
   image_path: string;
   tags: string | null;
   notes: string | null;
+  category: string | null;
   sort_order: number;
   created_at: number;
+};
+
+// 模特分类的中文显示名（与 seed-assets/identities/manifest.json 保持一致）
+const IDENTITY_CATEGORY_LABELS: Record<string, string> = {
+  universal: "通用",
+  plus_size: "大码",
+  maternity: "孕妇",
+  teen: "青少年",
 };
 
 /**
@@ -26,18 +35,21 @@ export async function GET() {
     const db = getDb();
     const rows = db
       .prepare(
-        `SELECT id, name, image_path, tags, notes, sort_order, created_at
+        `SELECT id, name, image_path, tags, notes, category, sort_order, created_at
          FROM models WHERE kind = 'identity'
          ORDER BY sort_order ASC, id ASC`,
       )
       .all() as IdentityRow[];
 
-    // 附加可访问的 URL
+    // 附加可访问的 URL + 分类显示名
     const withUrl = rows.map((r) => ({
       ...r,
       image_url: r.image_path.startsWith("uploads/")
         ? `/assets/${r.image_path}`
         : r.image_path,
+      category_label: r.category
+        ? IDENTITY_CATEGORY_LABELS[r.category] || r.category
+        : null,
     }));
     return NextResponse.json(withUrl);
   } catch (e) {
@@ -85,29 +97,40 @@ export async function POST(req: NextRequest) {
     // 保存文件
     const saved = await saveUploadFile(image, "identities");
 
+    // 分类（可选；管理员上传时按需指定）
+    const rawCategory = (formData.get("category") as string | null)?.trim() || "";
+    const category = rawCategory in IDENTITY_CATEGORY_LABELS ? rawCategory : null;
+
     const db = getDb();
     const result = db
       .prepare(
-        `INSERT INTO models (kind, name, image_path, tags, notes, sort_order, created_by)
-         VALUES ('identity', ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO models (kind, name, image_path, tags, notes, category, sort_order, created_by)
+         VALUES ('identity', ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         name,
         saved.relPath,
         (formData.get("tags") as string | null)?.trim() || null,
         (formData.get("notes") as string | null)?.trim() || null,
+        category,
         Number(formData.get("sort_order")) || 0,
         user.id,
       );
 
     const row = db
       .prepare(
-        `SELECT id, name, image_path, tags, notes, sort_order, created_at
+        `SELECT id, name, image_path, tags, notes, category, sort_order, created_at
          FROM models WHERE id = ?`,
       )
       .get(result.lastInsertRowid) as IdentityRow;
     return NextResponse.json(
-      { ...row, image_url: `/assets/${row.image_path}` },
+      {
+        ...row,
+        image_url: `/assets/${row.image_path}`,
+        category_label: row.category
+          ? IDENTITY_CATEGORY_LABELS[row.category] || row.category
+          : null,
+      },
       { status: 201 },
     );
   } catch (e) {
