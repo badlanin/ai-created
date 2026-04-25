@@ -213,6 +213,9 @@ export async function POST(req: NextRequest) {
 
     const materials = getMaterialsByIds(materialIds);
 
+    // 同一个 batch 共享一个 random seed，保证多张图模特脸/光线/背景的一致性
+    const batchSeed = Math.floor(Math.random() * 2_147_483_647);
+
     // ─── 创建 job（items = 一个 pose 一个）───
     const job = createJob({
       user_id: user.id,
@@ -223,6 +226,7 @@ export async function POST(req: NextRequest) {
         aspect_ratio: aspectRatio ?? null,
         quality_level: qualityLevel,
         user_seed: userSeed,
+        batch_seed: batchSeed,
         identity: {
           id: identity.id,
           name: identity.name,
@@ -335,6 +339,7 @@ async function batchPhotoItemHandler(
     aspect_ratio?: string | null;
     quality_level?: "hd" | "2k" | "4k";
     user_seed?: string;
+    batch_seed?: number;
     identity: { id: number; name: string; image_path: string };
     scene: { id: number; name: string; image_path: string };
     template: { id: number; name: string; template: string };
@@ -431,6 +436,8 @@ async function batchPhotoItemHandler(
       generateImage(parts, finalPrompt, ctx.job.model, {
         aspectRatio: p.aspect_ratio ?? undefined,
         imageSize,
+        seed: p.batch_seed,            // 整批共享同一 seed → 模特脸 / 光线 / 背景一致
+        temperature: 0.15,             // 批次模式低温，最大化一致性
       }),
     {
       onRetry: (e, attempt, delay) => {

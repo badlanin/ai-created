@@ -216,6 +216,9 @@ export async function POST(req: NextRequest) {
     const realismConstraintsText = formatRealismConstraints(realismPreset);
     const garmentAttrsText = formatGarmentAttrs(garmentAttrs);
 
+    // 同一个 batch 共享一个 random seed，保证多张图的一致性（颜色/光线/光影）
+    const batchSeed = Math.floor(Math.random() * 2_147_483_647);
+
     const job = createJob({
       user_id: user.id,
       feature: "recolor",
@@ -225,6 +228,7 @@ export async function POST(req: NextRequest) {
         aspect_ratio: aspectRatio ?? null,
         quality_level: qualityLevel,
         user_seed: userSeed,
+        batch_seed: batchSeed,
         garment_attrs_text: garmentAttrsText,
         material_details_text: materialDetailsText,
         realism_constraints_text: realismConstraintsText,
@@ -319,6 +323,7 @@ async function recolorItemHandler(
     aspect_ratio?: string | null;
     quality_level?: "hd" | "2k" | "4k";
     user_seed?: string;
+    batch_seed?: number;
     garment_attrs_text?: string;
     material_details_text?: string;
     realism_constraints_text?: string;
@@ -392,6 +397,8 @@ async function recolorItemHandler(
       generateImage(reordered, prompt, ctx.job.model, {
         aspectRatio: p.aspect_ratio ?? undefined,
         imageSize,
+        seed: p.batch_seed,           // 整批共享同一 seed → 一致性
+        temperature: 0.15,            // 批次模式低温，减少 AI 自由发挥
       }),
     {
       onRetry: (e, attempt, delay) => {

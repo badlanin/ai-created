@@ -61,6 +61,21 @@ export interface GenImageOptions {
    * 始终输出 ~1K。所以要真的 4K 输出，需要用 Pro 模型 + imageSize='4K'。
    */
   imageSize?: "0.5K" | "1K" | "2K" | "4K";
+  /**
+   * 随机种子（整数）—— 同一个 batch 的多张图传同一个 seed，
+   * 让 AI 输出一致的脸 / 光线 / 背景，只让姿势/颜色等指令性元素变化。
+   * 不传则每次都是新随机种子，batch 内会出现脸不同、背景漂移等问题。
+   *
+   * 注意：Gemini 图像模型对 seed 的"严格性"不如文本模型。
+   * 即使同 seed，AI 还会有约 5-15% 的自由度。配合 temperature=0.1-0.2
+   * 才能最大化一致性。
+   */
+  seed?: number;
+  /**
+   * 采样温度（0.0-1.0）。默认 0.4。
+   * 批次一致性场景建议设 0.1-0.2，让 AI 别"自由发挥"。
+   */
+  temperature?: number;
 }
 
 export async function generateImage(
@@ -91,8 +106,13 @@ export async function generateImage(
   const configBase: Record<string, unknown> = {
     // Nano Banana 既可以返回图片也可以返回文本，都要
     responseModalities: ["IMAGE", "TEXT"],
-    temperature: 0.4,
+    // 默认 0.4，传了 seed 时建议调用方降到 0.1-0.2 增强一致性
+    temperature: options.temperature ?? 0.4,
   };
+  // seed 锁定 —— 同一个 batch 的多张图共享，最大化一致性
+  if (typeof options.seed === "number" && Number.isFinite(options.seed)) {
+    configBase.seed = Math.floor(options.seed);
+  }
   if (isProImage) {
     // 限定 Pro Image 的思考预算：2048 tokens 足够一般换色/简单合成场景
     // （不设置的话默认可能是 -1 动态无上限，容易拖到几分钟）
@@ -165,7 +185,7 @@ export async function generateImage(
   // 日志输出图片信息（宽高 / 体积），用于诊断输出质量问题
   const info = readImageInfo(imageData.data, imageData.mimeType);
   console.log(
-    `[gen OK] model=${MODEL} aspect=${options.aspectRatio ?? "default"} size=${options.imageSize ?? "1K(default)"} → ${formatImageInfo(info)}`,
+    `[gen OK] model=${MODEL} aspect=${options.aspectRatio ?? "default"} size=${options.imageSize ?? "1K(default)"} seed=${options.seed ?? "random"} temp=${options.temperature ?? 0.4} → ${formatImageInfo(info)}`,
   );
 
   return {
