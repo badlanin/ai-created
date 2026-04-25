@@ -39,6 +39,18 @@ COPY --from=builder --chown=nextjs:nodejs /app/node_modules/better-sqlite3 ./nod
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/bindings ./node_modules/bindings
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/file-uri-to-path ./node_modules/file-uri-to-path
 
+# sharp 是 native binding，附带 libvips 二进制和 platform-specific 子模块（linux-musl-*）
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/sharp ./node_modules/sharp
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@img ./node_modules/@img
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/color ./node_modules/color
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/color-string ./node_modules/color-string
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/color-name ./node_modules/color-name
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/color-convert ./node_modules/color-convert
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/simple-swizzle ./node_modules/simple-swizzle
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/is-arrayish ./node_modules/is-arrayish
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/detect-libc ./node_modules/detect-libc
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/semver ./node_modules/semver
+
 # 创建 data 目录并让 nextjs 用户可写
 RUN mkdir -p /app/data && chown -R nextjs:nodejs /app/data
 

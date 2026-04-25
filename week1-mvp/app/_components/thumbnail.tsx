@@ -1,6 +1,7 @@
 "use client";
 
 import { forwardRef, useState } from "react";
+import { getThumbUrl } from "@/lib/thumb-url";
 
 export interface ThumbnailProps {
   src: string;
@@ -34,6 +35,19 @@ export interface ThumbnailProps {
    * 默认显示一个灰色占位。
    */
   fallback?: string;
+  /**
+   * 是否使用服务端 webp 缩略图（默认 true）
+   *
+   * - true（默认）：自动转成 /api/thumb?path=...&w=400 走压缩缩略图，
+   *   省 25 倍带宽。仅对 /assets/* URL 生效，blob/data URL 自动跳过。
+   * - false：原图加载（用于需要全画质的场景，如点开看大图）
+   */
+  useThumb?: boolean;
+  /**
+   * 缩略图请求宽度（仅 useThumb=true 时生效）。默认 400 像素。
+   * 视显示区域大小调整：缩略图网格 = 400，列表行 = 200，icon = 100
+   */
+  thumbWidth?: number;
 }
 
 /**
@@ -59,11 +73,35 @@ export const Thumbnail = forwardRef<HTMLDivElement, ThumbnailProps>(
       onClick,
       selected = false,
       fallback,
+      useThumb = true,
+      thumbWidth = 400,
     },
     ref,
   ) {
+    // 三态加载：缩略图 → 原图（缩略图失败时回退）→ fallback（原图也失败时）
+    const [thumbErrored, setThumbErrored] = useState(false);
     const [errored, setErrored] = useState(false);
-    const displaySrc = errored && fallback ? fallback : src;
+
+    // 决定本次实际加载的 URL
+    const displaySrc = (() => {
+      if (errored && fallback) return fallback;
+      if (errored) return src; // 即使 errored，也保留尝试，让浏览器显示破图标
+      if (useThumb && !thumbErrored) {
+        const thumbUrl = getThumbUrl(src, thumbWidth);
+        // 如果转换后跟原 URL 一样（说明本身不是 /assets/* 路径），直接用原 URL
+        return thumbUrl !== src ? thumbUrl : src;
+      }
+      return src;
+    })();
+
+    function handleError() {
+      // 缩略图失败 → 退回原图
+      if (useThumb && !thumbErrored && displaySrc !== src) {
+        setThumbErrored(true);
+      } else if (!errored) {
+        setErrored(true);
+      }
+    }
 
     return (
       <div
@@ -79,12 +117,14 @@ export const Thumbnail = forwardRef<HTMLDivElement, ThumbnailProps>(
           .join(" ")}
         style={{ aspectRatio: ratio.replace("/", " / ") }}
       >
-        {/* 图片本体 */}
+        {/* 图片本体 —— 启用浏览器 lazy load + 异步解码，进一步降低首屏压力 */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={displaySrc}
           alt={alt}
-          onError={() => setErrored(true)}
+          loading="lazy"
+          decoding="async"
+          onError={handleError}
           className={`w-full h-full ${
             fit === "cover" ? "object-cover" : "object-contain"
           }`}
