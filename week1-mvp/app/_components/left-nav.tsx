@@ -91,6 +91,7 @@ export function LeftNav({
     "/admin/billing",
     "/admin/model-prices",
     "/admin/announcements",
+    "/admin/settings",
   ];
   const adminExpanded = adminPaths.some((p) => isActive(p));
   const [adminOpen, setAdminOpen] = useState(adminExpanded);
@@ -337,6 +338,11 @@ export function LeftNav({
                 href="/admin/announcements"
                 label="公告栏"
                 active={isActive("/admin/announcements")}
+              />
+              <SubItem
+                href="/admin/settings"
+                label="系统设置"
+                active={isActive("/admin/settings")}
               />
             </Collapsible>
           </>

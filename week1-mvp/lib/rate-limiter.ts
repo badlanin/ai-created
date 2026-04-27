@@ -239,3 +239,39 @@ export async function acquireToken(model: string): Promise<number> {
 export function peekNextTokenAtMs(model: string): number {
   return getBucket(model).getNextTokenReadyAtMs();
 }
+
+/* ─────────── 并发数 ─────────── */
+
+let cachedConcurrency: number | null = null;
+
+/**
+ * 从 settings 读图像生成 job 内并发数
+ *
+ * - Vertex 默认 1（串行最稳）
+ * - Gemini API 推荐 4-5（用满 RPM）
+ *
+ * 真实并发被 token bucket 节流，所以即使设很大也不会超 RPM——
+ * 只是允许多个 item 同时进入"等待 token"或"AI 算图"状态。
+ */
+export function getImageConcurrency(): number {
+  if (cachedConcurrency !== null) return cachedConcurrency;
+  try {
+    const db = getDb();
+    const row = db
+      .prepare(`SELECT value FROM settings WHERE key = 'image_concurrency'`)
+      .get() as { value: string } | undefined;
+    const n = Number(row?.value ?? "1");
+    cachedConcurrency = Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1;
+  } catch {
+    cachedConcurrency = 1;
+  }
+  return cachedConcurrency;
+}
+
+/**
+ * settings PATCH 完调一次，清缓存
+ */
+export function refreshConcurrencyFromSettings(): number {
+  cachedConcurrency = null;
+  return getImageConcurrency();
+}

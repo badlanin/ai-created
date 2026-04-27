@@ -40,7 +40,12 @@ import {
   type JobRow,
   type JobItemRow,
 } from "./jobs-db";
-import { acquireToken, peekNextTokenAtMs } from "./rate-limiter";
+import {
+  acquireToken,
+  peekNextTokenAtMs,
+  getImageConcurrency,
+} from "./rate-limiter";
+import { runWithConcurrency } from "./concurrency";
 import { getDb } from "./db";
 
 /** 单条 item 成功后 handler 返回的结果 */
@@ -110,22 +115,31 @@ async function runLoop(
     ? safeParse(job.params)
     : {};
 
-  for (let idx = 0; idx < job.total_count; idx++) {
+  // 取并发数（受 token bucket 节流，设大也不会超 RPM）
+  const concurrency = getImageConcurrency();
+  console.log(
+    `[job-runner] job ${jobId} 用并发 ${concurrency}（受 RPM 节流）`,
+  );
+
+  const indices = Array.from({ length: job.total_count }, (_, i) => i);
+
+  // 单个 item 的处理逻辑（被 N 个 worker 并发调用）
+  const processItem = async (idx: number): Promise<void> => {
     // 每个 item 前检查 job 状态
     const status = readJobStatus(jobId);
-    if (status === "canceling" || status === "canceled") {
-      console.log(`[job-runner] job ${jobId} 被取消，中止剩余 ${job.total_count - idx} 个 item`);
-      break;
-    }
-    if (status === "failed" || status === "completed") {
-      // 被其他路径终结，不处理剩下的
-      break;
+    if (
+      status === "canceling" ||
+      status === "canceled" ||
+      status === "failed" ||
+      status === "completed"
+    ) {
+      return;
     }
 
     const item = getJobItemByIdx(jobId, idx);
     if (!item) {
       console.error(`[job-runner] item ${jobId}#${idx} 丢失，跳过`);
-      continue;
+      return;
     }
 
     // 已经是终态（比如 recover 时被标 failed）就跳
@@ -134,7 +148,7 @@ async function runLoop(
       item.status === "failed" ||
       item.status === "canceled"
     ) {
-      continue;
+      return;
     }
 
     // 1) 等 rate limiter（让前端能显示"等待 Google quota"）
@@ -153,12 +167,11 @@ async function runLoop(
     const statusAfter = readJobStatus(jobId);
     if (statusAfter === "canceling" || statusAfter === "canceled") {
       // token 已经拿到但我们不用 —— 稍微浪费，但 bucket 会 refill 回来
-      // 把这个 item 标 canceled
       updateJobItem(item.id, {
         status: "canceled",
         markFinished: true,
       });
-      continue;
+      return;
     }
 
     // 2) 进入 processing
@@ -200,13 +213,16 @@ async function runLoop(
       });
     }
 
-    // 4) 刷新 job 聚合状态
+    // 4) 刷新 job 聚合状态（每个 item 完成后都刷一次，并发场景下也安全）
     try {
       recomputeJobStats(jobId);
     } catch (e) {
       console.error(`[job-runner] recomputeJobStats ${jobId} 失败:`, e);
     }
-  }
+  };
+
+  // 按并发数 fan-out 执行所有 item
+  await runWithConcurrency(indices, concurrency, processItem);
 
   // 退出循环：如果是被取消就 finalize
   const endStatus = readJobStatus(jobId);
