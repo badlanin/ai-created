@@ -5,8 +5,8 @@ import { GlobalShell } from "./_components/global-shell";
 import { getCurrentUser, ensureInitialAdmin } from "@/lib/auth";
 
 export const metadata: Metadata = {
-  title: "服装AI生图工具",
-  description: "服装AI图像工具 - 批量生成专业摄影图",
+  title: "伴娘服 AI 图像工具",
+  description: "伴娘服独立站团队内部使用的 AI 批量图像处理工具",
 };
 
 export default async function RootLayout({
