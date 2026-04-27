@@ -5,8 +5,8 @@ import { GlobalShell } from "./_components/global-shell";
 import { getCurrentUser, ensureInitialAdmin } from "@/lib/auth";
 
 export const metadata: Metadata = {
-  title: "伴娘服 AI 图像工具",
-  description: "伴娘服独立站团队内部使用的 AI 批量图像处理工具",
+  title: "服装AI生图工具",
+  description: "服装电商团队内部使用的 AI 批量图像处理工具",
 };
 
 export default async function RootLayout({
@@ -22,7 +22,7 @@ export default async function RootLayout({
 
   return (
     <html lang="zh-CN">
-      <body className="bg-gray-50 min-h-screen">
+      <body className="bg-bg-primary min-h-screen text-fg-primary">
         <AppProviders>
           {user ? (
             <GlobalShell user={user}>{children}</GlobalShell>

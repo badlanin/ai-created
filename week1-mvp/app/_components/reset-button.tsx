@@ -44,10 +44,10 @@ export function ResetButton({
   const sizeClass =
     size === "sm" ? "px-2.5 py-1 text-xs" : "px-3 py-1.5 text-sm";
   const variantClass = {
-    ghost: "text-gray-600 hover:text-gray-900 hover:bg-gray-100",
+    ghost: "text-fg-secondary hover:text-fg-primary hover:bg-bg-tertiary",
     outline:
-      "border border-gray-300 text-gray-700 hover:border-red-400 hover:text-red-700 hover:bg-red-50",
-    solid: "bg-red-600 text-white hover:bg-red-700",
+      "border border-border-default text-fg-secondary hover:border-[var(--danger)] hover:text-danger hover:bg-[var(--danger-bg)]",
+    solid: "bg-danger text-white hover:opacity-90",
   }[variant];
 
   return (
@@ -69,18 +69,18 @@ export function ResetButton({
             if (e.target === e.currentTarget) setOpen(false);
           }}
         >
-          <div className="bg-white rounded-lg max-w-md w-full shadow-xl">
-            <div className="px-5 py-4 border-b border-gray-200">
-              <h3 className="font-semibold text-gray-900">{confirmTitle}</h3>
+          <div className="bg-bg-secondary rounded-lg max-w-md w-full shadow-xl">
+            <div className="px-5 py-4 border-b border-border-subtle">
+              <h3 className="font-semibold text-fg-primary">{confirmTitle}</h3>
             </div>
-            <div className="px-5 py-4 text-sm text-gray-600 leading-relaxed">
+            <div className="px-5 py-4 text-sm text-fg-secondary leading-relaxed">
               {confirmDetail}
             </div>
-            <div className="px-5 py-3 border-t border-gray-200 flex justify-end gap-2">
+            <div className="px-5 py-3 border-t border-border-subtle flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                className="px-4 py-1.5 text-sm text-gray-600 rounded-md hover:bg-gray-100"
+                className="px-4 py-1.5 text-sm text-fg-secondary rounded-md hover:bg-bg-tertiary"
               >
                 {cancelText}
               </button>
@@ -90,7 +90,7 @@ export function ResetButton({
                   setOpen(false);
                   onConfirm();
                 }}
-                className="px-4 py-1.5 text-sm bg-red-600 text-white rounded-md hover:bg-red-700"
+                className="px-4 py-1.5 text-sm bg-danger text-white rounded-md hover:opacity-90"
               >
                 {confirmText}
               </button>

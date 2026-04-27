@@ -108,9 +108,11 @@ export const Thumbnail = forwardRef<HTMLDivElement, ThumbnailProps>(
         ref={ref}
         onClick={onClick}
         className={[
-          "relative overflow-hidden rounded-md bg-gray-100 group",
-          onClick ? "cursor-pointer" : "",
-          selected ? "ring-2 ring-blue-500 ring-offset-1" : "",
+          "relative overflow-hidden rounded-md bg-bg-tertiary border border-border-subtle group transition-colors",
+          onClick ? "cursor-pointer hover:border-border-default" : "",
+          selected
+            ? "ring-2 ring-brand-500 ring-offset-2 ring-offset-bg-primary border-transparent"
+            : "",
           className,
         ]
           .filter(Boolean)
@@ -133,7 +135,7 @@ export const Thumbnail = forwardRef<HTMLDivElement, ThumbnailProps>(
 
         {/* 错误占位 */}
         {errored && !fallback ? (
-          <div className="absolute inset-0 flex items-center justify-center text-xs text-gray-400 bg-gray-100">
+          <div className="absolute inset-0 flex items-center justify-center text-xs text-fg-tertiary bg-bg-tertiary">
             加载失败
           </div>
         ) : null}
@@ -169,16 +171,27 @@ export function ThumbnailBadge({
   children: React.ReactNode;
   tone?: "blue" | "green" | "amber" | "gray" | "red";
 }) {
+  // 深色主题：保持高对比，所有 tone 都用同色填充 + 白字
   const toneClass = {
-    blue: "bg-blue-600 text-white",
-    green: "bg-green-600 text-white",
-    amber: "bg-amber-500 text-white",
-    gray: "bg-gray-700 text-white",
-    red: "bg-red-600 text-white",
+    blue: "text-white",
+    green: "text-white",
+    amber: "text-white",
+    gray: "text-white",
+    red: "text-white",
   }[tone];
+  const bgStyle: React.CSSProperties = {
+    background: {
+      blue: "var(--brand-600)",
+      green: "var(--success)",
+      amber: "var(--warn)",
+      gray: "rgba(0, 0, 0, 0.7)",
+      red: "var(--danger)",
+    }[tone],
+  };
   return (
     <span
       className={`px-1.5 py-0.5 rounded text-[10px] font-medium leading-none ${toneClass}`}
+      style={bgStyle}
     >
       {children}
     </span>

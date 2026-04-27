@@ -98,11 +98,11 @@ export default function AnnouncementsAdminPage() {
     <main className="max-w-4xl mx-auto p-4 md:p-8">
       <header className="mb-5 flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <Megaphone size={22} className="text-blue-600" strokeWidth={2} />
+          <h1 className="text-2xl font-bold text-fg-primary flex items-center gap-2">
+            <Megaphone size={22} className="text-brand-400" strokeWidth={2} />
             公告栏管理
           </h1>
-          <p className="mt-1 text-sm text-gray-500">
+          <p className="mt-1 text-sm text-fg-tertiary">
             所有用户登录后会在页面顶部看到生效的公告。支持定时上下线、紧急样式。
           </p>
         </div>
@@ -116,9 +116,9 @@ export default function AnnouncementsAdminPage() {
       </header>
 
       {loading ? (
-        <div className="p-6 text-sm text-gray-500">加载中...</div>
+        <div className="p-6 text-sm text-fg-tertiary">加载中...</div>
       ) : items.length === 0 ? (
-        <Card className="text-center p-12 text-sm text-gray-500">
+        <Card className="text-center p-12 text-sm text-fg-tertiary">
           还没有公告。点右上角"新建公告"创建第一条。
         </Card>
       ) : (
@@ -140,14 +140,14 @@ export default function AnnouncementsAdminPage() {
                         已停用
                       </Chip>
                     )}
-                    <span className="text-[11px] text-gray-400">
+                    <span className="text-[11px] text-fg-tertiary">
                       {formatTime(a.starts_at)} → {formatTime(a.ends_at)}
                     </span>
-                    <span className="text-[11px] text-gray-400">
+                    <span className="text-[11px] text-fg-tertiary">
                       · 创建 {formatTime(a.created_at)}
                     </span>
                   </div>
-                  <p className="text-sm text-gray-800 whitespace-pre-wrap break-words leading-relaxed">
+                  <p className="text-sm text-fg-primary whitespace-pre-wrap break-words leading-relaxed">
                     {a.content}
                   </p>
                 </div>
@@ -306,21 +306,21 @@ function EditDialog({
             <option value="danger">紧急（红）</option>
           </Select>
           <div className="flex items-end gap-4">
-            <label className="flex items-center gap-2 text-xs text-gray-700">
+            <label className="flex items-center gap-2 text-xs text-fg-secondary">
               <input
                 type="checkbox"
                 checked={enabled}
                 onChange={(e) => setEnabled(e.target.checked)}
-                className="rounded border-gray-300"
+                className="rounded border-border-default"
               />
               启用
             </label>
-            <label className="flex items-center gap-2 text-xs text-gray-700">
+            <label className="flex items-center gap-2 text-xs text-fg-secondary">
               <input
                 type="checkbox"
                 checked={dismissible}
                 onChange={(e) => setDismissible(e.target.checked)}
-                className="rounded border-gray-300"
+                className="rounded border-border-default"
               />
               用户可关闭
             </label>

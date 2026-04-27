@@ -109,15 +109,15 @@ export default function AdminBillingPage() {
     <main className="max-w-6xl mx-auto p-4 md:p-8">
       <header className="mb-6 flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">团队账单</h1>
-          <p className="mt-1 text-sm text-gray-500">
+          <h1 className="text-2xl font-bold text-fg-primary">团队账单</h1>
+          <p className="mt-1 text-sm text-fg-tertiary">
             按月查看团队消费明细{" "}
             {data && (
               <span className="ml-2">
                 · 汇率 1 USD = ¥{data.usd_to_cny.toFixed(2)}{" "}
                 <a
                   href="/admin/model-prices"
-                  className="text-blue-600 underline ml-2"
+                  className="text-brand-400 underline ml-2"
                 >
                   管理单价 / 汇率
                 </a>
@@ -128,7 +128,7 @@ export default function AdminBillingPage() {
         <select
           value={month}
           onChange={(e) => setMonth(e.target.value)}
-          className="px-3 py-2 border border-gray-300 rounded text-sm"
+          className="px-3 py-2 border border-border-default rounded text-sm"
         >
           {monthOptions.map((m) => (
             <option key={m} value={m}>
@@ -139,13 +139,13 @@ export default function AdminBillingPage() {
       </header>
 
       {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
+        <div className="mb-4 p-3 bg-[var(--danger-bg)] border border-[rgba(239,68,68,0.3)] text-danger text-sm rounded">
           {error}
         </div>
       )}
 
       {loading ? (
-        <div className="text-sm text-gray-500">加载中...</div>
+        <div className="text-sm text-fg-tertiary">加载中...</div>
       ) : data ? (
         <>
           {/* 总览 */}
@@ -162,14 +162,14 @@ export default function AdminBillingPage() {
           </section>
 
           {/* 按用户 */}
-          <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-            <h2 className="text-sm font-semibold text-gray-700 mb-3">
+          <section className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle p-6 mb-6">
+            <h2 className="text-sm font-semibold text-fg-secondary mb-3">
               按成员消费（{data.by_user.length} 人）
             </h2>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-xs text-gray-500 border-b border-gray-200">
+                  <tr className="text-xs text-fg-tertiary border-b border-border-subtle">
                     <th className="text-left py-2">成员</th>
                     <th className="text-left py-2">角色</th>
                     <th className="text-right py-2">调用次数</th>
@@ -189,49 +189,49 @@ export default function AdminBillingPage() {
                     return (
                       <tr
                         key={u.user_id}
-                        className="border-b border-gray-100"
+                        className="border-b border-border-subtle"
                       >
                         <td className="py-2">
-                          <div className="font-medium text-gray-900">
+                          <div className="font-medium text-fg-primary">
                             {u.display_name || u.username}
                           </div>
-                          <div className="text-xs text-gray-500">
+                          <div className="text-xs text-fg-tertiary">
                             @{u.username}
                           </div>
                         </td>
-                        <td className="py-2 text-xs text-gray-500">
+                        <td className="py-2 text-xs text-fg-tertiary">
                           {u.role}
                         </td>
-                        <td className="py-2 text-right text-gray-700">
+                        <td className="py-2 text-right text-fg-secondary">
                           {u.call_count}
                         </td>
-                        <td className="py-2 text-right text-gray-500">
+                        <td className="py-2 text-right text-fg-tertiary">
                           {fmtTokens(u.prompt_tokens)}
                         </td>
-                        <td className="py-2 text-right text-gray-500">
+                        <td className="py-2 text-right text-fg-tertiary">
                           {fmtTokens(u.completion_tokens)}
                         </td>
-                        <td className="py-2 text-right text-gray-500">
+                        <td className="py-2 text-right text-fg-tertiary">
                           {fmtUsd(u.cost_usd)}
                         </td>
-                        <td className="py-2 text-right font-medium text-gray-900">
+                        <td className="py-2 text-right font-medium text-fg-primary">
                           {fmtCny(u.cost_cny)}
                         </td>
                         <td className="py-2 text-right text-xs">
                           {u.is_unlimited === 1 ? (
-                            <span className="text-gray-500">无限</span>
+                            <span className="text-fg-tertiary">无限</span>
                           ) : (
                             <div>
-                              <div className="text-gray-600">
+                              <div className="text-fg-secondary">
                                 / {fmtCny(u.monthly_budget_cny)}
                               </div>
                               <div
                                 className={`text-[10px] ${
                                   pct > 90
-                                    ? "text-red-600"
+                                    ? "text-danger"
                                     : pct > 70
-                                      ? "text-amber-600"
-                                      : "text-gray-500"
+                                      ? "text-warn"
+                                      : "text-fg-tertiary"
                                 }`}
                               >
                                 {pct.toFixed(0)}%
@@ -245,9 +245,9 @@ export default function AdminBillingPage() {
                 </tbody>
               </table>
             </div>
-            <p className="mt-3 text-xs text-gray-500">
+            <p className="mt-3 text-xs text-fg-tertiary">
               去{" "}
-              <a href="/admin/users" className="text-blue-600 underline">
+              <a href="/admin/users" className="text-brand-400 underline">
                 用户管理
               </a>{" "}
               设置每人月度预算
@@ -255,17 +255,17 @@ export default function AdminBillingPage() {
           </section>
 
           {/* 按模型 */}
-          <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-            <h2 className="text-sm font-semibold text-gray-700 mb-3">
+          <section className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle p-6 mb-6">
+            <h2 className="text-sm font-semibold text-fg-secondary mb-3">
               按模型 × 功能
             </h2>
             {data.by_model.length === 0 ? (
-              <div className="text-sm text-gray-500">本月无调用</div>
+              <div className="text-sm text-fg-tertiary">本月无调用</div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="text-xs text-gray-500 border-b border-gray-200">
+                    <tr className="text-xs text-fg-tertiary border-b border-border-subtle">
                       <th className="text-left py-2">模型</th>
                       <th className="text-left py-2">功能</th>
                       <th className="text-right py-2">次数</th>
@@ -277,21 +277,21 @@ export default function AdminBillingPage() {
                   </thead>
                   <tbody>
                     {data.by_model.map((m, i) => (
-                      <tr key={i} className="border-b border-gray-100">
-                        <td className="py-2 font-mono text-xs text-gray-700">
+                      <tr key={i} className="border-b border-border-subtle">
+                        <td className="py-2 font-mono text-xs text-fg-secondary">
                           {m.model}
                         </td>
-                        <td className="py-2 text-gray-700">
+                        <td className="py-2 text-fg-secondary">
                           {FEATURE_LABEL[m.feature] || m.feature}
                         </td>
                         <td className="py-2 text-right">{m.count}</td>
-                        <td className="py-2 text-right text-gray-500">
+                        <td className="py-2 text-right text-fg-tertiary">
                           {fmtTokens(m.prompt_tokens)}
                         </td>
-                        <td className="py-2 text-right text-gray-500">
+                        <td className="py-2 text-right text-fg-tertiary">
                           {fmtTokens(m.completion_tokens)}
                         </td>
-                        <td className="py-2 text-right text-gray-500">
+                        <td className="py-2 text-right text-fg-tertiary">
                           {fmtUsd(m.cost_usd)}
                         </td>
                         <td className="py-2 text-right font-medium">
@@ -307,8 +307,8 @@ export default function AdminBillingPage() {
 
           {/* 按天趋势 */}
           {data.by_day.length > 0 && (
-            <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-              <h2 className="text-sm font-semibold text-gray-700 mb-3">
+            <section className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle p-6">
+              <h2 className="text-sm font-semibold text-fg-secondary mb-3">
                 每日消费趋势
               </h2>
               <DayChart data={data.by_day} />
@@ -322,9 +322,9 @@ export default function AdminBillingPage() {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-      <div className="text-xs text-gray-500">{label}</div>
-      <div className="mt-1 text-2xl font-bold text-gray-900">{value}</div>
+    <div className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle p-4">
+      <div className="text-xs text-fg-tertiary">{label}</div>
+      <div className="mt-1 text-2xl font-bold text-fg-primary">{value}</div>
     </div>
   );
 }
@@ -349,7 +349,7 @@ function DayChart({
               className="w-6 bg-blue-400 rounded-t"
               style={{ height: `${h}%` }}
             />
-            <div className="text-[9px] text-gray-500 rotate-45 origin-top-left whitespace-nowrap">
+            <div className="text-[9px] text-fg-tertiary rotate-45 origin-top-left whitespace-nowrap">
               {d.day.slice(5)}
             </div>
           </div>

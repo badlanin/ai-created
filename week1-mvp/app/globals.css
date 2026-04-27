@@ -6,72 +6,90 @@
 @tailwind utilities;
 
 /* ════════════════════════════════════════════════════════
-   设计 token
-   Apple/iOS 极简风，以蓝为强调色，克制的灰度层级
+   深色主题设计系统 - Dark Mode Design System
+   品牌色：明亮蓝 #3b82f6
    ════════════════════════════════════════════════════════ */
 :root {
-  /* ── 强调色（所有 CTA / 选中 / 链接）── */
-  --brand-50:  #eff6ff;
-  --brand-100: #dbeafe;
-  --brand-200: #bfdbfe;
+  /* ── 深色背景层级 ── */
+  --bg-primary: #0a0a0f;       /* 页面底色 */
+  --bg-secondary: #111118;     /* 侧边栏 / 卡片底 */
+  --bg-tertiary: #1a1a24;      /* hover / muted 区块 */
+  --bg-elevated: #22222e;      /* 弹层 / dropdown 背景 */
+  --bg-card: rgba(26, 26, 36, 0.8);
+  --bg-hover: rgba(255, 255, 255, 0.04);
+
+  /* ── 品牌色（保持冷蓝）── */
   --brand-400: #60a5fa;
   --brand-500: #3b82f6;
   --brand-600: #2563eb;
   --brand-700: #1d4ed8;
+  --brand-gradient: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  --brand-glow: rgba(59, 130, 246, 0.4);
+  --brand-50-bg: rgba(59, 130, 246, 0.1);
+  --brand-100-bg: rgba(59, 130, 246, 0.15);
+
+  /* ── 文字色（深色背景下）── */
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-tertiary: #64748b;
+  --text-muted: #475569;
+  --text-on-brand: #ffffff;
+
+  /* ── 边框（半透明白）── */
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.15);
 
   /* ── 语义色 ── */
-  --success-50:  #ecfdf5;
-  --success-500: #10b981;
-  --success-600: #059669;
-  --warn-50:     #fffbeb;
-  --warn-500:    #f59e0b;
-  --warn-600:    #d97706;
-  --danger-50:   #fef2f2;
-  --danger-500:  #ef4444;
-  --danger-600:  #dc2626;
+  --success: #10b981;
+  --success-bg: rgba(16, 185, 129, 0.15);
+  --warn: #f59e0b;
+  --warn-bg: rgba(245, 158, 11, 0.15);
+  --danger: #ef4444;
+  --danger-bg: rgba(239, 68, 68, 0.15);
 
-  /* ── 灰度层级（iOS 风克制 tonal）── */
-  --gray-0:   #ffffff;
-  --gray-50:  #fafafa;
-  --gray-100: #f5f5f5;
-  --gray-150: #eeeeee;
-  --gray-200: #e5e5e5;
-  --gray-300: #d4d4d4;
-  --gray-400: #a3a3a3;
-  --gray-500: #737373;
-  --gray-600: #525252;
-  --gray-700: #404040;
-  --gray-800: #262626;
-  --gray-900: #171717;
+  /* ── Backward-compat：旧组件类还在用的 alias ── */
+  --surface-canvas: var(--bg-primary);
+  --surface-panel: var(--bg-secondary);
+  --surface-hover: var(--bg-hover);
+  --surface-muted: var(--bg-tertiary);
+  --surface-overlay: rgba(0, 0, 0, 0.7);
+  --border-base: var(--border-default);
+  --gray-0: var(--bg-secondary);
+  --gray-50: var(--bg-tertiary);
+  --gray-100: var(--bg-tertiary);
+  --gray-150: var(--bg-elevated);
+  --gray-200: var(--border-default);
+  --gray-300: var(--border-strong);
+  --gray-400: var(--text-tertiary);
+  --gray-500: var(--text-secondary);
+  --gray-600: var(--text-secondary);
+  --gray-700: var(--text-secondary);
+  --gray-800: var(--text-primary);
+  --gray-900: var(--text-primary);
+  --brand-50: var(--brand-50-bg);
+  --brand-100: var(--brand-100-bg);
+  --brand-200: rgba(59, 130, 246, 0.2);
+  --success-50: var(--success-bg);
+  --success-500: var(--success);
+  --success-600: var(--success);
+  --warn-50: var(--warn-bg);
+  --warn-500: var(--warn);
+  --warn-600: var(--warn);
+  --danger-50: var(--danger-bg);
+  --danger-500: var(--danger);
+  --danger-600: var(--danger);
 
-  /* ── 表面色（背景 / 面板 / 浮层）── */
-  --surface-canvas: var(--gray-50);        /* 页面底色 */
-  --surface-panel:  var(--gray-0);         /* 卡片 / 面板 */
-  --surface-hover:  var(--gray-100);       /* 列表 hover */
-  --surface-muted:  var(--gray-50);        /* 次级区块 */
-  --surface-overlay: rgba(17, 24, 39, 0.5); /* modal 遮罩 */
-
-  /* ── 边框 / 分割线 ── */
-  --border-subtle: var(--gray-150);
-  --border-base:   var(--gray-200);
-  --border-strong: var(--gray-300);
-
-  /* ── 文字色 ── */
-  --text-primary:   var(--gray-900);
-  --text-secondary: var(--gray-600);
-  --text-tertiary:  var(--gray-400);
-  --text-on-brand:  #ffffff;
-
-  /* ── 圆角（iOS 风较大圆角）── */
+  /* ── 圆角 ── */
   --radius-xs: 4px;
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
-  --radius-2xl: 20px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-2xl: 24px;
   --radius-full: 9999px;
 
-  /* ── 间距（4 / 8 / 12 / 16 节奏）── */
+  /* ── 间距 ── */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -81,28 +99,31 @@
   --space-8: 32px;
   --space-10: 40px;
 
-  /* ── 投影层级（克制，iOS 风柔和）── */
-  --shadow-xs:  0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-sm:  0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.03);
-  --shadow-md:  0 4px 12px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04);
-  --shadow-lg:  0 10px 30px rgba(0, 0, 0, 0.08), 0 4px 10px rgba(0, 0, 0, 0.04);
-  --shadow-xl:  0 20px 50px rgba(0, 0, 0, 0.10), 0 8px 16px rgba(0, 0, 0, 0.04);
+  /* ── 投影（深色 shadow 用更深黑）── */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.5);
+  --shadow-xl: 0 20px 50px rgba(0, 0, 0, 0.6);
+  --shadow-glow: 0 0 40px rgba(59, 130, 246, 0.15);
   --shadow-focus: 0 0 0 3px rgba(59, 130, 246, 0.25);
 
   /* ── Z 轴 ── */
-  --z-nav:     40;
-  --z-sticky:  30;
+  --z-nav: 40;
+  --z-sticky: 30;
   --z-dropdown: 50;
   --z-overlay: 60;
-  --z-modal:   70;
+  --z-modal: 70;
   --z-tooltip: 80;
-  --z-toast:   90;
+  --z-toast: 90;
 
   /* ── 动画 ── */
   --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
-  --duration-fast: 120ms;
-  --duration-base: 200ms;
-  --duration-slow: 320ms;
+  --ease-out: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --duration-fast: 150ms;
+  --duration-base: 250ms;
+  --duration-slow: 400ms;
 }
 
 /* ════════════════════════════════════════════════════════
@@ -117,62 +138,69 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-family:
-    -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+    "Inter", "Noto Sans SC", -apple-system, BlinkMacSystemFont,
     "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
     system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
   color: var(--text-primary);
-  background: var(--surface-canvas);
-  font-feature-settings:
-    "cv02" on,
-    "cv03" on,
-    "cv04" on,
-    "cv11" on,
-    "ss01" on;
+  background: var(--bg-primary);
   -webkit-tap-highlight-color: transparent;
 }
 
-/* 滚动条（Webkit）：极细、半透明 */
+/* 滚动条（Webkit）：深色主题、半透明 */
 *::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 *::-webkit-scrollbar-track {
   background: transparent;
 }
 *::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.08);
-  border-radius: 10px;
-  border: 2px solid transparent;
-  background-clip: padding-box;
+  background: var(--border-default);
+  border-radius: 8px;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.18);
-  background-clip: padding-box;
-  border: 2px solid transparent;
+  background: var(--border-strong);
 }
 
-/* 聚焦环，使用强调色 */
+/* 聚焦环（深色下用更亮的描边）*/
 *:focus-visible {
   outline: 2px solid var(--brand-500);
   outline-offset: 2px;
   border-radius: var(--radius-xs);
 }
 
+/* 默认链接 */
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
 /* ════════════════════════════════════════════════════════
-   组件基础类（Tailwind @layer 扩展）
+   通用组件类（Tailwind @layer 扩展）
+   注意：这些类沿用旧名字（btn / card / chip 等）保证兼容现有页面，
+   但内部样式全部替换为深色主题
    ════════════════════════════════════════════════════════ */
 @layer components {
-  /* 卡片容器 */
+  /* ── 卡片 ── */
   .card {
-    @apply bg-white rounded-xl border border-gray-200;
-    box-shadow: var(--shadow-xs);
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    backdrop-filter: blur(8px);
   }
   .card-elevated {
-    @apply bg-white rounded-xl border border-gray-200;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
     box-shadow: var(--shadow-md);
   }
+  .card:hover {
+    border-color: var(--border-default);
+  }
 
-  /* 按钮基础 */
+  /* ── 按钮基础 ── */
   .btn {
     display: inline-flex;
     align-items: center;
@@ -188,6 +216,7 @@ body {
       transform var(--duration-fast) var(--ease-out-quart);
     white-space: nowrap;
     user-select: none;
+    border: 1px solid transparent;
   }
   .btn:disabled {
     opacity: 0.45;
@@ -196,61 +225,67 @@ body {
   .btn:not(:disabled):active {
     transform: scale(0.97);
   }
+
   /* 按钮尺寸 */
-  .btn-sm { padding: 4px 10px; font-size: 12px; height: 28px; }
-  .btn-md { padding: 6px 14px; font-size: 13px; height: 34px; }
-  .btn-lg { padding: 10px 20px; font-size: 14px; height: 42px; }
+  .btn-sm { padding: 4px 10px; font-size: 12px; height: 30px; }
+  .btn-md { padding: 6px 14px; font-size: 13px; height: 36px; }
+  .btn-lg { padding: 10px 20px; font-size: 14px; height: 44px; }
+
   /* 按钮变体 */
   .btn-primary {
-    background: var(--brand-600);
+    background: var(--brand-gradient);
     color: #fff;
+    box-shadow: 0 0 20px var(--brand-glow);
   }
   .btn-primary:hover:not(:disabled) {
-    background: var(--brand-700);
+    box-shadow: 0 0 30px var(--brand-glow);
+    filter: brightness(1.05);
   }
   .btn-secondary {
-    background: var(--gray-100);
+    background: var(--bg-tertiary);
     color: var(--text-primary);
+    border-color: var(--border-default);
   }
   .btn-secondary:hover:not(:disabled) {
-    background: var(--gray-150);
+    background: var(--bg-elevated);
+    border-color: var(--border-strong);
   }
   .btn-outline {
     background: transparent;
-    border: 1px solid var(--border-base);
+    border-color: var(--border-default);
     color: var(--text-secondary);
   }
   .btn-outline:hover:not(:disabled) {
     border-color: var(--border-strong);
     color: var(--text-primary);
-    background: var(--surface-hover);
+    background: var(--bg-hover);
   }
   .btn-ghost {
     background: transparent;
     color: var(--text-secondary);
   }
   .btn-ghost:hover:not(:disabled) {
-    background: var(--surface-hover);
+    background: var(--bg-hover);
     color: var(--text-primary);
   }
   .btn-danger {
-    background: var(--danger-600);
+    background: var(--danger);
     color: #fff;
   }
   .btn-danger:hover:not(:disabled) {
-    background: #b91c1c;
+    background: #dc2626;
   }
   .btn-danger-outline {
     background: transparent;
-    border: 1px solid var(--border-base);
-    color: var(--danger-600);
+    border-color: var(--border-default);
+    color: var(--danger);
   }
   .btn-danger-outline:hover:not(:disabled) {
-    border-color: var(--danger-500);
-    background: var(--danger-50);
+    border-color: var(--danger);
+    background: var(--danger-bg);
   }
 
-  /* 状态 chip */
+  /* ── chip / badge ── */
   .chip {
     display: inline-flex;
     align-items: center;
@@ -261,89 +296,148 @@ body {
     font-weight: 500;
     border-radius: var(--radius-full);
     line-height: 1;
+    border: 1px solid transparent;
   }
-  .chip-brand   { background: var(--brand-50);   color: var(--brand-700); }
-  .chip-success { background: var(--success-50); color: var(--success-600); }
-  .chip-warn    { background: var(--warn-50);    color: var(--warn-600); }
-  .chip-danger  { background: var(--danger-50);  color: var(--danger-600); }
-  .chip-gray    { background: var(--gray-100);   color: var(--gray-700); }
+  .chip-brand {
+    background: var(--brand-100-bg);
+    color: var(--brand-400);
+    border-color: rgba(59, 130, 246, 0.3);
+  }
+  .chip-success {
+    background: var(--success-bg);
+    color: var(--success);
+    border-color: rgba(16, 185, 129, 0.3);
+  }
+  .chip-warn {
+    background: var(--warn-bg);
+    color: var(--warn);
+    border-color: rgba(245, 158, 11, 0.3);
+  }
+  .chip-danger {
+    background: var(--danger-bg);
+    color: var(--danger);
+    border-color: rgba(239, 68, 68, 0.3);
+  }
+  .chip-gray {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    border-color: var(--border-subtle);
+  }
 
-  /* 分区标题 */
+  /* ── 分区标题 ── */
   .section-label {
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.05em;
     text-transform: uppercase;
     color: var(--text-tertiary);
   }
 
-  /* 表单输入 */
+  /* ── 表单输入 ── */
   .input {
     width: 100%;
-    padding: 8px 12px;
+    padding: 10px 14px;
     font-size: 13px;
-    border: 1px solid var(--border-base);
+    color: var(--text-primary);
+    border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
-    background: #fff;
-    transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+    background: var(--bg-tertiary);
+    transition:
+      border-color var(--duration-fast),
+      box-shadow var(--duration-fast),
+      background var(--duration-fast);
+  }
+  .input::placeholder {
+    color: var(--text-tertiary);
+  }
+  .input:hover:not(:disabled) {
+    border-color: var(--border-strong);
   }
   .input:focus {
     outline: none;
     border-color: var(--brand-500);
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+    background: var(--bg-elevated);
+    box-shadow: var(--shadow-focus);
   }
   .input:disabled {
-    background: var(--gray-50);
+    background: var(--bg-secondary);
     color: var(--text-tertiary);
     cursor: not-allowed;
   }
+
+  /* ── select 箭头（深色版本）── */
+  .select {
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 40px;
+  }
+
+  /* ── 进度条 ── */
+  .progress-track {
+    height: 6px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-full);
+    overflow: hidden;
+  }
+  .progress-bar-fill {
+    height: 100%;
+    background: var(--brand-gradient);
+    border-radius: var(--radius-full);
+    transition: width var(--duration-base) var(--ease-out-quart);
+    box-shadow: 0 0 10px var(--brand-glow);
+  }
+
+  /* ── status dot ── */
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .status-dot-success { background: var(--success); box-shadow: 0 0 8px var(--success); }
+  .status-dot-warn    { background: var(--warn);    box-shadow: 0 0 8px var(--warn); }
+  .status-dot-danger  { background: var(--danger);  box-shadow: 0 0 8px var(--danger); }
+  .status-dot-idle    { background: var(--text-muted); }
+  .status-dot-pulse {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
 }
 
 /* ════════════════════════════════════════════════════════
-   动画关键帧
+   动画关键帧（被全局动画类引用）
    ════════════════════════════════════════════════════════ */
 @keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 @keyframes slideUp {
-  from {
-    opacity: 0;
-    transform: translateY(8px) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 @keyframes slideInRight {
-  from {
-    opacity: 0;
-    transform: translateX(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
 /* ════════════════════════════════════════════════════════
-   react-image-crop 样式微调（保留 P5-1 原有修饰）
+   react-image-crop（深色版本）
    ════════════════════════════════════════════════════════ */
 .ReactCrop__drag-handle {
   width: 14px !important;
   height: 14px !important;
-  background-color: #ffffff !important;
-  border: 2px solid var(--brand-600) !important;
-  box-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
+  background-color: var(--bg-secondary) !important;
+  border: 2px solid var(--brand-500) !important;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.6);
   opacity: 1 !important;
 }
 .ReactCrop__crop-selection {
-  border: 2px dashed var(--brand-600) !important;
+  border: 2px dashed var(--brand-500) !important;
 }
 .ReactCrop .ord-nw { top: 0; left: 0; margin-top: -7px; margin-left: -7px; cursor: nw-resize; }
 .ReactCrop .ord-n  { top: 0; left: 50%; margin-top: -7px; margin-left: -7px; cursor: n-resize; }

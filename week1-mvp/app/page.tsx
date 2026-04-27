@@ -153,30 +153,51 @@ const ADMIN_FEATURES: Feature[] = [
   },
 ];
 
-const ACCENT_CLASSES: Record<Feature["accent"], { bg: string; text: string }> = {
-  blue: { bg: "bg-blue-50", text: "text-blue-600" },
-  pink: { bg: "bg-pink-50", text: "text-pink-600" },
-  amber: { bg: "bg-amber-50", text: "text-amber-600" },
-  green: { bg: "bg-green-50", text: "text-green-600" },
+// 深色主题 accent —— 全部用半透明 + 同色描边 + 同色图标
+const ACCENT_STYLE: Record<
+  Feature["accent"],
+  { bg: string; iconColor: string; ring: string }
+> = {
+  blue: {
+    bg: "rgba(59, 130, 246, 0.15)",
+    iconColor: "var(--brand-400)",
+    ring: "rgba(59, 130, 246, 0.3)",
+  },
+  pink: {
+    bg: "rgba(236, 72, 153, 0.15)",
+    iconColor: "#f472b6",
+    ring: "rgba(236, 72, 153, 0.3)",
+  },
+  amber: {
+    bg: "rgba(245, 158, 11, 0.15)",
+    iconColor: "var(--warn)",
+    ring: "rgba(245, 158, 11, 0.3)",
+  },
+  green: {
+    bg: "rgba(16, 185, 129, 0.15)",
+    iconColor: "var(--success)",
+    ring: "rgba(16, 185, 129, 0.3)",
+  },
 };
 
 function FeatureCard({ f }: { f: Feature }) {
-  const acc = ACCENT_CLASSES[f.accent];
+  const acc = ACCENT_STYLE[f.accent];
   return (
     <Link
       href={f.href}
-      className="group card hover:border-gray-300 hover:shadow-md transition-all p-4 flex items-start gap-3"
+      className="group card hover:shadow-md transition-all p-5 flex items-start gap-3"
     >
       <div
-        className={`shrink-0 w-10 h-10 rounded-xl ${acc.bg} flex items-center justify-center transition-transform group-hover:scale-105`}
+        className="shrink-0 w-11 h-11 rounded-md flex items-center justify-center transition-transform group-hover:scale-105"
+        style={{ background: acc.bg, border: `1px solid ${acc.ring}` }}
       >
-        <f.Icon size={18} strokeWidth={2} className={acc.text} />
+        <f.Icon size={18} strokeWidth={2} style={{ color: acc.iconColor }} />
       </div>
       <div className="flex-1 min-w-0">
-        <div className="font-medium text-[14px] text-gray-900 leading-tight">
+        <div className="font-medium text-[14px] text-fg-primary leading-tight">
           {f.title}
         </div>
-        <div className="text-[12px] text-gray-500 mt-1 leading-relaxed">
+        <div className="text-[12px] text-fg-tertiary mt-1.5 leading-relaxed">
           {f.desc}
         </div>
       </div>
@@ -190,19 +211,35 @@ export default async function HomePage() {
 
   return (
     <HomeShell user={user}>
-      <div className="max-w-5xl mx-auto px-4 md:px-6 py-6 md:py-10">
-        <header className="mb-8">
-          <h1 className="text-[28px] font-bold text-gray-900 tracking-tight">
-            你好，{user.display_name || user.username}
+      <div className="mx-auto w-full max-w-7xl px-5 md:px-8 lg:px-10 py-6 md:py-10">
+        {/* 欢迎卡片 */}
+        <section
+          className="relative overflow-hidden rounded-lg border border-border-subtle bg-bg-card p-7 mb-7"
+        >
+          <div
+            aria-hidden
+            className="pointer-events-none absolute -top-1/2 -right-[10%] w-[300px] h-[300px] rounded-full"
+            style={{
+              background:
+                "radial-gradient(circle, rgba(59, 130, 246, 0.1) 0%, transparent 70%)",
+            }}
+          />
+          <h1 className="text-[26px] font-bold text-fg-primary tracking-tight">
+            你好，
+            <span className="text-brand-400">
+              {user.display_name || user.username}
+            </span>
           </h1>
-          <p className="mt-1.5 text-[14px] text-gray-500">
-            从下面选一个工作台开始 · 三栏布局（左栏导航 · 中栏操作 · 右栏参数/进度）
+          <p className="mt-1.5 text-[13px] text-fg-tertiary">
+            从下面选一个工作台开始 · 左栏导航随时切换功能
           </p>
-        </header>
+        </section>
 
         <section className="mb-10">
-          <h2 className="section-label mb-3">工作台</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <h2 className="section-label mb-3 flex items-center gap-2">
+            工作台
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {FEATURES.map((f) => (
               <FeatureCard key={f.href} f={f} />
             ))}
@@ -220,8 +257,8 @@ export default async function HomePage() {
           </section>
         )}
 
-        <footer className="mt-16 text-center text-xs text-gray-400">
-          伴娘服团队内部工具 · v0.3 (P3-2)
+        <footer className="mt-16 text-center text-xs text-fg-muted">
+          服装AI生图工具 · v0.3
         </footer>
       </div>
     </HomeShell>

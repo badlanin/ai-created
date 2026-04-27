@@ -137,37 +137,33 @@ function NotificationCard({
   onClose: () => void;
 }) {
   const { tone, title, detail } = item;
+  // 深色主题 toast：bg-bg-secondary（深色卡片）+ 同色描边 + 图标用语义色
   const toneStyles: Record<
     NotificationTone,
     {
-      bg: string;
-      border: string;
-      iconColor: string;
+      borderStyle: string;
+      iconColorVar: string;
       icon: React.ReactNode;
     }
   > = {
     error: {
-      bg: "bg-white",
-      border: "border-red-200",
-      iconColor: "text-red-500",
+      borderStyle: "rgba(239, 68, 68, 0.4)",
+      iconColorVar: "var(--danger)",
       icon: <AlertOctagon size={16} strokeWidth={2.2} />,
     },
     warn: {
-      bg: "bg-white",
-      border: "border-amber-200",
-      iconColor: "text-amber-500",
+      borderStyle: "rgba(245, 158, 11, 0.4)",
+      iconColorVar: "var(--warn)",
       icon: <AlertTriangle size={16} strokeWidth={2.2} />,
     },
     info: {
-      bg: "bg-white",
-      border: "border-blue-200",
-      iconColor: "text-blue-500",
+      borderStyle: "rgba(59, 130, 246, 0.4)",
+      iconColorVar: "var(--brand-400)",
       icon: <Info size={16} strokeWidth={2.2} />,
     },
     success: {
-      bg: "bg-white",
-      border: "border-green-200",
-      iconColor: "text-green-500",
+      borderStyle: "rgba(16, 185, 129, 0.4)",
+      iconColorVar: "var(--success)",
       icon: <CheckCircle2 size={16} strokeWidth={2.2} />,
     },
   };
@@ -175,21 +171,23 @@ function NotificationCard({
 
   return (
     <div
-      className={`relative rounded-xl border ${s.bg} ${s.border} px-3 py-2.5 pr-8 text-sm shadow-sm animate-[slideInRight_200ms_cubic-bezier(0.25,1,0.5,1)]`}
+      className="relative rounded-md border bg-bg-secondary px-3 py-2.5 pr-8 text-sm shadow-md animate-slide-in-right"
+      style={{ borderColor: s.borderStyle }}
     >
       <div className="flex items-start gap-2.5">
         <span
-          className={`mt-0.5 shrink-0 ${s.iconColor}`}
+          className="mt-0.5 shrink-0"
+          style={{ color: s.iconColorVar }}
           aria-hidden
         >
           {s.icon}
         </span>
         <div className="min-w-0 flex-1">
-          <div className="font-medium text-gray-900 leading-tight text-[13px]">
+          <div className="font-medium text-fg-primary leading-tight text-[13px]">
             {title}
           </div>
           {detail ? (
-            <div className="mt-1 text-[12px] text-gray-600 leading-relaxed whitespace-pre-wrap break-words">
+            <div className="mt-1 text-[12px] text-fg-secondary leading-relaxed whitespace-pre-wrap break-words">
               {detail}
             </div>
           ) : null}
@@ -198,7 +196,7 @@ function NotificationCard({
       <button
         onClick={onClose}
         aria-label="关闭"
-        className="absolute top-2 right-2 w-5 h-5 flex items-center justify-center rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors"
+        className="absolute top-2 right-2 w-5 h-5 flex items-center justify-center rounded hover:bg-bg-hover text-fg-tertiary hover:text-fg-primary transition-colors"
       >
         <X size={12} strokeWidth={2.2} />
       </button>

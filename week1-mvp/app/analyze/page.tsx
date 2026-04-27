@@ -108,22 +108,22 @@ export default function AnalyzePage() {
   return (
     <main className="max-w-4xl mx-auto p-4 md:p-8">
       <header className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">服饰特征解析</h1>
-        <p className="mt-1 text-sm text-gray-500">
+        <h1 className="text-2xl font-bold text-fg-primary">服饰特征解析</h1>
+        <p className="mt-1 text-sm text-fg-tertiary">
           上传正面 / 背面图，AI 提取结构化属性
         </p>
       </header>
 
-      <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+      <section className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle p-6">
         {/* 模型选择 */}
         <div className="mb-5">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
+          <label className="block text-sm font-medium text-fg-secondary mb-2">
             选择解析模型
           </label>
           {aiModels.length === 0 ? (
-            <div className="text-xs text-gray-500 p-3 bg-gray-50 rounded border border-dashed border-gray-300">
+            <div className="text-xs text-fg-tertiary p-3 bg-bg-tertiary rounded border border-dashed border-border-default">
               暂无可用模型，请让管理员在
-              <a href="/admin/ai-models" className="text-blue-600 underline">
+              <a href="/admin/ai-models" className="text-brand-400 underline">
                 AI 模型管理
               </a>
               中启用至少一个 vision 模型
@@ -139,26 +139,26 @@ export default function AnalyzePage() {
                     onClick={() => setModel(m.model_id)}
                     className={`text-left p-3 rounded-md border transition ${
                       active
-                        ? "border-blue-500 bg-blue-50 ring-1 ring-blue-500"
-                        : "border-gray-300 hover:border-gray-400"
+                        ? "border-brand-500 bg-[var(--brand-50-bg)] ring-1 ring-blue-500"
+                        : "border-border-default hover:border-border-strong"
                     }`}
                   >
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-gray-900">
+                      <span className="text-sm font-medium text-fg-primary">
                         {m.label}
                       </span>
                       {m.badge && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-600 text-white">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-brand-600 text-white">
                           {m.badge}
                         </span>
                       )}
                     </div>
                     {m.description && (
-                      <div className="text-xs text-gray-500 mt-1">
+                      <div className="text-xs text-fg-tertiary mt-1">
                         {m.description}
                       </div>
                     )}
-                    <div className="text-[10px] text-gray-400 font-mono mt-1">
+                    <div className="text-[10px] text-fg-tertiary font-mono mt-1">
                       {m.model_id}
                     </div>
                   </button>
@@ -169,7 +169,7 @@ export default function AnalyzePage() {
         </div>
 
         <div className="mb-4">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
+          <label className="block text-sm font-medium text-fg-secondary mb-2">
             上传服装图（最多 2 张）
           </label>
           <input
@@ -177,12 +177,12 @@ export default function AnalyzePage() {
             accept="image/*"
             multiple
             onChange={(e) => onPickFiles(e.target.files)}
-            className="block w-full text-sm text-gray-600
+            className="block w-full text-sm text-fg-secondary
               file:mr-4 file:py-2 file:px-4
               file:rounded-md file:border-0
               file:text-sm file:font-medium
-              file:bg-blue-50 file:text-blue-700
-              hover:file:bg-blue-100"
+              file:bg-[var(--brand-50-bg)] file:text-brand-400
+              hover:file:bg-[var(--brand-100-bg)]"
           />
         </div>
 
@@ -194,9 +194,9 @@ export default function AnalyzePage() {
                 <img
                   src={URL.createObjectURL(f)}
                   alt={`预览 ${i + 1}`}
-                  className="w-32 h-32 object-cover rounded-md border border-gray-200"
+                  className="w-32 h-32 object-cover rounded-md border border-border-subtle"
                 />
-                <div className="mt-1 text-xs text-gray-500 truncate w-32">
+                <div className="mt-1 text-xs text-fg-tertiary truncate w-32">
                   {f.name}
                 </div>
               </div>
@@ -208,8 +208,8 @@ export default function AnalyzePage() {
           onClick={handleAnalyze}
           disabled={loading || files.length === 0}
           className="inline-flex items-center px-6 py-2
-            bg-blue-600 text-white text-sm font-medium rounded-md
-            hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed
+            bg-brand-600 text-white text-sm font-medium rounded-md
+            hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed
             transition"
         >
           {loading ? (
@@ -223,7 +223,7 @@ export default function AnalyzePage() {
         </button>
 
         {error && (
-          <div className="mt-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
+          <div className="mt-4 p-3 bg-[var(--danger-bg)] border border-[rgba(239,68,68,0.3)] text-danger text-sm rounded">
             <div className="font-medium mb-1">解析失败</div>
             <div className="text-xs whitespace-pre-wrap break-all">{error}</div>
           </div>
@@ -232,9 +232,9 @@ export default function AnalyzePage() {
         {result && (
           <div className="mt-6">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-lg font-semibold text-gray-900">解析结果</h2>
+              <h2 className="text-lg font-semibold text-fg-primary">解析结果</h2>
               {elapsed !== null && (
-                <span className="text-xs text-gray-500">
+                <span className="text-xs text-fg-tertiary">
                   耗时 {(elapsed / 1000).toFixed(1)}s
                 </span>
               )}
@@ -246,12 +246,12 @@ export default function AnalyzePage() {
                 .map(([key, value]) => (
                   <div
                     key={key}
-                    className="p-3 bg-gray-50 border border-gray-200 rounded"
+                    className="p-3 bg-bg-tertiary border border-border-subtle rounded"
                   >
-                    <div className="text-xs font-medium text-gray-500 mb-1">
+                    <div className="text-xs font-medium text-fg-tertiary mb-1">
                       {key}
                     </div>
-                    <div className="text-sm text-gray-900">
+                    <div className="text-sm text-fg-primary">
                       {Array.isArray(value) ? value.join("、") : String(value)}
                     </div>
                   </div>
@@ -259,7 +259,7 @@ export default function AnalyzePage() {
             </div>
 
             <details className="mt-4">
-              <summary className="text-xs text-gray-500 cursor-pointer">
+              <summary className="text-xs text-fg-tertiary cursor-pointer">
                 查看原始 JSON
               </summary>
               <pre className="mt-2 p-3 bg-gray-900 text-green-400 text-xs rounded overflow-auto">

@@ -46,31 +46,37 @@ export function AnnouncementBar() {
   const visible = items.find((it) => !dismissedIds.has(it.id));
   if (!visible) return null;
 
+  // 深色主题：用语义色 + 半透明背景 + 同色描边
   const toneStyle = {
     info: {
-      bg: "bg-blue-50 border-b-blue-200",
-      text: "text-blue-900",
-      icon: <Info size={14} className="text-blue-600" strokeWidth={2.2} />,
+      bg: "border-b border-[rgba(59,130,246,0.3)]",
+      bgStyle: { background: "var(--brand-50-bg)" } as React.CSSProperties,
+      text: "text-brand-400",
+      icon: <Info size={14} className="text-brand-400" strokeWidth={2.2} />,
     },
     success: {
-      bg: "bg-green-50 border-b-green-200",
-      text: "text-green-900",
-      icon: <CheckCircle2 size={14} className="text-green-600" strokeWidth={2.2} />,
+      bg: "border-b border-[rgba(16,185,129,0.3)]",
+      bgStyle: { background: "var(--success-bg)" } as React.CSSProperties,
+      text: "text-success",
+      icon: <CheckCircle2 size={14} className="text-success" strokeWidth={2.2} />,
     },
     warn: {
-      bg: "bg-amber-50 border-b-amber-200",
-      text: "text-amber-900",
-      icon: <AlertTriangle size={14} className="text-amber-600" strokeWidth={2.2} />,
+      bg: "border-b border-[rgba(245,158,11,0.3)]",
+      bgStyle: { background: "var(--warn-bg)" } as React.CSSProperties,
+      text: "text-warn",
+      icon: <AlertTriangle size={14} className="text-warn" strokeWidth={2.2} />,
     },
     danger: {
-      bg: "bg-red-50 border-b-red-200",
-      text: "text-red-900",
-      icon: <AlertOctagon size={14} className="text-red-600" strokeWidth={2.2} />,
+      bg: "border-b border-[rgba(239,68,68,0.3)]",
+      bgStyle: { background: "var(--danger-bg)" } as React.CSSProperties,
+      text: "text-danger",
+      icon: <AlertOctagon size={14} className="text-danger" strokeWidth={2.2} />,
     },
   }[visible.tone] || {
-    bg: "bg-blue-50 border-b-blue-200",
-    text: "text-blue-900",
-    icon: <Info size={14} className="text-blue-600" strokeWidth={2.2} />,
+    bg: "border-b border-[rgba(59,130,246,0.3)]",
+    bgStyle: { background: "var(--brand-50-bg)" } as React.CSSProperties,
+    text: "text-brand-400",
+    icon: <Info size={14} className="text-brand-400" strokeWidth={2.2} />,
   };
 
   function dismiss() {
@@ -88,8 +94,8 @@ export function AnnouncementBar() {
   return (
     <div
       role="status"
-      className={`relative w-full border-b ${toneStyle.bg} ${toneStyle.text}`}
-      style={{ zIndex: 40 }}
+      className={`relative w-full ${toneStyle.bg} ${toneStyle.text}`}
+      style={{ zIndex: 40, ...toneStyle.bgStyle }}
     >
       <div className="px-4 py-2 pr-10 flex items-start gap-2 text-[13px] leading-relaxed">
         <span className="mt-0.5 shrink-0">{toneStyle.icon}</span>
@@ -102,7 +108,7 @@ export function AnnouncementBar() {
           type="button"
           onClick={dismiss}
           aria-label="关闭公告"
-          className="absolute right-2 top-1.5 w-6 h-6 flex items-center justify-center rounded hover:bg-black/5 text-current opacity-70 hover:opacity-100"
+          className="absolute right-2 top-1.5 w-6 h-6 flex items-center justify-center rounded hover:bg-white/10 text-current opacity-70 hover:opacity-100"
         >
           <X size={14} strokeWidth={2.2} />
         </button>

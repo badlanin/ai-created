@@ -334,10 +334,13 @@ function migrate(db: Database.Database) {
   ensureColumn(db, "models", "category", "TEXT");
   ensureColumn(db, "colors", "color_group", "TEXT");
   ensureColumn(db, "colors", "is_popular", "INTEGER NOT NULL DEFAULT 0");
+  // 场景分类（婚礼 / 户外 / 影棚 / 街拍 / 室内 等，留空表示未分类）
+  ensureColumn(db, "scenes", "category", "TEXT");
   // 新增索引
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_models_category ON models(kind, category, sort_order);
     CREATE INDEX IF NOT EXISTS idx_colors_group ON colors(color_group, sort_order);
+    CREATE INDEX IF NOT EXISTS idx_scenes_category ON scenes(category, sort_order);
   `);
 
   // 启动时恢复：把被进程重启打断的 item 标为 failed
@@ -1468,6 +1471,8 @@ interface SeedSceneEntry {
   file: string;
   name: string;
   tags?: string;
+  /** 场景分类 key，对应 SCENE_CATEGORY_LABELS（wedding / outdoor / studio / street / indoor / garden） */
+  category?: string;
   sort_order: number;
 }
 
@@ -1618,8 +1623,8 @@ function seedScenesFromAssets(db: Database.Database) {
   }
 
   const stmt = db.prepare(
-    `INSERT INTO scenes (name, image_path, tags, sort_order)
-     VALUES (@name, @image_path, @tags, @sort_order)`,
+    `INSERT INTO scenes (name, image_path, tags, category, sort_order)
+     VALUES (@name, @image_path, @tags, @category, @sort_order)`,
   );
   const tx = db.transaction(() => {
     for (const p of prepared) {
@@ -1627,6 +1632,7 @@ function seedScenesFromAssets(db: Database.Database) {
         name: p.name,
         image_path: p.image_path,
         tags: p.tags || null,
+        category: p.category || null,
         sort_order: p.sort_order,
       });
     }

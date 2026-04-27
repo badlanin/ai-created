@@ -324,8 +324,8 @@ export default function HistoryPage() {
   return (
     <main className="max-w-6xl mx-auto p-4 md:p-8">
       <header className="mb-5">
-        <h1 className="text-2xl font-bold text-gray-900">历史记录</h1>
-        <p className="mt-1 text-sm text-gray-500">
+        <h1 className="text-2xl font-bold text-fg-primary">历史记录</h1>
+        <p className="mt-1 text-sm text-fg-tertiary">
           {scope === "all" ? "全团队" : "我的"}所有任务 · 共 {total} 条
         </p>
       </header>
@@ -379,8 +379,8 @@ export default function HistoryPage() {
 
       {/* 批量工具栏（选中任何后出现） */}
       {selectedJobIds.size > 0 ? (
-        <div className="sticky top-2 z-20 mb-4 p-3 rounded-xl bg-blue-50 border border-blue-200 shadow-sm flex flex-wrap items-center gap-2 text-sm">
-          <span className="text-blue-900 font-medium">
+        <div className="sticky top-2 z-20 mb-4 p-3 rounded-xl bg-[var(--brand-50-bg)] border border-[rgba(59,130,246,0.3)] shadow-sm flex flex-wrap items-center gap-2 text-sm">
+          <span className="text-brand-400 font-medium">
             已选 {selectedJobIds.size} 个任务
           </span>
           <Button size="sm" variant="outline" onClick={selectAllOnPage}>
@@ -417,12 +417,12 @@ export default function HistoryPage() {
 
       {/* 任务列表 */}
       {loading ? (
-        <div className="p-8 text-center text-sm text-gray-400">
+        <div className="p-8 text-center text-sm text-fg-tertiary">
           <Loader2 size={16} className="inline-block animate-spin mr-1" />
           加载中…
         </div>
       ) : filteredItems.length === 0 ? (
-        <Card padding="lg" className="text-center text-sm text-gray-500">
+        <Card padding="lg" className="text-center text-sm text-fg-tertiary">
           {search.trim()
             ? "没有匹配的任务"
             : statusTab === "active"
@@ -455,7 +455,7 @@ export default function HistoryPage() {
           >
             上一页
           </Button>
-          <span className="text-gray-500 tabular-nums">
+          <span className="text-fg-tertiary tabular-nums">
             {page} / {totalPages}
           </span>
           <Button
@@ -497,7 +497,7 @@ function JobCard({
 }) {
   const featureIcon =
     job.feature === "recolor" ? (
-      <Palette size={14} strokeWidth={2} className="text-blue-600" />
+      <Palette size={14} strokeWidth={2} className="text-brand-400" />
     ) : (
       <Camera size={14} strokeWidth={2} className="text-pink-600" />
     );
@@ -545,7 +545,7 @@ function JobCard({
     <Card
       padding="none"
       className={`overflow-hidden transition ${
-        selected ? "ring-2 ring-blue-500" : "hover:border-gray-300"
+        selected ? "ring-2 ring-blue-500" : "hover:border-border-default"
       }`}
     >
       <div className="flex items-center gap-3 p-3">
@@ -555,8 +555,8 @@ function JobCard({
           onClick={onToggleSelect}
           className={`shrink-0 w-5 h-5 rounded-md border-2 flex items-center justify-center text-[10px] transition-colors ${
             selected
-              ? "bg-blue-600 border-blue-600 text-white"
-              : "bg-white border-gray-300 hover:border-gray-400"
+              ? "bg-brand-600 border-blue-600 text-white"
+              : "bg-bg-secondary border-border-default hover:border-border-strong"
           }`}
           aria-label={selected ? "取消选择" : "选择"}
         >
@@ -574,7 +574,7 @@ function JobCard({
               className="!w-12 !rounded-lg"
             />
           ) : (
-            <div className="w-12 aspect-[3/4] rounded-lg bg-gray-100 flex items-center justify-center">
+            <div className="w-12 aspect-[3/4] rounded-lg bg-bg-tertiary flex items-center justify-center">
               {featureIcon}
             </div>
           )}
@@ -583,41 +583,41 @@ function JobCard({
         {/* 主体 */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap mb-1">
-            <span className="inline-flex items-center gap-1 text-[11px] text-gray-700 font-medium">
+            <span className="inline-flex items-center gap-1 text-[11px] text-fg-secondary font-medium">
               {featureIcon}
               {featureLabel}
             </span>
             <Chip tone={statusInfo.tone} icon={statusInfo.icon}>
               {statusInfo.label}
             </Chip>
-            <span className="text-[11px] text-gray-400 tabular-nums">
+            <span className="text-[11px] text-fg-tertiary tabular-nums">
               {job.completed_count}/{job.total_count}
               {job.failed_count > 0 ? (
-                <span className="ml-1 text-red-500">
+                <span className="ml-1 text-danger">
                   · {job.failed_count} 失败
                 </span>
               ) : null}
             </span>
             {duration ? (
-              <span className="text-[11px] text-gray-400 inline-flex items-center gap-1">
+              <span className="text-[11px] text-fg-tertiary inline-flex items-center gap-1">
                 <Clock size={10} />
                 {duration}
               </span>
             ) : null}
-            <span className="text-[11px] text-gray-400">
+            <span className="text-[11px] text-fg-tertiary">
               · {formatTime(job.created_at)}
             </span>
             {showUser && job.username ? (
-              <span className="text-[11px] text-gray-500">
+              <span className="text-[11px] text-fg-tertiary">
                 @{job.display_name || job.username}
               </span>
             ) : null}
           </div>
-          <div className="text-[12px] text-gray-600 truncate">
+          <div className="text-[12px] text-fg-secondary truncate">
             {formatConfig(job) || "-"}
           </div>
           {job.error_message ? (
-            <div className="mt-1 text-[11px] text-red-600 truncate">
+            <div className="mt-1 text-[11px] text-danger truncate">
               ⚠ {job.error_message}
             </div>
           ) : null}
@@ -626,10 +626,10 @@ function JobCard({
         {/* 右侧价 + 操作 */}
         <div className="shrink-0 flex items-center gap-3">
           <div className="text-right">
-            <div className="text-[11px] text-gray-400 leading-tight">
+            <div className="text-[11px] text-fg-tertiary leading-tight">
               花费
             </div>
-            <div className="text-sm font-medium text-gray-900 tabular-nums">
+            <div className="text-sm font-medium text-fg-primary tabular-nums">
               ¥{job.total_cost_cny.toFixed(2)}
             </div>
           </div>
@@ -724,7 +724,7 @@ function JobDetailDialog({
       }
     >
       {!data ? (
-        <div className="p-4 text-center text-gray-400 text-sm">加载中…</div>
+        <div className="p-4 text-center text-fg-tertiary text-sm">加载中…</div>
       ) : (
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3 text-xs">
@@ -765,9 +765,9 @@ function JobDetailDialog({
               </div>
             </div>
           ) : null}
-          <details className="text-xs text-gray-600">
-            <summary className="cursor-pointer text-gray-500">完整参数</summary>
-            <pre className="mt-2 p-2 bg-gray-50 border border-gray-200 rounded overflow-x-auto text-[11px]">
+          <details className="text-xs text-fg-secondary">
+            <summary className="cursor-pointer text-fg-tertiary">完整参数</summary>
+            <pre className="mt-2 p-2 bg-bg-tertiary border border-border-subtle rounded overflow-x-auto text-[11px]">
               {JSON.stringify(safeParseParams(data.job.params), null, 2)}
             </pre>
           </details>
@@ -788,10 +788,10 @@ function Info({
 }) {
   return (
     <div className="space-y-0.5">
-      <div className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">
+      <div className="text-[10px] uppercase tracking-wider text-fg-tertiary font-medium">
         {label}
       </div>
-      <div className={`text-[13px] text-gray-900 ${mono ? "font-mono" : ""}`}>
+      <div className={`text-[13px] text-fg-primary ${mono ? "font-mono" : ""}`}>
         {value}
       </div>
     </div>
@@ -849,10 +849,10 @@ function AdminBulkClear({ onDone }: { onDone: () => void }) {
   }
 
   return (
-    <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-xl flex flex-wrap items-center gap-2 text-sm">
-      <Users size={14} className="text-amber-700" strokeWidth={2} />
-      <span className="text-amber-900 font-medium">管理员操作：</span>
-      <span className="text-xs text-amber-700">清空某用户的全部历史</span>
+    <div className="mb-4 p-3 bg-[var(--warn-bg)] border border-amber-200 rounded-xl flex flex-wrap items-center gap-2 text-sm">
+      <Users size={14} className="text-warn" strokeWidth={2} />
+      <span className="text-warn font-medium">管理员操作：</span>
+      <span className="text-xs text-warn">清空某用户的全部历史</span>
       <Select
         size="sm"
         value={selectedUserId === "" ? "" : String(selectedUserId)}

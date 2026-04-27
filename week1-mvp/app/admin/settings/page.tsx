@@ -189,42 +189,42 @@ export default function SettingsAdminPage() {
   return (
     <main className="max-w-4xl mx-auto p-4 md:p-8">
       <header className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">系统设置</h1>
-        <p className="mt-1 text-sm text-gray-500">
+        <h1 className="text-2xl font-bold text-fg-primary">系统设置</h1>
+        <p className="mt-1 text-sm text-fg-tertiary">
           AI Provider、限流/并发、汇率等全局参数
         </p>
       </header>
 
       {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
+        <div className="mb-4 p-3 bg-[var(--danger-bg)] border border-[rgba(239,68,68,0.3)] text-danger text-sm rounded">
           {error}
         </div>
       )}
       {savedHint && (
-        <div className="mb-4 p-3 bg-green-50 border border-green-200 text-green-700 text-sm rounded">
+        <div className="mb-4 p-3 bg-[var(--success-bg)] border border-green-200 text-success text-sm rounded">
           {savedHint}
         </div>
       )}
 
       {/* ===== AI Provider ===== */}
-      <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-        <h2 className="text-base font-semibold text-gray-800 mb-1">
+      <section className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle p-6 mb-6">
+        <h2 className="text-base font-semibold text-fg-primary mb-1">
           AI Provider 模式
         </h2>
-        <p className="text-xs text-gray-500 mb-4">
+        <p className="text-xs text-fg-tertiary mb-4">
           决定 Gemini 请求走哪条链路。Vertex = GCP 项目鉴权（默认 2 RPM/项目）；
           Gemini API = API key 直连（Tier 1 起 10 RPM/项目）。
         </p>
 
         {loading ? (
-          <div className="text-sm text-gray-500">加载中…</div>
+          <div className="text-sm text-fg-tertiary">加载中…</div>
         ) : (
           <form onSubmit={handleSaveProvider} className="space-y-4">
             {provider && (
-              <div className="p-3 rounded bg-gray-50 border border-gray-200 text-xs text-gray-600 space-y-1">
+              <div className="p-3 rounded bg-bg-tertiary border border-border-subtle text-xs text-fg-secondary space-y-1">
                 <div>
                   当前生效：
-                  <span className="ml-1 font-mono font-semibold text-gray-900">
+                  <span className="ml-1 font-mono font-semibold text-fg-primary">
                     {provider.provider === "gemini_api"
                       ? "Gemini API 直连"
                       : "Vertex AI"}
@@ -257,11 +257,11 @@ export default function SettingsAdminPage() {
             )}
 
             <fieldset>
-              <legend className="block text-sm font-medium text-gray-700 mb-2">
+              <legend className="block text-sm font-medium text-fg-secondary mb-2">
                 Provider 模式
               </legend>
               <div className="space-y-2">
-                <label className="flex items-start gap-2 p-2 rounded border border-gray-200 hover:border-gray-300 cursor-pointer has-[:checked]:border-blue-400 has-[:checked]:bg-blue-50">
+                <label className="flex items-start gap-2 p-2 rounded border border-border-subtle hover:border-border-default cursor-pointer has-[:checked]:border-blue-400 has-[:checked]:bg-[var(--brand-50-bg)]">
                   <input
                     type="radio"
                     name="provider"
@@ -271,17 +271,17 @@ export default function SettingsAdminPage() {
                     className="mt-0.5"
                   />
                   <div className="flex-1">
-                    <div className="text-sm font-medium text-gray-900">
+                    <div className="text-sm font-medium text-fg-primary">
                       Vertex AI（GCP）
                     </div>
-                    <div className="text-xs text-gray-500 mt-0.5">
+                    <div className="text-xs text-fg-tertiary mt-0.5">
                       GCP 项目 ADC 鉴权。需 GCP_PROJECT_ID + GCP_LOCATION 环境变量
                       + ADC 文件 / 绑 SA。默认 2 RPM/项目。
                     </div>
                   </div>
                 </label>
 
-                <label className="flex items-start gap-2 p-2 rounded border border-gray-200 hover:border-gray-300 cursor-pointer has-[:checked]:border-blue-400 has-[:checked]:bg-blue-50">
+                <label className="flex items-start gap-2 p-2 rounded border border-border-subtle hover:border-border-default cursor-pointer has-[:checked]:border-blue-400 has-[:checked]:bg-[var(--brand-50-bg)]">
                   <input
                     type="radio"
                     name="provider"
@@ -291,10 +291,10 @@ export default function SettingsAdminPage() {
                     className="mt-0.5"
                   />
                   <div className="flex-1">
-                    <div className="text-sm font-medium text-gray-900">
+                    <div className="text-sm font-medium text-fg-primary">
                       Gemini API 直连（推荐）
                     </div>
-                    <div className="text-xs text-gray-500 mt-0.5">
+                    <div className="text-xs text-fg-tertiary mt-0.5">
                       API key 直连。免 GCP 项目白名单。Tier 1 起约 10 RPM/项目，
                       自动按消费升 Tier。
                     </div>
@@ -304,10 +304,10 @@ export default function SettingsAdminPage() {
             </fieldset>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-fg-secondary mb-1">
                 Gemini API Key
                 {provider?.hasGeminiApiKey && (
-                  <span className="ml-2 text-xs text-gray-500 font-normal">
+                  <span className="ml-2 text-xs text-fg-tertiary font-normal">
                     (当前已配置：
                     <span className="font-mono">{provider.geminiApiKeyMask}</span>
                     )
@@ -327,7 +327,7 @@ export default function SettingsAdminPage() {
                       ? "留空 = 不修改；输入新值 = 替换"
                       : "AIza... (从 https://aistudio.google.com/app/apikey 创建)"
                   }
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm font-mono"
+                  className="flex-1 px-3 py-2 border border-border-default rounded-md text-sm font-mono"
                   autoComplete="off"
                 />
                 {provider?.hasGeminiApiKey && (
@@ -335,19 +335,19 @@ export default function SettingsAdminPage() {
                     type="button"
                     onClick={handleClearKey}
                     disabled={saving}
-                    className="px-3 py-2 text-xs text-red-600 border border-red-200 rounded hover:bg-red-50 disabled:opacity-50"
+                    className="px-3 py-2 text-xs text-danger border border-[rgba(239,68,68,0.3)] rounded hover:bg-[var(--danger-bg)] disabled:opacity-50"
                   >
                     清空
                   </button>
                 )}
               </div>
-              <p className="mt-1 text-xs text-gray-500">
+              <p className="mt-1 text-xs text-fg-tertiary">
                 创建地址：
                 <a
                   href="https://aistudio.google.com/app/apikey"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-blue-600 underline"
+                  className="text-brand-400 underline"
                 >
                   AI Studio API Keys
                 </a>
@@ -363,14 +363,14 @@ export default function SettingsAdminPage() {
                     !provider?.hasGeminiApiKey &&
                     !apiKeyInput.trim())
                 }
-                className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50"
+                className="px-4 py-2 bg-brand-600 text-white text-sm rounded-md hover:bg-brand-700 disabled:opacity-50"
               >
                 {saving ? "保存中…" : "保存 Provider"}
               </button>
               {providerForm === "gemini_api" &&
                 !provider?.hasGeminiApiKey &&
                 !apiKeyInput.trim() && (
-                  <span className="text-xs text-amber-600">
+                  <span className="text-xs text-warn">
                     切到 Gemini API 模式需要先填入 API Key
                   </span>
                 )}
@@ -380,11 +380,11 @@ export default function SettingsAdminPage() {
       </section>
 
       {/* ===== 限流 / 并发 ===== */}
-      <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-        <h2 className="text-base font-semibold text-gray-800 mb-1">
+      <section className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle p-6 mb-6">
+        <h2 className="text-base font-semibold text-fg-primary mb-1">
           图像生成 · 限流 / 并发
         </h2>
-        <p className="text-xs text-gray-500 mb-4">
+        <p className="text-xs text-fg-tertiary mb-4">
           控制 image_gen 模型的吞吐。RPM = 每分钟最多请求数；burst =
           token bucket 容量；concurrency = 单 job 内并发执行的 item 数。
           <strong>修改后立即生效，无需重启。</strong>
@@ -394,8 +394,8 @@ export default function SettingsAdminPage() {
           <div
             className={`mb-3 p-2.5 rounded text-xs ${
               provHint.startsWith("⚠️")
-                ? "bg-amber-50 border border-amber-200 text-amber-800"
-                : "bg-blue-50 border border-blue-200 text-blue-800"
+                ? "bg-[var(--warn-bg)] border border-amber-200 text-warn"
+                : "bg-[var(--brand-50-bg)] border border-[rgba(59,130,246,0.3)] text-brand-400"
             }`}
           >
             {provHint}
@@ -404,20 +404,20 @@ export default function SettingsAdminPage() {
 
         {/* 推荐快速填值 */}
         <div className="mb-4 flex flex-wrap gap-2">
-          <span className="text-xs text-gray-500 self-center mr-1">
+          <span className="text-xs text-fg-tertiary self-center mr-1">
             一键应用推荐：
           </span>
           <button
             type="button"
             onClick={() => applyRecommended("vertex")}
-            className="px-2.5 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50"
+            className="px-2.5 py-1 text-xs border border-border-default rounded hover:bg-bg-tertiary"
           >
             Vertex (2 / 1)
           </button>
           <button
             type="button"
             onClick={() => applyRecommended("gemini_api_tier1")}
-            className="px-2.5 py-1 text-xs border border-blue-300 rounded text-blue-700 hover:bg-blue-50"
+            className="px-2.5 py-1 text-xs border border-[rgba(59,130,246,0.4)] rounded text-brand-400 hover:bg-[var(--brand-50-bg)]"
           >
             Gemini API Tier 1 (10 / 4)
           </button>
@@ -433,7 +433,7 @@ export default function SettingsAdminPage() {
         <form onSubmit={handleSaveRate} className="space-y-3">
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="block text-xs text-gray-600 mb-1">
+              <label className="block text-xs text-fg-secondary mb-1">
                 每分钟请求数 (RPM)
               </label>
               <input
@@ -447,14 +447,14 @@ export default function SettingsAdminPage() {
                     image_rate_limit_per_min: e.target.value,
                   })
                 }
-                className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                className="w-full px-3 py-2 border border-border-default rounded text-sm"
               />
-              <div className="text-[10px] text-gray-400 mt-0.5">
+              <div className="text-[10px] text-fg-tertiary mt-0.5">
                 {settingMap.get("image_rate_limit_per_min")?.notes}
               </div>
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">
+              <label className="block text-xs text-fg-secondary mb-1">
                 突发上限 (burst)
               </label>
               <input
@@ -465,14 +465,14 @@ export default function SettingsAdminPage() {
                 onChange={(e) =>
                   setRateForm({ ...rateForm, image_rate_burst: e.target.value })
                 }
-                className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                className="w-full px-3 py-2 border border-border-default rounded text-sm"
               />
-              <div className="text-[10px] text-gray-400 mt-0.5">
+              <div className="text-[10px] text-fg-tertiary mt-0.5">
                 {settingMap.get("image_rate_burst")?.notes}
               </div>
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">
+              <label className="block text-xs text-fg-secondary mb-1">
                 并发数 (concurrency)
               </label>
               <input
@@ -486,9 +486,9 @@ export default function SettingsAdminPage() {
                     image_concurrency: e.target.value,
                   })
                 }
-                className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                className="w-full px-3 py-2 border border-border-default rounded text-sm"
               />
-              <div className="text-[10px] text-gray-400 mt-0.5">
+              <div className="text-[10px] text-fg-tertiary mt-0.5">
                 {settingMap.get("image_concurrency")?.notes}
               </div>
             </div>
@@ -497,7 +497,7 @@ export default function SettingsAdminPage() {
           <button
             type="submit"
             disabled={saving}
-            className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50"
+            className="px-4 py-2 bg-brand-600 text-white text-sm rounded-md hover:bg-brand-700 disabled:opacity-50"
           >
             {saving ? "保存中…" : "保存限流"}
           </button>
@@ -505,18 +505,18 @@ export default function SettingsAdminPage() {
       </section>
 
       {/* ===== 汇率 / 预算 ===== */}
-      <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-        <h2 className="text-base font-semibold text-gray-800 mb-1">
+      <section className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle p-6">
+        <h2 className="text-base font-semibold text-fg-primary mb-1">
           汇率 / 预算
         </h2>
-        <p className="text-xs text-gray-500 mb-4">
+        <p className="text-xs text-fg-tertiary mb-4">
           账单换算与新用户默认预算。
         </p>
 
         <form onSubmit={handleSaveMisc} className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-gray-600 mb-1">
+              <label className="block text-xs text-fg-secondary mb-1">
                 美元兑人民币汇率
               </label>
               <input
@@ -526,11 +526,11 @@ export default function SettingsAdminPage() {
                 onChange={(e) =>
                   setMiscForm({ ...miscForm, usd_to_cny: e.target.value })
                 }
-                className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                className="w-full px-3 py-2 border border-border-default rounded text-sm"
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">
+              <label className="block text-xs text-fg-secondary mb-1">
                 新用户默认月度预算 (CNY，0 = 无限)
               </label>
               <input
@@ -544,7 +544,7 @@ export default function SettingsAdminPage() {
                     default_budget_cny: e.target.value,
                   })
                 }
-                className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                className="w-full px-3 py-2 border border-border-default rounded text-sm"
               />
             </div>
           </div>
@@ -552,7 +552,7 @@ export default function SettingsAdminPage() {
           <button
             type="submit"
             disabled={saving}
-            className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50"
+            className="px-4 py-2 bg-brand-600 text-white text-sm rounded-md hover:bg-brand-700 disabled:opacity-50"
           >
             {saving ? "保存中…" : "保存"}
           </button>

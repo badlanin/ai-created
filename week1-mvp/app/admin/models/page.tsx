@@ -122,18 +122,18 @@ export default function ModelsAdminPage() {
   return (
     <main className="max-w-5xl mx-auto p-4 md:p-8">
       <header className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">模特形象库</h1>
-        <p className="mt-1 text-sm text-gray-500">
+        <h1 className="text-2xl font-bold text-fg-primary">模特形象库</h1>
+        <p className="mt-1 text-sm text-fg-tertiary">
           模特的身份参考图（脸 / 肤色 / 发型 / 体型）。
           支持 <strong>PNG（推荐透明底）</strong> 或 <strong>JPG</strong>。
         </p>
-        <p className="mt-1 text-xs text-gray-500">
+        <p className="mt-1 text-xs text-fg-tertiary">
           💡 透明底（PNG 抠图后）合成效果最干净；带背景的图也能用，AI 会自己识别主体。抠图工具推荐：
           <a
             href="https://www.remove.bg/zh"
             target="_blank"
             rel="noopener"
-            className="text-blue-600 underline mx-1"
+            className="text-brand-400 underline mx-1"
           >
             Remove.bg
           </a>
@@ -142,7 +142,7 @@ export default function ModelsAdminPage() {
             href="https://www.pixelcut.ai/"
             target="_blank"
             rel="noopener"
-            className="text-blue-600 underline mx-1"
+            className="text-brand-400 underline mx-1"
           >
             Pixelcut
           </a>
@@ -151,20 +151,20 @@ export default function ModelsAdminPage() {
       </header>
 
       {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
+        <div className="mb-4 p-3 bg-[var(--danger-bg)] border border-[rgba(239,68,68,0.3)] text-danger text-sm rounded">
           {error}
         </div>
       )}
 
-      <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-        <h2 className="text-sm font-semibold text-gray-700 mb-3">
+      <section className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle p-6 mb-6">
+        <h2 className="text-sm font-semibold text-fg-secondary mb-3">
           新增模特形象
         </h2>
         <form onSubmit={handleUpload} className="space-y-3">
           <div>
-            <label className="block text-xs text-gray-600 mb-1">
-              图片 <span className="text-red-500">*</span>
-              <span className="ml-2 text-gray-400 font-normal">
+            <label className="block text-xs text-fg-secondary mb-1">
+              图片 <span className="text-danger">*</span>
+              <span className="ml-2 text-fg-tertiary font-normal">
                 PNG（推荐透明底）/ JPG / WebP
               </span>
             </label>
@@ -173,12 +173,12 @@ export default function ModelsAdminPage() {
               type="file"
               accept="image/png,image/jpeg,image/webp"
               onChange={(e) => setFile(e.target.files?.[0] || null)}
-              className="block w-full text-sm text-gray-600
+              className="block w-full text-sm text-fg-secondary
                 file:mr-4 file:py-2 file:px-4
                 file:rounded-md file:border-0
                 file:text-sm file:font-medium
-                file:bg-blue-50 file:text-blue-700
-                hover:file:bg-blue-100"
+                file:bg-[var(--brand-50-bg)] file:text-brand-400
+                hover:file:bg-[var(--brand-100-bg)]"
             />
             {file && (
               <div className="mt-2 relative inline-block w-40">
@@ -198,19 +198,19 @@ export default function ModelsAdminPage() {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-gray-600 mb-1">
-                名称 <span className="text-red-500">*</span>
+              <label className="block text-xs text-fg-secondary mb-1">
+                名称 <span className="text-danger">*</span>
               </label>
               <input
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="如：亚洲长发女模 A"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">
+              <label className="block text-xs text-fg-secondary mb-1">
                 标签（逗号分隔）
               </label>
               <input
@@ -218,17 +218,17 @@ export default function ModelsAdminPage() {
                 value={tags}
                 onChange={(e) => setTags(e.target.value)}
                 placeholder="如：亚洲,长发,清秀"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
               />
             </div>
           </div>
           <div className="grid grid-cols-4 gap-3">
             <div>
-              <label className="block text-xs text-gray-600 mb-1">分类</label>
+              <label className="block text-xs text-fg-secondary mb-1">分类</label>
               <select
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm bg-white"
+                className="w-full px-3 py-2 border border-border-default rounded-md text-sm bg-bg-secondary"
               >
                 {CATEGORY_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>
@@ -238,44 +238,44 @@ export default function ModelsAdminPage() {
               </select>
             </div>
             <div className="col-span-2">
-              <label className="block text-xs text-gray-600 mb-1">备注</label>
+              <label className="block text-xs text-fg-secondary mb-1">备注</label>
               <input
                 type="text"
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">排序</label>
+              <label className="block text-xs text-fg-secondary mb-1">排序</label>
               <input
                 type="number"
                 value={sortOrder}
                 onChange={(e) => setSortOrder(Number(e.target.value))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
               />
             </div>
           </div>
           <button
             type="submit"
             disabled={uploading || !file || !name.trim()}
-            className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50"
+            className="px-4 py-2 bg-brand-600 text-white text-sm rounded-md hover:bg-brand-700 disabled:opacity-50"
           >
             {uploading ? "上传中..." : "新增"}
           </button>
         </form>
       </section>
 
-      <section className="bg-white rounded-lg shadow-sm border border-gray-200">
-        <div className="px-6 py-3 border-b border-gray-200">
-          <h2 className="text-sm font-semibold text-gray-700">
+      <section className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle">
+        <div className="px-6 py-3 border-b border-border-subtle">
+          <h2 className="text-sm font-semibold text-fg-secondary">
             已有模特 ({items.length})
           </h2>
         </div>
         {loading ? (
-          <div className="p-6 text-sm text-gray-500">加载中...</div>
+          <div className="p-6 text-sm text-fg-tertiary">加载中...</div>
         ) : items.length === 0 ? (
-          <div className="p-6 text-sm text-gray-500">
+          <div className="p-6 text-sm text-fg-tertiary">
             还没有模特，先上传至少一个
           </div>
         ) : (
@@ -313,7 +313,7 @@ function IdentityCard({
   });
 
   return (
-    <li className="border border-gray-200 rounded-lg overflow-hidden">
+    <li className="border border-border-subtle rounded-lg overflow-hidden">
       <Thumbnail
         src={item.image_url}
         alt={item.name}
@@ -326,26 +326,26 @@ function IdentityCard({
           <input
             value={draft.name}
             onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-            className="w-full px-2 py-1 border border-gray-300 rounded text-xs"
+            className="w-full px-2 py-1 border border-border-default rounded text-xs"
           />
           <input
             value={draft.tags}
             onChange={(e) => setDraft({ ...draft, tags: e.target.value })}
             placeholder="标签"
-            className="w-full px-2 py-1 border border-gray-300 rounded text-xs"
+            className="w-full px-2 py-1 border border-border-default rounded text-xs"
           />
           <input
             value={draft.notes}
             onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
             placeholder="备注"
-            className="w-full px-2 py-1 border border-gray-300 rounded text-xs"
+            className="w-full px-2 py-1 border border-border-default rounded text-xs"
           />
           <select
             value={draft.category}
             onChange={(e) =>
               setDraft({ ...draft, category: e.target.value })
             }
-            className="w-full px-2 py-1 border border-gray-300 rounded text-xs bg-white"
+            className="w-full px-2 py-1 border border-border-default rounded text-xs bg-bg-secondary"
           >
             {CATEGORY_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
@@ -363,13 +363,13 @@ function IdentityCard({
                 });
                 setEditing(false);
               }}
-              className="flex-1 px-2 py-1 bg-blue-600 text-white text-xs rounded"
+              className="flex-1 px-2 py-1 bg-brand-600 text-white text-xs rounded"
             >
               保存
             </button>
             <button
               onClick={() => setEditing(false)}
-              className="px-2 py-1 text-gray-600 text-xs rounded hover:bg-gray-100"
+              className="px-2 py-1 text-fg-secondary text-xs rounded hover:bg-bg-tertiary"
             >
               取消
             </button>
@@ -377,10 +377,10 @@ function IdentityCard({
         </div>
       ) : (
         <div className="p-3">
-          <div className="text-sm font-medium text-gray-900 truncate flex items-center gap-1.5">
+          <div className="text-sm font-medium text-fg-primary truncate flex items-center gap-1.5">
             <span className="truncate">{item.name}</span>
             {item.category_label && (
-              <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
+              <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-[var(--brand-50-bg)] text-brand-400 border border-[rgba(59,130,246,0.3)]">
                 {item.category_label}
               </span>
             )}
@@ -390,7 +390,7 @@ function IdentityCard({
               {item.tags.split(",").map((t, i) => (
                 <span
                   key={i}
-                  className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600"
+                  className="text-[10px] px-1.5 py-0.5 rounded bg-bg-tertiary text-fg-secondary"
                 >
                   {t.trim()}
                 </span>
@@ -398,20 +398,20 @@ function IdentityCard({
             </div>
           )}
           {item.notes && (
-            <div className="text-xs text-gray-500 mt-1 truncate">
+            <div className="text-xs text-fg-tertiary mt-1 truncate">
               {item.notes}
             </div>
           )}
           <div className="flex gap-2 mt-2">
             <button
               onClick={() => setEditing(true)}
-              className="text-xs text-gray-600 hover:text-gray-900"
+              className="text-xs text-fg-secondary hover:text-fg-primary"
             >
               编辑
             </button>
             <button
               onClick={() => onDelete(item.id)}
-              className="text-xs text-red-600 hover:text-red-800"
+              className="text-xs text-danger hover:text-red-800"
             >
               删除
             </button>

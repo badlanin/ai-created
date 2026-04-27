@@ -105,21 +105,21 @@ export default function MaterialsAdminPage() {
     <main className="max-w-5xl mx-auto p-4 md:p-8">
       <header className="mb-6 flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">面料材质库</h1>
-          <p className="mt-1 text-sm text-gray-500">
+          <h1 className="text-2xl font-bold text-fg-primary">面料材质库</h1>
+          <p className="mt-1 text-sm text-fg-tertiary">
             每种材质的详细描述和视觉特征。换色 / 换装时会根据款式解析自动匹配，并注入 Prompt
           </p>
         </div>
         <button
           onClick={() => setShowForm((v) => !v)}
-          className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700"
+          className="px-4 py-2 bg-brand-600 text-white text-sm rounded-md hover:bg-brand-700"
         >
           {showForm ? "取消" : "+ 添加材质"}
         </button>
       </header>
 
       {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
+        <div className="mb-4 p-3 bg-[var(--danger-bg)] border border-[rgba(239,68,68,0.3)] text-danger text-sm rounded">
           {error}
         </div>
       )}
@@ -134,16 +134,16 @@ export default function MaterialsAdminPage() {
         />
       )}
 
-      <section className="bg-white rounded-lg shadow-sm border border-gray-200">
-        <div className="px-6 py-3 border-b border-gray-200">
-          <h2 className="text-sm font-semibold text-gray-800">
-            全部材质 <span className="text-gray-400">({items.length})</span>
+      <section className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle">
+        <div className="px-6 py-3 border-b border-border-subtle">
+          <h2 className="text-sm font-semibold text-fg-primary">
+            全部材质 <span className="text-fg-tertiary">({items.length})</span>
           </h2>
         </div>
         {loading ? (
-          <div className="p-6 text-sm text-gray-500">加载中...</div>
+          <div className="p-6 text-sm text-fg-tertiary">加载中...</div>
         ) : items.length === 0 ? (
-          <div className="p-6 text-sm text-gray-500">暂无</div>
+          <div className="p-6 text-sm text-fg-tertiary">暂无</div>
         ) : (
           <ul className="divide-y divide-gray-200">
             {items.map((m) => (
@@ -178,43 +178,43 @@ function MaterialForm({
     onChange({ ...value, [k]: v });
 
   return (
-    <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+    <section className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle p-6 mb-6">
       <form onSubmit={onSubmit} className="space-y-3">
         <div className="grid grid-cols-3 gap-3">
           <div>
-            <label className="block text-xs text-gray-600 mb-1">
-              名称 <span className="text-red-500">*</span>
+            <label className="block text-xs text-fg-secondary mb-1">
+              名称 <span className="text-danger">*</span>
             </label>
             <input
               type="text"
               value={value.name}
               onChange={(e) => set("name", e.target.value)}
               placeholder="如：雪纺"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+              className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
             />
           </div>
           <div>
-            <label className="block text-xs text-gray-600 mb-1">英文名</label>
+            <label className="block text-xs text-fg-secondary mb-1">英文名</label>
             <input
               type="text"
               value={value.english_name || ""}
               onChange={(e) => set("english_name", e.target.value)}
               placeholder="如：chiffon"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+              className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
             />
           </div>
           <div>
-            <label className="block text-xs text-gray-600 mb-1">排序</label>
+            <label className="block text-xs text-fg-secondary mb-1">排序</label>
             <input
               type="number"
               value={value.sort_order}
               onChange={(e) => set("sort_order", Number(e.target.value))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+              className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
             />
           </div>
         </div>
         <div>
-          <label className="block text-xs text-gray-600 mb-1">
+          <label className="block text-xs text-fg-secondary mb-1">
             别名 / 关键词（逗号分隔，用于自动匹配）
           </label>
           <input
@@ -222,66 +222,66 @@ function MaterialForm({
             value={value.aliases || ""}
             onChange={(e) => set("aliases", e.target.value)}
             placeholder="如：雪纺,chiffon,纱,轻纱,乔其纱"
-            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+            className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
           />
         </div>
         <div>
-          <label className="block text-xs text-gray-600 mb-1">
+          <label className="block text-xs text-fg-secondary mb-1">
             简短说明（UI 显示）
           </label>
           <input
             type="text"
             value={value.description || ""}
             onChange={(e) => set("description", e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+            className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
           />
         </div>
         <div>
-          <label className="block text-xs text-gray-600 mb-1">
+          <label className="block text-xs text-fg-secondary mb-1">
             视觉特征（注入 Prompt）
           </label>
           <textarea
             value={value.visual_traits || ""}
             onChange={(e) => set("visual_traits", e.target.value)}
             rows={3}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+            className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
           />
         </div>
         <div>
-          <label className="block text-xs text-gray-600 mb-1">光线特性</label>
+          <label className="block text-xs text-fg-secondary mb-1">光线特性</label>
           <textarea
             value={value.light_behavior || ""}
             onChange={(e) => set("light_behavior", e.target.value)}
             rows={2}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+            className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
           />
         </div>
         <div>
-          <label className="block text-xs text-gray-600 mb-1">
+          <label className="block text-xs text-fg-secondary mb-1">
             纹理 / 编织规则
           </label>
           <textarea
             value={value.texture_rules || ""}
             onChange={(e) => set("texture_rules", e.target.value)}
             rows={2}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+            className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
           />
         </div>
         <div>
-          <label className="block text-xs text-gray-600 mb-1">
+          <label className="block text-xs text-fg-secondary mb-1">
             禁止画成（反向约束）
           </label>
           <textarea
             value={value.dont_confuse_with || ""}
             onChange={(e) => set("dont_confuse_with", e.target.value)}
             rows={2}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+            className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
           />
         </div>
         <button
           type="submit"
           disabled={submitting || !value.name.trim()}
-          className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50"
+          className="px-4 py-2 bg-brand-600 text-white text-sm rounded-md hover:bg-brand-700 disabled:opacity-50"
         >
           {submitting ? "保存中..." : submitLabel}
         </button>
@@ -315,7 +315,7 @@ function MaterialRow({
 
   if (editing) {
     return (
-      <li className="p-4 bg-blue-50">
+      <li className="p-4 bg-[var(--brand-50-bg)]">
         <MaterialForm
           value={draft}
           onChange={setDraft}
@@ -329,7 +329,7 @@ function MaterialRow({
         />
         <button
           onClick={() => setEditing(false)}
-          className="mt-2 px-3 py-1 text-gray-600 text-xs rounded hover:bg-gray-100"
+          className="mt-2 px-3 py-1 text-fg-secondary text-xs rounded hover:bg-bg-tertiary"
         >
           取消编辑
         </button>
@@ -342,33 +342,33 @@ function MaterialRow({
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-gray-900">
+            <span className="text-sm font-medium text-fg-primary">
               {item.name}
             </span>
             {item.english_name && (
-              <span className="text-xs text-gray-500 font-mono">
+              <span className="text-xs text-fg-tertiary font-mono">
                 {item.english_name}
               </span>
             )}
           </div>
           {item.description && (
-            <div className="text-xs text-gray-500 mt-0.5">
+            <div className="text-xs text-fg-tertiary mt-0.5">
               {item.description}
             </div>
           )}
           {item.aliases && (
-            <div className="text-[10px] text-gray-400 mt-1">
+            <div className="text-[10px] text-fg-tertiary mt-1">
               匹配词: {item.aliases}
             </div>
           )}
           <button
             onClick={() => setExpanded((v) => !v)}
-            className="mt-1 text-xs text-blue-600 hover:underline"
+            className="mt-1 text-xs text-brand-400 hover:underline"
           >
             {expanded ? "收起详情" : "查看详细属性"}
           </button>
           {expanded && (
-            <div className="mt-2 space-y-1 text-xs text-gray-700 bg-gray-50 p-3 rounded border border-gray-200">
+            <div className="mt-2 space-y-1 text-xs text-fg-secondary bg-bg-tertiary p-3 rounded border border-border-subtle">
               {item.visual_traits && (
                 <div>
                   <b>视觉特征：</b>
@@ -388,7 +388,7 @@ function MaterialRow({
                 </div>
               )}
               {item.dont_confuse_with && (
-                <div className="text-red-600">
+                <div className="text-danger">
                   <b>禁止画成：</b>
                   {item.dont_confuse_with}
                 </div>
@@ -399,13 +399,13 @@ function MaterialRow({
         <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={() => setEditing(true)}
-            className="text-xs text-gray-600 hover:text-gray-900 px-2 py-1"
+            className="text-xs text-fg-secondary hover:text-fg-primary px-2 py-1"
           >
             编辑
           </button>
           <button
             onClick={() => onDelete(item.id)}
-            className="text-xs text-red-600 hover:text-red-800 px-2 py-1"
+            className="text-xs text-danger hover:text-red-800 px-2 py-1"
           >
             删除
           </button>

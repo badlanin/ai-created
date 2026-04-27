@@ -54,7 +54,7 @@ export function NavBar({ user }: { user: NavUser }) {
         <div className="flex items-center justify-between h-14">
           <div className="flex items-center gap-1 overflow-x-auto">
             <Link href="/" className="font-semibold text-gray-900 mr-4 whitespace-nowrap">
-              伴娘服 AI
+              服装AI生图工具
             </Link>
             {NAV_ITEMS.map((item) => (
               <Link

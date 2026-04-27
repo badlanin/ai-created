@@ -169,7 +169,7 @@ export function TaskViewport({
   return (
     <div className="flex flex-col h-full">
       {/* 顶部条：返回 + 状态 */}
-      <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100 bg-white/80 backdrop-blur-sm sticky top-0 z-10">
+      <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-border-subtle bg-bg-secondary/80 backdrop-blur-sm sticky top-0 z-10">
         <div className="flex items-center gap-2.5 min-w-0">
           <Button
             variant="ghost"
@@ -179,9 +179,9 @@ export function TaskViewport({
           >
             返回配置
           </Button>
-          <div className="h-4 w-px bg-gray-200" />
+          <div className="h-4 w-px bg-bg-elevated" />
           <StatusChip status={job.status} />
-          <span className="text-[11px] text-gray-400 font-mono">
+          <span className="text-[11px] text-fg-tertiary font-mono">
             #{job.id.slice(0, 8)}
           </span>
         </div>
@@ -217,22 +217,22 @@ export function TaskViewport({
           <Card padding="md" elevated>
             <div className="flex items-center justify-between gap-3 mb-3">
               <div>
-                <div className="text-[11px] text-gray-500 uppercase tracking-wider font-medium">
+                <div className="text-[11px] text-fg-tertiary uppercase tracking-wider font-medium">
                   总进度
                 </div>
-                <div className="mt-0.5 text-3xl font-semibold text-gray-900 tabular-nums">
+                <div className="mt-0.5 text-3xl font-semibold text-fg-primary tabular-nums">
                   {job.completed_count}
-                  <span className="text-gray-400 text-xl font-normal">
+                  <span className="text-fg-tertiary text-xl font-normal">
                     {" "}
                     / {job.total_count}
                   </span>
                 </div>
               </div>
               <div className="text-right">
-                <div className="text-[11px] text-gray-500 uppercase tracking-wider font-medium">
+                <div className="text-[11px] text-fg-tertiary uppercase tracking-wider font-medium">
                   累计成本
                 </div>
-                <div className="mt-0.5 text-3xl font-semibold text-gray-900 tabular-nums">
+                <div className="mt-0.5 text-3xl font-semibold text-fg-primary tabular-nums">
                   ¥{job.total_cost_cny.toFixed(2)}
                 </div>
               </div>
@@ -247,7 +247,7 @@ export function TaskViewport({
               ]}
             />
 
-            <div className="mt-3 flex flex-wrap gap-3 text-[11px] text-gray-500">
+            <div className="mt-3 flex flex-wrap gap-3 text-[11px] text-fg-tertiary">
               <span className="inline-flex items-center gap-1.5">
                 <Clock size={12} strokeWidth={2} />
                 耗时 {formatDuration(elapsedMs)}
@@ -256,12 +256,12 @@ export function TaskViewport({
                 <span>预估剩余 ~{formatDuration(remainingMs)}</span>
               ) : null}
               {failed.length > 0 ? (
-                <span className="text-red-600">
+                <span className="text-danger">
                   {failed.length} 张失败
                 </span>
               ) : null}
               {canceled.length > 0 ? (
-                <span className="text-gray-400">
+                <span className="text-fg-tertiary">
                   {canceled.length} 张跳过
                 </span>
               ) : null}
@@ -269,8 +269,8 @@ export function TaskViewport({
 
             {/* 等待 quota 倒计时 */}
             {running && waiting && nextTokenReadyAtMs ? (
-              <div className="mt-3 flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200">
-                <div className="flex items-center gap-2 text-[12px] text-amber-800">
+              <div className="mt-3 flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-[var(--warn-bg)] border border-amber-200">
+                <div className="flex items-center gap-2 text-[12px] text-warn">
                   <Clock
                     size={13}
                     strokeWidth={2.2}
@@ -278,7 +278,7 @@ export function TaskViewport({
                   />
                   正在等待 Google quota 刷新…
                 </div>
-                <span className="text-[12px] font-mono text-amber-700 tabular-nums">
+                <span className="text-[12px] font-mono text-warn tabular-nums">
                   下个 token {formatCountdown(nextTokenReadyAtMs + clockSkew - Date.now())}
                 </span>
               </div>
@@ -286,9 +286,9 @@ export function TaskViewport({
 
             {/* 正在生成哪张的提示 */}
             {running && processing ? (
-              <div className="mt-2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-blue-50 border border-blue-200">
-                <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-                <span className="text-[12px] text-blue-900">
+              <div className="mt-2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[var(--brand-50-bg)] border border-[rgba(59,130,246,0.3)]">
+                <span className="inline-block w-2 h-2 rounded-full bg-brand-500 animate-pulse" />
+                <span className="text-[12px] text-brand-400">
                   正在生成：<b>{processing.label}</b>
                 </span>
               </div>
@@ -298,8 +298,8 @@ export function TaskViewport({
           {/* 结果工具栏 */}
           {completed.length > 0 ? (
             <div className="flex flex-wrap items-center gap-2 px-1">
-              <span className="text-sm font-medium text-gray-700">
-                已完成 <span className="text-gray-400">({completed.length})</span>
+              <span className="text-sm font-medium text-fg-secondary">
+                已完成 <span className="text-fg-tertiary">({completed.length})</span>
               </span>
               <div className="flex-1" />
               <Button
@@ -373,8 +373,8 @@ export function TaskViewport({
                           }}
                           className={`w-5 h-5 rounded-md border-2 flex items-center justify-center text-[10px] transition-colors ${
                             isSel
-                              ? "bg-blue-600 border-blue-600 text-white"
-                              : "bg-white/90 border-white"
+                              ? "bg-brand-600 border-transparent text-white"
+                              : "bg-bg-elevated/90 border-white"
                           }`}
                         >
                           {isSel ? "✓" : ""}
@@ -420,7 +420,7 @@ export function TaskViewport({
               })}
             </div>
           ) : (
-            <div className="p-10 text-center text-sm text-gray-400 bg-white rounded-xl border border-dashed border-gray-200">
+            <div className="p-10 text-center text-sm text-fg-tertiary bg-bg-secondary rounded-xl border border-dashed border-border-subtle">
               暂无任务项
             </div>
           )}
@@ -428,7 +428,7 @@ export function TaskViewport({
           {/* 结束总结 */}
           {terminal ? (
             <Card padding="md" className="text-center">
-              <div className="inline-flex items-center gap-2 text-sm text-gray-700">
+              <div className="inline-flex items-center gap-2 text-sm text-fg-secondary">
                 {job.status === "completed" ? (
                   <>
                     <CheckCircle2 size={16} className="text-green-500" />
@@ -436,7 +436,7 @@ export function TaskViewport({
                   </>
                 ) : job.status === "canceled" ? (
                   <>
-                    <CircleOff size={16} className="text-gray-400" />
+                    <CircleOff size={16} className="text-fg-tertiary" />
                     任务已停止
                   </>
                 ) : (
@@ -445,8 +445,8 @@ export function TaskViewport({
                     任务失败
                   </>
                 )}
-                <span className="text-gray-400">·</span>
-                <span className="text-gray-500">
+                <span className="text-fg-tertiary">·</span>
+                <span className="text-fg-tertiary">
                   完成 {job.completed_count} · 失败 {job.failed_count} ·
                   跳过 {job.canceled_count}
                 </span>
@@ -498,31 +498,31 @@ function PlaceholderCard({
 }) {
   const cfg = {
     queued: {
-      border: "border-gray-200",
-      bg: "bg-gray-50",
-      dotColor: "bg-gray-300",
-      text: "text-gray-400",
+      border: "border-border-subtle",
+      bg: "bg-bg-tertiary",
+      dotColor: "bg-fg-muted",
+      text: "text-fg-tertiary",
       label: "排队中",
     },
     wait: {
       border: "border-amber-200",
-      bg: "bg-amber-50",
+      bg: "bg-[var(--warn-bg)]",
       dotColor: "bg-amber-400 animate-pulse",
-      text: "text-amber-700",
+      text: "text-warn",
       label: "等 quota",
     },
     proc: {
-      border: "border-blue-300",
-      bg: "bg-blue-50",
-      dotColor: "bg-blue-500 animate-pulse",
-      text: "text-blue-700",
+      border: "border-[rgba(59,130,246,0.4)]",
+      bg: "bg-[var(--brand-50-bg)]",
+      dotColor: "bg-brand-500 animate-pulse",
+      text: "text-brand-400",
       label: "生成中",
     },
     fail: {
       border: "border-red-300",
-      bg: "bg-red-50",
+      bg: "bg-[var(--danger-bg)]",
       dotColor: "bg-red-500",
-      text: "text-red-700",
+      text: "text-danger",
       label: "失败",
     },
   }[state];
@@ -533,7 +533,7 @@ function PlaceholderCard({
     >
       <span className={`inline-block w-2 h-2 rounded-full ${cfg.dotColor}`} />
       <span className={`text-[11px] font-medium ${cfg.text}`}>{cfg.label}</span>
-      <span className="text-[10px] text-gray-500 text-center truncate max-w-full px-2">
+      <span className="text-[10px] text-fg-tertiary text-center truncate max-w-full px-2">
         {label}
       </span>
       {error ? (

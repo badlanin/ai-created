@@ -1,7 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Landmark, Upload, X } from "lucide-react";
 import { Thumbnail, ThumbnailBadge } from "@/app/_components/thumbnail";
+import {
+  CollapsibleSection,
+  Dropzone,
+} from "@/app/_components/ui";
+import {
+  SCENE_CATEGORY_LABELS,
+  SCENE_CATEGORY_LIST,
+  SCENE_CATEGORY_ORDER,
+} from "@/lib/scene-categories";
 
 type Scene = {
   id: number;
@@ -10,6 +20,8 @@ type Scene = {
   image_url: string;
   tags: string | null;
   notes: string | null;
+  category: string | null;
+  category_label: string | null;
   sort_order: number;
 };
 
@@ -20,6 +32,7 @@ export default function ScenesAdminPage() {
 
   const [file, setFile] = useState<File | null>(null);
   const [name, setName] = useState("");
+  const [category, setCategory] = useState<string>(""); // 空 = 未分类
   const [tags, setTags] = useState("");
   const [notes, setNotes] = useState("");
   const [sortOrder, setSortOrder] = useState(0);
@@ -55,6 +68,7 @@ export default function ScenesAdminPage() {
       const fd = new FormData();
       fd.append("image", file);
       fd.append("name", name.trim());
+      if (category) fd.append("category", category);
       if (tags.trim()) fd.append("tags", tags.trim());
       if (notes.trim()) fd.append("notes", notes.trim());
       fd.append("sort_order", String(sortOrder));
@@ -63,13 +77,10 @@ export default function ScenesAdminPage() {
       if (!res.ok) throw new Error((await res.json()).error || res.statusText);
       setFile(null);
       setName("");
+      setCategory("");
       setTags("");
       setNotes("");
       setSortOrder(0);
-      const input = document.getElementById(
-        "scene-file-input",
-      ) as HTMLInputElement | null;
-      if (input) input.value = "";
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -78,7 +89,10 @@ export default function ScenesAdminPage() {
     }
   }
 
-  async function handlePatch(id: number, patch: Partial<Scene>) {
+  async function handlePatch(
+    id: number,
+    patch: Partial<Scene> & { category?: string | null },
+  ) {
     try {
       const res = await fetch(`/api/scenes/${id}`, {
         method: "PATCH",
@@ -103,136 +117,230 @@ export default function ScenesAdminPage() {
     }
   }
 
+  // 按分类分组
+  const groupedItems = useMemo(() => {
+    const groups = new Map<string, Scene[]>();
+    for (const s of items) {
+      const key = s.category || "_uncategorized";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(s);
+    }
+    const ordered = [
+      ...SCENE_CATEGORY_ORDER.filter((k) => groups.has(k)),
+      // 数据库里出现但常量表里没的（兼容旧数据），按字母序追加
+      ...Array.from(groups.keys()).filter(
+        (k) =>
+          k !== "_uncategorized" && !SCENE_CATEGORY_ORDER.includes(k),
+      ),
+    ];
+    if (groups.has("_uncategorized")) ordered.push("_uncategorized");
+    return ordered.map((key) => ({
+      key,
+      label:
+        key === "_uncategorized"
+          ? "未分类"
+          : SCENE_CATEGORY_LABELS[key] || key,
+      items: groups.get(key)!,
+    }));
+  }, [items]);
+
   return (
-    <main className="max-w-5xl mx-auto p-4 md:p-8">
-      <header className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">场景库</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          拍摄场景的背景图（教堂 / 户外 / 影棚 / 室内）。图里
-          <strong className="text-red-600">不要有任何人物</strong>
-          ，否则会出现"场景里已有人 + 要合成的模特"双人
-        </p>
+    <main className="mx-auto w-full max-w-7xl p-5 md:p-8">
+      <header className="mb-6 flex items-center gap-3">
+        <span
+          className="w-10 h-10 rounded-md flex items-center justify-center text-white"
+          style={{
+            background: "var(--brand-gradient)",
+            boxShadow: "0 0 16px var(--brand-glow)",
+          }}
+        >
+          <Landmark size={18} strokeWidth={2.2} />
+        </span>
+        <div>
+          <h1 className="text-[22px] font-bold text-fg-primary tracking-tight">
+            场景库
+          </h1>
+          <p className="mt-0.5 text-[13px] text-fg-tertiary">
+            拍摄场景的背景图（教堂 / 户外 / 影棚 / 室内）。图里
+            <strong className="text-danger mx-0.5">不要有任何人物</strong>
+            ，否则会出现"场景里已有人 + 要合成的模特"双人
+          </p>
+        </div>
       </header>
 
       {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
+        <div
+          className="mb-4 p-3 rounded-md text-[13px] border"
+          style={{
+            background: "var(--danger-bg)",
+            borderColor: "rgba(239, 68, 68, 0.3)",
+            color: "var(--danger)",
+          }}
+        >
           {error}
         </div>
       )}
 
-      <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-        <h2 className="text-sm font-semibold text-gray-700 mb-3">新增场景</h2>
-        <form onSubmit={handleUpload} className="space-y-3">
+      <CollapsibleSection
+        title="新增场景"
+        description="上传图片 + 选择分类，便于在批量摄影 / 换色页按分类找场景"
+        defaultOpen
+        className="mb-4"
+      >
+        <form onSubmit={handleUpload} className="space-y-4">
+          {/* 上传 */}
           <div>
-            <label className="block text-xs text-gray-600 mb-1">
-              场景图（JPG / PNG / WEBP，最大 20MB）{" "}
-              <span className="text-red-500">*</span>
+            <label className="block text-[12px] text-fg-secondary mb-2">
+              场景图（JPG / PNG / WEBP，最大 20MB）
+              <span className="text-danger ml-1">*</span>
             </label>
-            <input
-              id="scene-file-input"
-              type="file"
-              accept="image/*"
-              onChange={(e) => setFile(e.target.files?.[0] || null)}
-              className="block w-full text-sm text-gray-600
-                file:mr-4 file:py-2 file:px-4
-                file:rounded-md file:border-0
-                file:text-sm file:font-medium
-                file:bg-blue-50 file:text-blue-700
-                hover:file:bg-blue-100"
-            />
-            {file && (
-              <div className="mt-2 w-48">
-                <Thumbnail
-                  src={URL.createObjectURL(file)}
-                  alt="预览"
-                  ratio="3/4"
-                  fit="contain"
-                  badge={
-                    <ThumbnailBadge tone="gray">
-                      {(file.size / 1024).toFixed(0)} KB
-                    </ThumbnailBadge>
-                  }
-                />
+            {file ? (
+              <div className="flex items-start gap-3">
+                <div className="w-40">
+                  <Thumbnail
+                    src={URL.createObjectURL(file)}
+                    alt="预览"
+                    ratio="3/4"
+                    fit="contain"
+                    badge={
+                      <ThumbnailBadge tone="gray">
+                        {(file.size / 1024).toFixed(0)} KB
+                      </ThumbnailBadge>
+                    }
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setFile(null)}
+                  className="btn btn-ghost btn-sm"
+                >
+                  <X size={12} strokeWidth={2.2} />
+                  重选
+                </button>
               </div>
+            ) : (
+              <Dropzone
+                accept="image/*"
+                onFiles={(files) => setFile(files[0] || null)}
+                icon={<Upload size={28} strokeWidth={1.6} />}
+                title="拖拽 / 点击 / Ctrl+V 上传场景图"
+                description="JPG / PNG / WEBP · 最大 20MB"
+              />
             )}
           </div>
-          <div className="grid grid-cols-2 gap-3">
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-gray-600 mb-1">
-                名称 <span className="text-red-500">*</span>
+              <label className="block text-[12px] text-fg-secondary mb-1.5">
+                名称 <span className="text-danger">*</span>
               </label>
               <input
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="如：西式教堂内景"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                className="input"
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">标签</label>
+              <label className="block text-[12px] text-fg-secondary mb-1.5">
+                分类
+              </label>
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                className="input select"
+              >
+                <option value="">未分类</option>
+                {SCENE_CATEGORY_LIST.map((c) => (
+                  <option key={c.key} value={c.key}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[12px] text-fg-secondary mb-1.5">
+                标签（逗号分隔）
+              </label>
               <input
                 type="text"
                 value={tags}
                 onChange={(e) => setTags(e.target.value)}
                 placeholder="如：教堂,室内,彩色玻璃"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-              />
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            <div className="col-span-2">
-              <label className="block text-xs text-gray-600 mb-1">备注</label>
-              <input
-                type="text"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                className="input"
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">排序</label>
+              <label className="block text-[12px] text-fg-secondary mb-1.5">
+                排序
+              </label>
               <input
                 type="number"
                 value={sortOrder}
                 onChange={(e) => setSortOrder(Number(e.target.value))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                className="input"
               />
             </div>
           </div>
+
+          <div>
+            <label className="block text-[12px] text-fg-secondary mb-1.5">
+              备注（可选）
+            </label>
+            <input
+              type="text"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              className="input"
+            />
+          </div>
+
           <button
             type="submit"
             disabled={uploading || !file || !name.trim()}
-            className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50"
+            className="btn btn-primary btn-md"
           >
             {uploading ? "上传中..." : "新增"}
           </button>
         </form>
-      </section>
+      </CollapsibleSection>
 
-      <section className="bg-white rounded-lg shadow-sm border border-gray-200">
-        <div className="px-6 py-3 border-b border-gray-200">
-          <h2 className="text-sm font-semibold text-gray-700">
-            已有场景 ({items.length})
-          </h2>
-        </div>
+      <CollapsibleSection
+        title="已有场景"
+        badge={items.length}
+        description="按分类折叠，点击下方组进入"
+        defaultOpen
+      >
         {loading ? (
-          <div className="p-6 text-sm text-gray-500">加载中...</div>
+          <div className="text-sm text-fg-tertiary py-6">加载中...</div>
         ) : items.length === 0 ? (
-          <div className="p-6 text-sm text-gray-500">还没有场景</div>
+          <div className="text-sm text-fg-tertiary py-6">还没有场景</div>
         ) : (
-          <ul className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 p-4">
-            {items.map((s) => (
-              <SceneCard
-                key={s.id}
-                item={s}
-                onPatch={handlePatch}
-                onDelete={handleDelete}
-              />
+          <div className="space-y-2">
+            {groupedItems.map((g, idx) => (
+              <CollapsibleSection
+                key={g.key}
+                variant="minimal"
+                title={g.label}
+                badge={g.items.length}
+                defaultOpen={idx === 0 || g.items.length <= 3}
+              >
+                <ul className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 mt-2">
+                  {g.items.map((s) => (
+                    <SceneCard
+                      key={s.id}
+                      item={s}
+                      onPatch={handlePatch}
+                      onDelete={handleDelete}
+                    />
+                  ))}
+                </ul>
+              </CollapsibleSection>
             ))}
-          </ul>
+          </div>
         )}
-      </section>
+      </CollapsibleSection>
     </main>
   );
 }
@@ -243,57 +351,79 @@ function SceneCard({
   onDelete,
 }: {
   item: Scene;
-  onPatch: (id: number, patch: Partial<Scene>) => void;
+  onPatch: (
+    id: number,
+    patch: Partial<Scene> & { category?: string | null },
+  ) => void;
   onDelete: (id: number) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({
     name: item.name,
+    category: item.category || "",
     tags: item.tags || "",
     notes: item.notes || "",
   });
 
   return (
-    <li className="border border-gray-200 rounded-lg overflow-hidden">
+    <li className="border border-border-subtle rounded-md overflow-hidden bg-bg-card">
       <Thumbnail
         src={item.image_url}
         alt={item.name}
         ratio="3/4"
         fit="contain"
-        className="rounded-none"
+        className="rounded-none border-0"
       />
       {editing ? (
         <div className="p-3 space-y-2">
           <input
             value={draft.name}
             onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-            className="w-full px-2 py-1 border border-gray-300 rounded text-xs"
+            className="input h-8 text-[12px]"
+            placeholder="名称"
           />
+          <select
+            value={draft.category}
+            onChange={(e) => setDraft({ ...draft, category: e.target.value })}
+            className="input select h-8 text-[12px]"
+          >
+            <option value="">未分类</option>
+            {SCENE_CATEGORY_LIST.map((c) => (
+              <option key={c.key} value={c.key}>
+                {c.label}
+              </option>
+            ))}
+          </select>
           <input
             value={draft.tags}
             onChange={(e) => setDraft({ ...draft, tags: e.target.value })}
             placeholder="标签"
-            className="w-full px-2 py-1 border border-gray-300 rounded text-xs"
+            className="input h-8 text-[12px]"
           />
           <input
             value={draft.notes}
             onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
             placeholder="备注"
-            className="w-full px-2 py-1 border border-gray-300 rounded text-xs"
+            className="input h-8 text-[12px]"
           />
-          <div className="flex gap-1">
+          <div className="flex gap-1.5">
             <button
               onClick={() => {
-                onPatch(item.id, draft);
+                onPatch(item.id, {
+                  name: draft.name,
+                  category: draft.category || null,
+                  tags: draft.tags,
+                  notes: draft.notes,
+                });
                 setEditing(false);
               }}
-              className="flex-1 px-2 py-1 bg-blue-600 text-white text-xs rounded"
+              className="btn btn-primary btn-sm flex-1"
             >
               保存
             </button>
             <button
               onClick={() => setEditing(false)}
-              className="px-2 py-1 text-gray-600 text-xs rounded hover:bg-gray-100"
+              className="btn btn-ghost btn-sm"
             >
               取消
             </button>
@@ -301,36 +431,40 @@ function SceneCard({
         </div>
       ) : (
         <div className="p-3">
-          <div className="text-sm font-medium text-gray-900 truncate">
-            {item.name}
+          <div className="flex items-start justify-between gap-2">
+            <div className="text-[13px] font-medium text-fg-primary truncate">
+              {item.name}
+            </div>
+            {item.category_label && (
+              <span className="chip chip-brand text-[10px] shrink-0">
+                {item.category_label}
+              </span>
+            )}
           </div>
           {item.tags && (
-            <div className="flex flex-wrap gap-1 mt-1">
+            <div className="flex flex-wrap gap-1 mt-1.5">
               {item.tags.split(",").map((t, i) => (
-                <span
-                  key={i}
-                  className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600"
-                >
+                <span key={i} className="chip chip-gray text-[10px]">
                   {t.trim()}
                 </span>
               ))}
             </div>
           )}
           {item.notes && (
-            <div className="text-xs text-gray-500 mt-1 truncate">
+            <div className="text-[11px] text-fg-tertiary mt-1.5 truncate">
               {item.notes}
             </div>
           )}
-          <div className="flex gap-2 mt-2">
+          <div className="flex gap-3 mt-2.5">
             <button
               onClick={() => setEditing(true)}
-              className="text-xs text-gray-600 hover:text-gray-900"
+              className="text-[12px] text-fg-secondary hover:text-fg-primary"
             >
               编辑
             </button>
             <button
               onClick={() => onDelete(item.id)}
-              className="text-xs text-red-600 hover:text-red-800"
+              className="text-[12px] text-danger hover:opacity-80"
             >
               删除
             </button>

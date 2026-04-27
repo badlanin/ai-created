@@ -115,50 +115,50 @@ export default function PosesAdminPage() {
     <main className="max-w-5xl mx-auto p-4 md:p-8">
       <header className="mb-6 flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">姿势库</h1>
-          <p className="mt-1 text-sm text-gray-500">
+          <h1 className="text-2xl font-bold text-fg-primary">姿势库</h1>
+          <p className="mt-1 text-sm text-fg-tertiary">
             模特摄影的姿势文字描述。按全身 / 半身 / 特写分组，生成时会作为指令注入 Prompt
           </p>
         </div>
         <button
           onClick={() => setShowForm((v) => !v)}
-          className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700"
+          className="px-4 py-2 bg-brand-600 text-white text-sm rounded-md hover:bg-brand-700"
         >
           {showForm ? "取消" : "+ 添加姿势"}
         </button>
       </header>
 
       {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
+        <div className="mb-4 p-3 bg-[var(--danger-bg)] border border-[rgba(239,68,68,0.3)] text-danger text-sm rounded">
           {error}
         </div>
       )}
 
       {showForm && (
-        <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+        <section className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle p-6 mb-6">
           <form onSubmit={handleCreate} className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-gray-600 mb-1">
-                名称 <span className="text-red-500">*</span>
+              <label className="block text-xs text-fg-secondary mb-1">
+                名称 <span className="text-danger">*</span>
               </label>
               <input
                 type="text"
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                 placeholder="如：侧身叉腰"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">
-                类型 <span className="text-red-500">*</span>
+              <label className="block text-xs text-fg-secondary mb-1">
+                类型 <span className="text-danger">*</span>
               </label>
               <select
                 value={form.type}
                 onChange={(e) =>
                   setForm({ ...form, type: e.target.value as PoseType })
                 }
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
               >
                 <option value="full">全身</option>
                 <option value="half">半身</option>
@@ -166,43 +166,43 @@ export default function PosesAdminPage() {
               </select>
             </div>
             <div className="col-span-2">
-              <label className="block text-xs text-gray-600 mb-1">
-                姿势描述 <span className="text-red-500">*</span>
+              <label className="block text-xs text-fg-secondary mb-1">
+                姿势描述 <span className="text-danger">*</span>
               </label>
               <textarea
                 value={form.text}
                 onChange={(e) => setForm({ ...form, text: e.target.value })}
                 rows={3}
                 placeholder="用文字详细描述姿势：身体朝向、手的位置、表情、动态感等..."
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">标签</label>
+              <label className="block text-xs text-fg-secondary mb-1">标签</label>
               <input
                 type="text"
                 value={form.tags}
                 onChange={(e) => setForm({ ...form, tags: e.target.value })}
                 placeholder="用逗号分隔：侧身,叉腰"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">排序</label>
+              <label className="block text-xs text-fg-secondary mb-1">排序</label>
               <input
                 type="number"
                 value={form.sort_order}
                 onChange={(e) =>
                   setForm({ ...form, sort_order: Number(e.target.value) })
                 }
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
               />
             </div>
             <div className="col-span-2">
               <button
                 type="submit"
                 disabled={submitting}
-                className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50"
+                className="px-4 py-2 bg-brand-600 text-white text-sm rounded-md hover:bg-brand-700 disabled:opacity-50"
               >
                 {submitting ? "保存中..." : "保存"}
               </button>
@@ -214,20 +214,20 @@ export default function PosesAdminPage() {
       {(["full", "half", "closeup"] as PoseType[]).map((type) => (
         <section
           key={type}
-          className="bg-white rounded-lg shadow-sm border border-gray-200 mb-6"
+          className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle mb-6"
         >
-          <div className="px-6 py-3 border-b border-gray-200">
-            <h2 className="text-sm font-semibold text-gray-800">
+          <div className="px-6 py-3 border-b border-border-subtle">
+            <h2 className="text-sm font-semibold text-fg-primary">
               {TYPE_LABEL[type]}
-              <span className="ml-2 text-gray-400">
+              <span className="ml-2 text-fg-tertiary">
                 ({grouped[type].length})
               </span>
             </h2>
           </div>
           {loading ? (
-            <div className="p-6 text-sm text-gray-500">加载中...</div>
+            <div className="p-6 text-sm text-fg-tertiary">加载中...</div>
           ) : grouped[type].length === 0 ? (
-            <div className="p-6 text-sm text-gray-500">暂无</div>
+            <div className="p-6 text-sm text-fg-tertiary">暂无</div>
           ) : (
             <ul className="divide-y divide-gray-200">
               {grouped[type].map((p) => (
@@ -264,20 +264,20 @@ function PoseRow({
 
   if (editing) {
     return (
-      <li className="px-6 py-4 bg-blue-50">
+      <li className="px-6 py-4 bg-[var(--brand-50-bg)]">
         <input
-          className="w-full px-2 py-1 mb-2 border border-gray-300 rounded text-sm"
+          className="w-full px-2 py-1 mb-2 border border-border-default rounded text-sm"
           value={draft.name}
           onChange={(e) => setDraft({ ...draft, name: e.target.value })}
         />
         <textarea
-          className="w-full px-2 py-1 mb-2 border border-gray-300 rounded text-sm"
+          className="w-full px-2 py-1 mb-2 border border-border-default rounded text-sm"
           rows={3}
           value={draft.text}
           onChange={(e) => setDraft({ ...draft, text: e.target.value })}
         />
         <input
-          className="w-full px-2 py-1 mb-2 border border-gray-300 rounded text-sm"
+          className="w-full px-2 py-1 mb-2 border border-border-default rounded text-sm"
           placeholder="标签（逗号分隔）"
           value={draft.tags}
           onChange={(e) => setDraft({ ...draft, tags: e.target.value })}
@@ -288,13 +288,13 @@ function PoseRow({
               onUpdate(pose.id, draft);
               setEditing(false);
             }}
-            className="px-3 py-1 bg-blue-600 text-white text-xs rounded"
+            className="px-3 py-1 bg-brand-600 text-white text-xs rounded"
           >
             保存
           </button>
           <button
             onClick={() => setEditing(false)}
-            className="px-3 py-1 text-gray-600 text-xs rounded hover:bg-gray-100"
+            className="px-3 py-1 text-fg-secondary text-xs rounded hover:bg-bg-tertiary"
           >
             取消
           </button>
@@ -307,8 +307,8 @@ function PoseRow({
     <li className="px-6 py-3">
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium text-gray-900">{pose.name}</div>
-          <div className="text-xs text-gray-600 mt-1 leading-relaxed">
+          <div className="text-sm font-medium text-fg-primary">{pose.name}</div>
+          <div className="text-xs text-fg-secondary mt-1 leading-relaxed">
             {pose.text}
           </div>
           {pose.tags && (
@@ -316,7 +316,7 @@ function PoseRow({
               {pose.tags.split(",").map((t, i) => (
                 <span
                   key={i}
-                  className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600"
+                  className="text-[10px] px-1.5 py-0.5 rounded bg-bg-tertiary text-fg-secondary"
                 >
                   {t.trim()}
                 </span>
@@ -327,13 +327,13 @@ function PoseRow({
         <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={() => setEditing(true)}
-            className="text-xs text-gray-600 hover:text-gray-900 px-2 py-1"
+            className="text-xs text-fg-secondary hover:text-fg-primary px-2 py-1"
           >
             编辑
           </button>
           <button
             onClick={() => onDelete(pose.id)}
-            className="text-xs text-red-600 hover:text-red-800 px-2 py-1"
+            className="text-xs text-danger hover:text-red-800 px-2 py-1"
           >
             删除
           </button>

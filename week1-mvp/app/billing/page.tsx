@@ -130,7 +130,7 @@ export default function BillingPage() {
   if (loading) {
     return (
       <main className="max-w-5xl mx-auto p-4 md:p-8">
-        <div className="text-sm text-gray-500">加载中...</div>
+        <div className="text-sm text-fg-tertiary">加载中...</div>
       </main>
     );
   }
@@ -138,7 +138,7 @@ export default function BillingPage() {
   if (error) {
     return (
       <main className="max-w-5xl mx-auto p-4 md:p-8">
-        <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl">
+        <div className="p-3 bg-[var(--danger-bg)] border border-[rgba(239,68,68,0.3)] text-danger text-sm rounded-xl">
           {error}
         </div>
       </main>
@@ -150,10 +150,10 @@ export default function BillingPage() {
   return (
     <main className="max-w-5xl mx-auto p-4 md:p-8">
       <header className="mb-6">
-        <h1 className="text-[26px] font-bold text-gray-900 tracking-tight">
+        <h1 className="text-[26px] font-bold text-fg-primary tracking-tight">
           我的账单
         </h1>
-        <p className="mt-1 text-sm text-gray-500">
+        <p className="mt-1 text-sm text-fg-tertiary">
           当前汇率 1 USD = ¥{data.usd_to_cny.toFixed(2)} · 本月计费周期
         </p>
       </header>
@@ -168,7 +168,7 @@ export default function BillingPage() {
           Icon={Wallet}
           footer={
             data.budget.is_unlimited ? (
-              <div className="text-[11px] text-gray-500 mt-2">无额度上限</div>
+              <div className="text-[11px] text-fg-tertiary mt-2">无额度上限</div>
             ) : (
               <div className="mt-2">
                 <ProgressBar
@@ -182,7 +182,7 @@ export default function BillingPage() {
                         : "brand"
                   }
                 />
-                <div className="mt-1 text-[11px] text-gray-500">
+                <div className="mt-1 text-[11px] text-fg-tertiary">
                   {data.budget.percent_used.toFixed(1)}% · 剩 {fmtCny(data.budget.remaining_cny)}
                 </div>
               </div>
@@ -217,11 +217,11 @@ export default function BillingPage() {
           Icon={Cpu}
           footer={
             data.budget.is_unlimited ? (
-              <div className="text-[11px] text-gray-500 mt-2">
+              <div className="text-[11px] text-fg-tertiary mt-2">
                 由管理员设置
               </div>
             ) : (
-              <div className="text-[11px] text-gray-500 mt-2">
+              <div className="text-[11px] text-fg-tertiary mt-2">
                 若不够用请联系管理员调整
               </div>
             )
@@ -232,22 +232,22 @@ export default function BillingPage() {
       {/* 本月按模型 */}
       <Card padding="md" className="mb-5">
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-[14px] font-semibold text-gray-900">
+          <h2 className="text-[14px] font-semibold text-fg-primary">
             本月消费明细
           </h2>
-          <span className="text-[11px] text-gray-400">
+          <span className="text-[11px] text-fg-tertiary">
             按 模型 × 功能 汇总
           </span>
         </div>
         {data.this_month_by_model.length === 0 ? (
-          <div className="p-6 text-center text-sm text-gray-400">
+          <div className="p-6 text-center text-sm text-fg-tertiary">
             本月还没有调用
           </div>
         ) : (
           <div className="overflow-x-auto -mx-4">
             <table className="w-full text-[13px]">
               <thead>
-                <tr className="text-[11px] text-gray-400 border-b border-gray-100">
+                <tr className="text-[11px] text-fg-tertiary border-b border-border-subtle">
                   <th className="text-left py-2.5 px-4 font-medium">模型</th>
                   <th className="text-left py-2.5 px-4 font-medium">功能</th>
                   <th className="text-right py-2.5 px-4 font-medium">次数</th>
@@ -261,9 +261,9 @@ export default function BillingPage() {
                 {data.this_month_by_model.map((r, i) => (
                   <tr
                     key={i}
-                    className="border-b border-gray-50 hover:bg-gray-50/50"
+                    className="border-b border-gray-50 hover:bg-bg-tertiary/50"
                   >
-                    <td className="py-2 px-4 font-mono text-[11px] text-gray-600">
+                    <td className="py-2 px-4 font-mono text-[11px] text-fg-secondary">
                       {r.model}
                     </td>
                     <td className="py-2 px-4">
@@ -271,31 +271,31 @@ export default function BillingPage() {
                         {FEATURE_LABEL[r.feature] || r.feature}
                       </Chip>
                     </td>
-                    <td className="py-2 px-4 text-right tabular-nums text-gray-700">
+                    <td className="py-2 px-4 text-right tabular-nums text-fg-secondary">
                       {r.count}
                     </td>
-                    <td className="py-2 px-4 text-right tabular-nums text-gray-500">
+                    <td className="py-2 px-4 text-right tabular-nums text-fg-tertiary">
                       {fmtTokens(r.prompt_tokens)}
                     </td>
-                    <td className="py-2 px-4 text-right tabular-nums text-gray-500">
+                    <td className="py-2 px-4 text-right tabular-nums text-fg-tertiary">
                       {fmtTokens(r.completion_tokens)}
                     </td>
-                    <td className="py-2 px-4 text-right tabular-nums text-gray-500 text-[12px]">
+                    <td className="py-2 px-4 text-right tabular-nums text-fg-tertiary text-[12px]">
                       {fmtUsd(r.cost_usd)}
                     </td>
-                    <td className="py-2 px-4 text-right font-medium text-gray-900 tabular-nums">
+                    <td className="py-2 px-4 text-right font-medium text-fg-primary tabular-nums">
                       {fmtCny(r.cost_cny)}
                     </td>
                   </tr>
                 ))}
-                <tr className="bg-gray-50 font-semibold text-[13px]">
+                <tr className="bg-bg-tertiary font-semibold text-[13px]">
                   <td className="py-2.5 px-4" colSpan={5}>
                     合计
                   </td>
-                  <td className="py-2.5 px-4 text-right text-gray-600 tabular-nums">
+                  <td className="py-2.5 px-4 text-right text-fg-secondary tabular-nums">
                     {fmtUsd(stats.totalUsd)}
                   </td>
-                  <td className="py-2.5 px-4 text-right text-gray-900 tabular-nums">
+                  <td className="py-2.5 px-4 text-right text-fg-primary tabular-nums">
                     {fmtCny(stats.totalCny)}
                   </td>
                 </tr>
@@ -308,13 +308,13 @@ export default function BillingPage() {
       {/* 最近调用 */}
       <Card padding="md">
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-[14px] font-semibold text-gray-900">
+          <h2 className="text-[14px] font-semibold text-fg-primary">
             最近调用
           </h2>
-          <span className="text-[11px] text-gray-400">近 100 条</span>
+          <span className="text-[11px] text-fg-tertiary">近 100 条</span>
         </div>
         {data.recent.length === 0 ? (
-          <div className="p-6 text-center text-sm text-gray-400">
+          <div className="p-6 text-center text-sm text-fg-tertiary">
             暂无调用记录
           </div>
         ) : (
@@ -322,15 +322,15 @@ export default function BillingPage() {
             {data.recent.map((r) => (
               <li
                 key={r.id}
-                className="py-2.5 px-4 text-[12px] flex items-center gap-2.5 hover:bg-gray-50/50"
+                className="py-2.5 px-4 text-[12px] flex items-center gap-2.5 hover:bg-bg-tertiary/50"
               >
                 <Chip tone={FEATURE_TONE[r.feature] || "gray"}>
                   {FEATURE_LABEL[r.feature] || r.feature}
                 </Chip>
-                <span className="font-mono text-gray-500 truncate max-w-[200px] text-[11px]">
+                <span className="font-mono text-fg-tertiary truncate max-w-[200px] text-[11px]">
                   {r.model}
                 </span>
-                <span className="text-gray-400 text-[11px] tabular-nums">
+                <span className="text-fg-tertiary text-[11px] tabular-nums">
                   in {fmtTokens(r.prompt_tokens)} / out{" "}
                   {fmtTokens(r.completion_tokens)}
                 </span>
@@ -342,15 +342,15 @@ export default function BillingPage() {
                     className="text-green-500"
                   />
                 ) : (
-                  <span className="text-red-600 inline-flex items-center gap-1 text-[11px]">
+                  <span className="text-danger inline-flex items-center gap-1 text-[11px]">
                     <AlertOctagon size={11} strokeWidth={2} />
                     失败
                   </span>
                 )}
-                <span className="font-medium text-gray-900 tabular-nums">
+                <span className="font-medium text-fg-primary tabular-nums">
                   {fmtCny(r.cost_cny)}
                 </span>
-                <span className="text-gray-400 tabular-nums text-[11px] w-20 text-right">
+                <span className="text-fg-tertiary tabular-nums text-[11px] w-20 text-right">
                   {fmtTime(r.created_at)}
                 </span>
               </li>
@@ -380,24 +380,24 @@ function StatCard({
   footer?: React.ReactNode;
 }) {
   const accentMap = {
-    blue: "bg-blue-50 text-blue-600",
-    green: "bg-green-50 text-green-600",
-    amber: "bg-amber-50 text-amber-600",
+    blue: "bg-[var(--brand-50-bg)] text-brand-400",
+    green: "bg-[var(--success-bg)] text-success",
+    amber: "bg-[var(--warn-bg)] text-warn",
     pink: "bg-pink-50 text-pink-600",
   }[accent];
   return (
     <Card padding="md">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <div className="text-[11px] text-gray-400 uppercase tracking-wider font-medium">
+          <div className="text-[11px] text-fg-tertiary uppercase tracking-wider font-medium">
             {label}
           </div>
           <div className="mt-1 flex items-baseline gap-1.5">
-            <span className="text-2xl font-semibold text-gray-900 tabular-nums">
+            <span className="text-2xl font-semibold text-fg-primary tabular-nums">
               {value}
             </span>
             {sub ? (
-              <span className="text-[12px] text-gray-400">{sub}</span>
+              <span className="text-[12px] text-fg-tertiary">{sub}</span>
             ) : null}
           </div>
         </div>

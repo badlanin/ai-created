@@ -16,7 +16,7 @@ import {
   PanelLeftOpen,
   LogOut,
   Loader2,
-  Activity,
+  Sparkles,
 } from "lucide-react";
 
 type NavUser = {
@@ -40,6 +40,9 @@ export interface LeftNavProps {
   onToggleCollapse?: () => void;
   activeJobCount?: number;
 }
+
+const BRAND_NAME = "服装AI生图工具";
+const BRAND_SHORT = "服装AI";
 
 export function LeftNav({
   user,
@@ -106,26 +109,41 @@ export function LeftNav({
     return (
       <aside
         aria-label="侧边导航"
-        className="h-full bg-white border-r border-gray-150 flex flex-col items-center py-3 w-14 flex-shrink-0"
+        className="h-full bg-bg-secondary border-r border-border-subtle flex flex-col items-center py-3 w-14 flex-shrink-0"
       >
         <button
           onClick={onToggleCollapse}
-          className="w-9 h-9 rounded-lg hover:bg-gray-100 flex items-center justify-center text-gray-500 mb-4 transition-colors"
+          className="w-9 h-9 rounded-md hover:bg-bg-hover flex items-center justify-center text-fg-tertiary hover:text-fg-primary mb-3 transition-colors"
           aria-label="展开侧边栏"
           title="展开"
         >
           <PanelLeftOpen size={16} strokeWidth={2} />
         </button>
 
+        {/* logo 小图标 */}
+        <div
+          className="w-9 h-9 rounded-md mb-4 flex items-center justify-center text-white"
+          style={{
+            background: "var(--brand-gradient)",
+            boxShadow: "0 0 16px var(--brand-glow)",
+          }}
+          title={BRAND_NAME}
+        >
+          <Sparkles size={16} strokeWidth={2.2} />
+        </div>
+
         {/* 进行中任务 */}
         {activeJobCount > 0 ? (
           <Link
             href="/history?status=active"
             title={`${activeJobCount} 个任务进行中 · 点击查看`}
-            className="relative w-9 h-9 rounded-lg flex items-center justify-center mb-2 bg-blue-50 text-blue-600 hover:bg-blue-100"
+            className="relative w-9 h-9 rounded-md flex items-center justify-center mb-2 bg-[var(--brand-50-bg)] text-brand-400 hover:bg-[var(--brand-100-bg)]"
           >
             <Loader2 size={16} strokeWidth={2.2} className="animate-spin" />
-            <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-blue-600 text-white text-[10px] font-semibold flex items-center justify-center">
+            <span
+              className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full text-white text-[10px] font-semibold flex items-center justify-center"
+              style={{ background: "var(--brand-600)" }}
+            >
               {activeJobCount}
             </span>
           </Link>
@@ -134,7 +152,7 @@ export function LeftNav({
         <CollapsedIcon href="/" label="首页" Icon={Home} active={isActive("/")} />
         <CollapsedIcon
           href="/recolor"
-          label="换色"
+          label="HEX 换色"
           Icon={Palette}
           active={isActive("/recolor")}
         />
@@ -164,81 +182,74 @@ export function LeftNav({
   return (
     <aside
       aria-label="侧边导航"
-      className="h-full bg-white border-r border-gray-150 flex flex-col w-[240px] flex-shrink-0"
+      className="h-full bg-bg-secondary border-r border-border-subtle flex flex-col w-[240px] flex-shrink-0"
     >
-      {/* 顶部：品牌 + 折叠 */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-        <Link
-          href="/"
-          className="font-semibold text-gray-900 truncate text-[15px] tracking-tight"
-        >
-          伴娘服 AI
+      {/* 顶部：品牌 + 折叠按钮 */}
+      <div className="flex items-center justify-between px-4 py-4 border-b border-border-subtle">
+        <Link href="/" className="flex items-center gap-2.5 min-w-0">
+          <span
+            className="w-9 h-9 rounded-md flex items-center justify-center text-white flex-shrink-0"
+            style={{
+              background: "var(--brand-gradient)",
+              boxShadow: "0 0 16px var(--brand-glow)",
+            }}
+          >
+            <Sparkles size={16} strokeWidth={2.2} />
+          </span>
+          <span className="font-bold text-fg-primary text-[15px] tracking-tight truncate">
+            {BRAND_SHORT}
+          </span>
         </Link>
-        <div className="flex items-center gap-1">
-          {activeJobCount > 0 ? (
-            <span
-              className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-blue-600 text-white"
-              title={`${activeJobCount} 个任务进行中`}
-            >
-              {activeJobCount}
-            </span>
-          ) : null}
-          {onToggleCollapse ? (
-            <button
-              onClick={onToggleCollapse}
-              className="w-7 h-7 rounded-md hover:bg-gray-100 flex items-center justify-center text-gray-400 transition-colors"
-              aria-label="折叠"
-              title="折叠"
-            >
-              <PanelLeftClose size={14} strokeWidth={2} />
-            </button>
-          ) : null}
-        </div>
+        {onToggleCollapse ? (
+          <button
+            onClick={onToggleCollapse}
+            className="w-7 h-7 rounded-md hover:bg-bg-hover flex items-center justify-center text-fg-tertiary hover:text-fg-primary transition-colors"
+            aria-label="折叠"
+            title="折叠"
+          >
+            <PanelLeftClose size={14} strokeWidth={2} />
+          </button>
+        ) : null}
       </div>
 
-      <nav className="flex-1 overflow-y-auto py-2">
-        {/* 进行中任务 —— 有任务时显示在顶部，脉冲提醒 */}
+      <nav className="flex-1 overflow-y-auto py-3">
+        {/* 进行中任务 —— 有任务时顶部脉冲 */}
         {activeJobCount > 0 ? (
-          <div className="px-2 mb-2">
+          <div className="px-3 mb-3">
             <Link
               href="/history?status=active"
-              className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg bg-blue-50 border border-blue-200 hover:bg-blue-100 hover:border-blue-300 transition-colors ${
-                isActive("/history") ? "ring-1 ring-blue-400" : ""
-              }`}
+              className="flex items-center gap-2.5 px-3 py-2 rounded-md transition-colors hover:brightness-110"
+              style={{
+                background: "var(--brand-50-bg)",
+                border: "1px solid rgba(59, 130, 246, 0.3)",
+              }}
               title="查看所有进行中任务"
             >
-              <span className="relative inline-flex">
-                <Loader2
-                  size={16}
-                  strokeWidth={2.2}
-                  className="text-blue-600 animate-spin"
-                />
-              </span>
-              <span className="flex-1 text-[13px] font-medium text-blue-900 truncate">
+              <Loader2 size={16} strokeWidth={2.2} className="text-brand-400 animate-spin" />
+              <span className="flex-1 text-[12.5px] font-medium text-brand-400 truncate">
                 {activeJobCount} 个任务进行中
               </span>
-              <ChevronRight
-                size={14}
-                strokeWidth={2}
-                className="text-blue-500"
-              />
+              <ChevronRight size={14} strokeWidth={2} className="text-brand-400" />
             </Link>
           </div>
         ) : null}
 
-        <div className="px-2 space-y-0.5">
-          <NavItem href="/" Icon={Home} label="首页" active={isActive("/")} />
+        {/* 工作台 */}
+        <SectionHeader>工作台</SectionHeader>
+        <div className="px-3 space-y-0.5">
+          <NavItem href="/" Icon={Home} label="首页概览" active={isActive("/")} />
           <NavItem
             href="/recolor"
             Icon={Palette}
-            label="换色"
+            label="HEX 换色"
             active={isActive("/recolor")}
           />
           <NavItem
             href="/batch-photo"
             Icon={Camera}
-            label="批量摄影图"
+            label="批量摄影"
             active={isActive("/batch-photo")}
+            badge={activeJobCount > 0 ? String(activeJobCount) : undefined}
           />
           <NavItem
             href="/history"
@@ -256,7 +267,7 @@ export function LeftNav({
 
         {user.role === "admin" ? (
           <>
-            <Divider label="素材" />
+            <SectionHeader className="mt-5">素材库</SectionHeader>
             <Collapsible
               label="素材管理"
               Icon={Library}
@@ -264,54 +275,18 @@ export function LeftNav({
               onToggle={() => setLibraryOpen((v) => !v)}
               hasActive={libraryExpanded}
             >
-              <SubItem
-                href="/admin/colors"
-                label="颜色"
-                active={isActive("/admin/colors")}
-              />
-              <SubItem
-                href="/admin/materials"
-                label="材质"
-                active={isActive("/admin/materials")}
-              />
-              <SubItem
-                href="/admin/realism"
-                label="真实感"
-                active={isActive("/admin/realism")}
-              />
-              <SubItem
-                href="/admin/models"
-                label="模特"
-                active={isActive("/admin/models")}
-              />
-              <SubItem
-                href="/admin/scenes"
-                label="场景"
-                active={isActive("/admin/scenes")}
-              />
-              <SubItem
-                href="/admin/poses"
-                label="姿势"
-                active={isActive("/admin/poses")}
-              />
-              <SubItem
-                href="/admin/photography"
-                label="摄影"
-                active={isActive("/admin/photography")}
-              />
-              <SubItem
-                href="/admin/prompts"
-                label="Prompt"
-                active={isActive("/admin/prompts")}
-              />
-              <SubItem
-                href="/admin/ai-models"
-                label="AI 模型"
-                active={isActive("/admin/ai-models")}
-              />
+              <SubItem href="/admin/colors" label="颜色" active={isActive("/admin/colors")} />
+              <SubItem href="/admin/materials" label="材质" active={isActive("/admin/materials")} />
+              <SubItem href="/admin/realism" label="真实感" active={isActive("/admin/realism")} />
+              <SubItem href="/admin/models" label="模特" active={isActive("/admin/models")} />
+              <SubItem href="/admin/scenes" label="场景" active={isActive("/admin/scenes")} />
+              <SubItem href="/admin/poses" label="姿势" active={isActive("/admin/poses")} />
+              <SubItem href="/admin/photography" label="摄影" active={isActive("/admin/photography")} />
+              <SubItem href="/admin/prompts" label="Prompt" active={isActive("/admin/prompts")} />
+              <SubItem href="/admin/ai-models" label="AI 模型" active={isActive("/admin/ai-models")} />
             </Collapsible>
 
-            <Divider label="管理" />
+            <SectionHeader className="mt-5">系统</SectionHeader>
             <Collapsible
               label="团队管理"
               Icon={Settings}
@@ -319,50 +294,30 @@ export function LeftNav({
               onToggle={() => setAdminOpen((v) => !v)}
               hasActive={adminExpanded}
             >
-              <SubItem
-                href="/admin/users"
-                label="用户"
-                active={isActive("/admin/users")}
-              />
-              <SubItem
-                href="/admin/billing"
-                label="团队账单"
-                active={isActive("/admin/billing")}
-              />
-              <SubItem
-                href="/admin/model-prices"
-                label="单价 / 汇率"
-                active={isActive("/admin/model-prices")}
-              />
-              <SubItem
-                href="/admin/announcements"
-                label="公告栏"
-                active={isActive("/admin/announcements")}
-              />
-              <SubItem
-                href="/admin/settings"
-                label="系统设置"
-                active={isActive("/admin/settings")}
-              />
+              <SubItem href="/admin/users" label="用户" active={isActive("/admin/users")} />
+              <SubItem href="/admin/billing" label="团队账单" active={isActive("/admin/billing")} />
+              <SubItem href="/admin/model-prices" label="单价 / 汇率" active={isActive("/admin/model-prices")} />
+              <SubItem href="/admin/announcements" label="公告栏" active={isActive("/admin/announcements")} />
+              <SubItem href="/admin/settings" label="系统设置" active={isActive("/admin/settings")} />
             </Collapsible>
           </>
         ) : null}
 
         {recentHistory.length > 0 ? (
           <>
-            <Divider label="最近记录" />
-            <div className="px-2 space-y-0.5">
+            <SectionHeader className="mt-5">最近记录</SectionHeader>
+            <div className="px-3 space-y-0.5">
               {recentHistory.slice(0, 5).map((item) => (
                 <Link
                   key={item.id}
                   href={item.href}
-                  className="block px-2 py-1.5 rounded-md hover:bg-gray-50 group"
+                  className="block px-2.5 py-1.5 rounded-md hover:bg-bg-hover group"
                   title={item.title}
                 >
-                  <div className="text-[12px] text-gray-700 truncate group-hover:text-gray-900">
+                  <div className="text-[12px] text-fg-secondary truncate group-hover:text-fg-primary">
                     {item.title}
                   </div>
-                  <div className="text-[10px] text-gray-400 mt-0.5">
+                  <div className="text-[10px] text-fg-tertiary mt-0.5">
                     {formatRelativeTime(item.timestamp)}
                   </div>
                 </Link>
@@ -373,27 +328,30 @@ export function LeftNav({
       </nav>
 
       {/* 底部 */}
-      <div className="border-t border-gray-100 px-3 py-2.5 flex items-center gap-2.5">
-        <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 text-white text-[11px] font-semibold flex items-center justify-center flex-shrink-0">
+      <div className="border-t border-border-subtle px-3 py-2.5 flex items-center gap-2.5">
+        <div
+          className="w-8 h-8 rounded-md text-white text-[12px] font-semibold flex items-center justify-center flex-shrink-0"
+          style={{ background: "var(--brand-gradient)" }}
+        >
           {displayName.slice(0, 1).toUpperCase()}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-[13px] text-gray-900 truncate font-medium leading-tight">
+          <div className="text-[13px] text-fg-primary truncate font-medium leading-tight">
             {displayName}
           </div>
           {user.role === "admin" ? (
-            <div className="text-[10px] text-amber-600 leading-tight">
+            <div className="text-[10px] text-warn leading-tight mt-0.5">
               管理员
             </div>
           ) : (
-            <div className="text-[10px] text-gray-400 leading-tight">
+            <div className="text-[10px] text-fg-tertiary leading-tight mt-0.5">
               成员
             </div>
           )}
         </div>
         <button
           onClick={handleLogout}
-          className="w-7 h-7 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-colors"
+          className="w-7 h-7 rounded-md text-fg-tertiary hover:text-danger hover:bg-[var(--danger-bg)] flex items-center justify-center transition-colors"
           title="退出登录"
         >
           <LogOut size={14} strokeWidth={2} />
@@ -412,6 +370,22 @@ interface NavIconProps {
 }
 type IconCmp = React.ComponentType<NavIconProps>;
 
+function SectionHeader({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`px-5 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-fg-tertiary ${className}`}
+    >
+      {children}
+    </div>
+  );
+}
+
 function NavItem({
   href,
   Icon,
@@ -428,20 +402,28 @@ function NavItem({
   return (
     <Link
       href={href}
-      className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] transition-colors ${
+      className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors ${
         active
-          ? "bg-blue-50 text-blue-700 font-medium"
-          : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+          ? "text-brand-400 font-medium"
+          : "text-fg-secondary hover:bg-bg-hover hover:text-fg-primary"
       }`}
+      style={
+        active
+          ? { background: "var(--brand-50-bg)" }
+          : undefined
+      }
     >
       <Icon
         size={16}
         strokeWidth={active ? 2.2 : 1.8}
-        className={active ? "text-blue-600" : "text-gray-400"}
+        className={active ? "text-brand-400" : "text-fg-tertiary"}
       />
       <span className="flex-1 truncate">{label}</span>
       {badge ? (
-        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-600 text-white font-medium">
+        <span
+          className="text-[10px] px-1.5 py-0.5 rounded-full text-white font-semibold"
+          style={{ background: "var(--brand-600)" }}
+        >
           {badge}
         </span>
       ) : null}
@@ -461,11 +443,16 @@ function SubItem({
   return (
     <Link
       href={href}
-      className={`block pl-10 pr-2.5 py-1.5 rounded-lg text-[12.5px] transition-colors ${
+      className={`block pl-10 pr-3 py-1.5 rounded-md text-[12.5px] transition-colors ${
         active
-          ? "bg-blue-50 text-blue-700 font-medium"
-          : "text-gray-500 hover:bg-gray-50 hover:text-gray-900"
+          ? "text-brand-400 font-medium"
+          : "text-fg-secondary hover:bg-bg-hover hover:text-fg-primary"
       }`}
+      style={
+        active
+          ? { background: "var(--brand-50-bg)" }
+          : undefined
+      }
     >
       {label}
     </Link>
@@ -488,39 +475,31 @@ function Collapsible({
   children: React.ReactNode;
 }) {
   return (
-    <div className="px-2">
+    <div className="px-3">
       <button
         type="button"
         onClick={onToggle}
-        className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] transition-colors ${
+        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors ${
           hasActive
-            ? "text-blue-700 font-medium"
-            : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+            ? "text-brand-400 font-medium"
+            : "text-fg-secondary hover:bg-bg-hover hover:text-fg-primary"
         }`}
       >
         <Icon
           size={16}
           strokeWidth={hasActive ? 2.2 : 1.8}
-          className={hasActive ? "text-blue-600" : "text-gray-400"}
+          className={hasActive ? "text-brand-400" : "text-fg-tertiary"}
         />
         <span className="flex-1 text-left truncate">{label}</span>
         <ChevronRight
           size={14}
           strokeWidth={2}
-          className={`text-gray-400 transition-transform duration-200 ${
+          className={`text-fg-tertiary transition-transform duration-200 ${
             open ? "rotate-90" : ""
           }`}
         />
       </button>
       {open ? <div className="mt-0.5 space-y-0.5">{children}</div> : null}
-    </div>
-  );
-}
-
-function Divider({ label }: { label: string }) {
-  return (
-    <div className="mt-5 mb-1.5 px-4 text-[10px] uppercase tracking-wider text-gray-400 font-medium">
-      {label}
     </div>
   );
 }
@@ -542,15 +521,23 @@ function CollapsedIcon({
     <Link
       href={href}
       title={label}
-      className={`relative w-9 h-9 rounded-lg flex items-center justify-center mb-1 transition-colors ${
+      className={`relative w-9 h-9 rounded-md flex items-center justify-center mb-1 transition-colors ${
         active
-          ? "bg-blue-50 text-blue-600"
-          : "text-gray-400 hover:bg-gray-50 hover:text-gray-800"
+          ? "text-brand-400"
+          : "text-fg-tertiary hover:bg-bg-hover hover:text-fg-primary"
       }`}
+      style={
+        active
+          ? { background: "var(--brand-50-bg)" }
+          : undefined
+      }
     >
       <Icon size={16} strokeWidth={active ? 2.2 : 1.8} />
       {badge ? (
-        <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-blue-600 text-white text-[10px] font-semibold flex items-center justify-center">
+        <span
+          className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full text-white text-[10px] font-semibold flex items-center justify-center"
+          style={{ background: "var(--brand-600)" }}
+        >
           {badge}
         </span>
       ) : null}

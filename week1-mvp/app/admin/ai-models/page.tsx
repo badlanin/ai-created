@@ -147,82 +147,82 @@ export default function AiModelsAdminPage() {
     <main className="max-w-5xl mx-auto p-4 md:p-8">
       <header className="mb-6 flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">AI 模型管理</h1>
-          <p className="mt-1 text-sm text-gray-500">
+          <h1 className="text-2xl font-bold text-fg-primary">AI 模型管理</h1>
+          <p className="mt-1 text-sm text-fg-tertiary">
             控制哪些模型在前端可见 / 哪个是默认。新发布的 Gemini 模型可以直接录入 ID，不用改代码
           </p>
         </div>
         <button
           onClick={() => setShowForm((v) => !v)}
-          className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700"
+          className="px-4 py-2 bg-brand-600 text-white text-sm rounded-md hover:bg-brand-700"
         >
           {showForm ? "取消" : "+ 添加新模型"}
         </button>
       </header>
 
       {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
+        <div className="mb-4 p-3 bg-[var(--danger-bg)] border border-[rgba(239,68,68,0.3)] text-danger text-sm rounded">
           {error}
         </div>
       )}
 
       {showForm && (
-        <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-          <h2 className="text-sm font-semibold text-gray-700 mb-3">
+        <section className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle p-6 mb-6">
+          <h2 className="text-sm font-semibold text-fg-secondary mb-3">
             添加新模型
           </h2>
           <form onSubmit={handleCreate} className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-gray-600 mb-1">
-                Category <span className="text-red-500">*</span>
+              <label className="block text-xs text-fg-secondary mb-1">
+                Category <span className="text-danger">*</span>
               </label>
               <select
                 value={form.category}
                 onChange={(e) =>
                   setForm({ ...form, category: e.target.value as Category })
                 }
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
               >
                 <option value="image_gen">image_gen（图像生成）</option>
                 <option value="vision">vision（视觉理解）</option>
               </select>
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">
-                Model ID <span className="text-red-500">*</span>
+              <label className="block text-xs text-fg-secondary mb-1">
+                Model ID <span className="text-danger">*</span>
               </label>
               <input
                 type="text"
                 value={form.model_id}
                 onChange={(e) => setForm({ ...form, model_id: e.target.value })}
                 placeholder="如：gemini-3.1-flash-image-preview"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono"
+                className="w-full px-3 py-2 border border-border-default rounded-md text-sm font-mono"
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">
-                Label <span className="text-red-500">*</span>
+              <label className="block text-xs text-fg-secondary mb-1">
+                Label <span className="text-danger">*</span>
               </label>
               <input
                 type="text"
                 value={form.label}
                 onChange={(e) => setForm({ ...form, label: e.target.value })}
                 placeholder="如：Nano Banana 2"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">Badge</label>
+              <label className="block text-xs text-fg-secondary mb-1">Badge</label>
               <input
                 type="text"
                 value={form.badge}
                 onChange={(e) => setForm({ ...form, badge: e.target.value })}
                 placeholder="可选，如：推荐"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
               />
             </div>
             <div className="col-span-2">
-              <label className="block text-xs text-gray-600 mb-1">
+              <label className="block text-xs text-fg-secondary mb-1">
                 Description
               </label>
               <input
@@ -232,11 +232,11 @@ export default function AiModelsAdminPage() {
                   setForm({ ...form, description: e.target.value })
                 }
                 placeholder="一两句说明，前端会显示"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">
+              <label className="block text-xs text-fg-secondary mb-1">
                 Sort order
               </label>
               <input
@@ -245,11 +245,11 @@ export default function AiModelsAdminPage() {
                 onChange={(e) =>
                   setForm({ ...form, sort_order: Number(e.target.value) })
                 }
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
               />
             </div>
             <div className="flex items-center gap-4 pt-5">
-              <label className="flex items-center gap-2 text-sm text-gray-700">
+              <label className="flex items-center gap-2 text-sm text-fg-secondary">
                 <input
                   type="checkbox"
                   checked={form.enabled}
@@ -259,7 +259,7 @@ export default function AiModelsAdminPage() {
                 />
                 启用
               </label>
-              <label className="flex items-center gap-2 text-sm text-gray-700">
+              <label className="flex items-center gap-2 text-sm text-fg-secondary">
                 <input
                   type="checkbox"
                   checked={form.is_default}
@@ -276,7 +276,7 @@ export default function AiModelsAdminPage() {
                 disabled={
                   submitting || !form.model_id.trim() || !form.label.trim()
                 }
-                className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50"
+                className="px-4 py-2 bg-brand-600 text-white text-sm rounded-md hover:bg-brand-700 disabled:opacity-50"
               >
                 {submitting ? "保存中..." : "保存"}
               </button>
@@ -288,19 +288,19 @@ export default function AiModelsAdminPage() {
       {(["image_gen", "vision"] as Category[]).map((cat) => (
         <section
           key={cat}
-          className="bg-white rounded-lg shadow-sm border border-gray-200 mb-6"
+          className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle mb-6"
         >
-          <div className="px-6 py-3 border-b border-gray-200">
-            <h2 className="text-sm font-semibold text-gray-800">
+          <div className="px-6 py-3 border-b border-border-subtle">
+            <h2 className="text-sm font-semibold text-fg-primary">
               {CATEGORY_LABEL[cat]}{" "}
-              <span className="text-gray-400">({grouped[cat].length})</span>
+              <span className="text-fg-tertiary">({grouped[cat].length})</span>
             </h2>
-            <p className="mt-0.5 text-xs text-gray-500">{CATEGORY_HINT[cat]}</p>
+            <p className="mt-0.5 text-xs text-fg-tertiary">{CATEGORY_HINT[cat]}</p>
           </div>
           {loading ? (
-            <div className="p-6 text-sm text-gray-500">加载中...</div>
+            <div className="p-6 text-sm text-fg-tertiary">加载中...</div>
           ) : grouped[cat].length === 0 ? (
-            <div className="p-6 text-sm text-gray-500">暂无模型</div>
+            <div className="p-6 text-sm text-fg-tertiary">暂无模型</div>
           ) : (
             <ul className="divide-y divide-gray-200">
               {grouped[cat].map((m) => (
@@ -332,30 +332,30 @@ function ModelRow({
     <li className="px-6 py-3 flex items-center gap-3">
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-gray-900">
+          <span className="text-sm font-medium text-fg-primary">
             {model.label}
           </span>
           {model.badge && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-600 text-white">
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-brand-600 text-white">
               {model.badge}
             </span>
           )}
           {model.is_default === 1 && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 border border-green-300">
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-success border border-green-300">
               默认
             </span>
           )}
           {model.enabled === 0 && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-600">
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-elevated text-fg-secondary">
               已停用
             </span>
           )}
         </div>
-        <div className="text-xs text-gray-500 font-mono mt-0.5 truncate">
+        <div className="text-xs text-fg-tertiary font-mono mt-0.5 truncate">
           {model.model_id}
         </div>
         {model.description && (
-          <div className="text-xs text-gray-500 mt-0.5 truncate">
+          <div className="text-xs text-fg-tertiary mt-0.5 truncate">
             {model.description}
           </div>
         )}
@@ -368,8 +368,8 @@ function ModelRow({
           }
           className={`text-xs px-2 py-1 rounded border ${
             model.enabled === 1
-              ? "border-gray-300 text-gray-700 hover:bg-gray-50"
-              : "border-blue-500 text-blue-700 bg-blue-50 hover:bg-blue-100"
+              ? "border-border-default text-fg-secondary hover:bg-bg-tertiary"
+              : "border-brand-500 text-brand-400 bg-[var(--brand-50-bg)] hover:bg-[var(--brand-100-bg)]"
           }`}
         >
           {model.enabled === 1 ? "停用" : "启用"}
@@ -377,14 +377,14 @@ function ModelRow({
         {model.is_default !== 1 && (
           <button
             onClick={() => onPatch(model.id, { is_default: true })}
-            className="text-xs px-2 py-1 rounded border border-green-500 text-green-700 hover:bg-green-50"
+            className="text-xs px-2 py-1 rounded border border-green-500 text-success hover:bg-[var(--success-bg)]"
           >
             设为默认
           </button>
         )}
         <button
           onClick={() => onDelete(model.id)}
-          className="text-xs px-2 py-1 rounded text-red-600 hover:bg-red-50"
+          className="text-xs px-2 py-1 rounded text-danger hover:bg-[var(--danger-bg)]"
         >
           删除
         </button>

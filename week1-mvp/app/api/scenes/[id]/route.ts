@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
 import { deleteUploadFile } from "@/lib/uploads";
+import { SCENE_CATEGORY_LABELS } from "@/lib/scene-categories";
 
 export const runtime = "nodejs";
 type Params = { params: Promise<{ id: string }> };
@@ -29,6 +30,14 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       push("notes", body.notes.trim() || null);
     if (typeof body.sort_order === "number")
       push("sort_order", body.sort_order);
+    // category：null = 清空；字符串 = 验证白名单
+    if (body.category === null) {
+      push("category", null);
+    } else if (typeof body.category === "string") {
+      const c = body.category.trim();
+      const valid = c === "" ? null : c in SCENE_CATEGORY_LABELS ? c : null;
+      push("category", valid);
+    }
 
     if (updates.length === 0) {
       return NextResponse.json({ error: "没有要更新的字段" }, { status: 400 });

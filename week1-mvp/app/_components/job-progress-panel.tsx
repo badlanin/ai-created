@@ -100,12 +100,12 @@ export function JobProgressPanel({
   return (
     <div className="space-y-3">
       {/* 汇总卡片 */}
-      <div className="rounded-md border border-blue-200 bg-blue-50/50 p-3">
+      <div className="rounded-md border border-[rgba(59,130,246,0.3)] bg-[var(--brand-50-bg)]/50 p-3">
         <div className="flex items-center justify-between gap-2 mb-2">
-          <div className="flex items-center gap-2 text-sm font-medium text-gray-900">
+          <div className="flex items-center gap-2 text-sm font-medium text-fg-primary">
             <StatusDot status={job.status} />
             <span>{jobStatusLabel(job.status)}</span>
-            <span className="text-xs text-gray-500 font-mono">
+            <span className="text-xs text-fg-tertiary font-mono">
               #{job.id.slice(0, 8)}
             </span>
           </div>
@@ -113,7 +113,7 @@ export function JobProgressPanel({
             <button
               onClick={handleCancel}
               disabled={cancelling || job.status === "canceling"}
-              className="px-2 py-1 text-xs rounded border border-red-200 text-red-700 hover:bg-red-50 disabled:opacity-40"
+              className="px-2 py-1 text-xs rounded border border-[rgba(239,68,68,0.3)] text-danger hover:bg-[var(--danger-bg)] disabled:opacity-40"
               title="已在生成的不受影响，仅丢弃队列剩余"
             >
               {cancelling || job.status === "canceling" ? "取消中…" : "强制停止"}
@@ -121,38 +121,38 @@ export function JobProgressPanel({
           ) : onCancelDone ? (
             <button
               onClick={onCancelDone}
-              className="px-2 py-1 text-xs rounded text-gray-500 hover:text-gray-800"
+              className="px-2 py-1 text-xs rounded text-fg-tertiary hover:text-fg-primary"
             >
               收起
             </button>
           ) : null}
         </div>
 
-        <div className="space-y-1.5 text-xs text-gray-700">
+        <div className="space-y-1.5 text-xs text-fg-secondary">
           <ProgressBar
             completed={job.completed_count}
             total={job.total_count}
             failed={job.failed_count}
             canceled={job.canceled_count}
           />
-          <div className="flex justify-between text-[11px] text-gray-600">
+          <div className="flex justify-between text-[11px] text-fg-secondary">
             <span>
-              <b className="text-gray-900">{job.completed_count}</b> /{" "}
+              <b className="text-fg-primary">{job.completed_count}</b> /{" "}
               {job.total_count} 完成
               {job.failed_count > 0 ? (
-                <span className="ml-1.5 text-red-600">
+                <span className="ml-1.5 text-danger">
                   · {job.failed_count} 失败
                 </span>
               ) : null}
               {job.canceled_count > 0 ? (
-                <span className="ml-1.5 text-gray-400">
+                <span className="ml-1.5 text-fg-tertiary">
                   · {job.canceled_count} 跳过
                 </span>
               ) : null}
             </span>
             <span>¥{job.total_cost_cny.toFixed(2)}</span>
           </div>
-          <div className="flex justify-between text-[11px] text-gray-500">
+          <div className="flex justify-between text-[11px] text-fg-tertiary">
             <span>耗时 {formatDuration(elapsedMs)}</span>
             {estimatedRemainingMs !== null && running ? (
               <span>
@@ -163,18 +163,18 @@ export function JobProgressPanel({
 
           {/* 被 quota 挡住时的倒计时 */}
           {running && waitingItem && nextTokenReadyAtMs ? (
-            <div className="mt-2 rounded bg-amber-50 border border-amber-200 px-2 py-1.5 flex items-center justify-between">
-              <span className="text-[11px] text-amber-800">
+            <div className="mt-2 rounded bg-[var(--warn-bg)] border border-amber-200 px-2 py-1.5 flex items-center justify-between">
+              <span className="text-[11px] text-warn">
                 等待 Google quota…
               </span>
-              <span className="text-[11px] font-mono text-amber-700">
+              <span className="text-[11px] font-mono text-warn">
                 {formatCountdown(nextTokenReadyAtMs + clockSkewMs - Date.now())}
               </span>
             </div>
           ) : null}
 
           {job.error_message ? (
-            <div className="mt-2 text-[11px] text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5 break-all">
+            <div className="mt-2 text-[11px] text-danger bg-[var(--danger-bg)] border border-[rgba(239,68,68,0.3)] rounded px-2 py-1.5 break-all">
               {job.error_message}
             </div>
           ) : null}
@@ -183,23 +183,23 @@ export function JobProgressPanel({
 
       {/* 调试日志（折叠） */}
       {items.length > 0 ? (
-        <div className="rounded-md border border-gray-200">
+        <div className="rounded-md border border-border-subtle">
           <button
             type="button"
             onClick={() => setShowLog((v) => !v)}
-            className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] text-gray-500 hover:text-gray-800 hover:bg-gray-50"
+            className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] text-fg-tertiary hover:text-fg-primary hover:bg-bg-tertiary"
           >
             <span>详细日志（{items.length} 条）</span>
             <span>{showLog ? "▾" : "▸"}</span>
           </button>
           {showLog ? (
-            <div className="px-3 pb-2 space-y-0.5 max-h-48 overflow-y-auto text-[10px] font-mono text-gray-600">
+            <div className="px-3 pb-2 space-y-0.5 max-h-48 overflow-y-auto text-[10px] font-mono text-fg-secondary">
               {items.map((it) => (
                 <div key={it.id} className="flex items-center gap-1.5 truncate">
                   <span
                     className={`w-1.5 h-1.5 rounded-full shrink-0 ${itemStatusColor(it.status)}`}
                   />
-                  <span className="w-12 tabular-nums text-gray-400">
+                  <span className="w-12 tabular-nums text-fg-tertiary">
                     #{it.idx + 1}
                   </span>
                   <span className="w-16 shrink-0">{it.status}</span>
@@ -208,7 +208,7 @@ export function JobProgressPanel({
                     {it.error_message ? ` — ${it.error_message}` : ""}
                   </span>
                   {it.cost_cny !== null ? (
-                    <span className="shrink-0 tabular-nums text-gray-500">
+                    <span className="shrink-0 tabular-nums text-fg-tertiary">
                       ¥{it.cost_cny.toFixed(3)}
                     </span>
                   ) : null}
@@ -223,7 +223,7 @@ export function JobProgressPanel({
       {completed.length > 0 || failed.length > 0 ? (
         <div>
           <div className="flex items-center justify-between mb-1.5 gap-2">
-            <div className="text-[11px] text-gray-500">
+            <div className="text-[11px] text-fg-tertiary">
               已完成（{completed.length}）
               {failed.length > 0 ? `· 失败 ${failed.length}` : ""}
             </div>
@@ -233,7 +233,7 @@ export function JobProgressPanel({
                   <button
                     onClick={() => downloadChosen(completed.filter((it) => selectedIds.has(it.id)))}
                     disabled={zipping}
-                    className="text-[10px] px-1.5 py-0.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                    className="text-[10px] px-1.5 py-0.5 rounded bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50"
                   >
                     {zipping && zipProgress
                       ? `打包 ${zipProgress.done}/${zipProgress.total}`
@@ -243,7 +243,7 @@ export function JobProgressPanel({
                 <button
                   onClick={() => downloadChosen(completed)}
                   disabled={zipping}
-                  className="text-[10px] px-1.5 py-0.5 rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
+                  className="text-[10px] px-1.5 py-0.5 rounded bg-success text-white hover:bg-green-700 disabled:opacity-50"
                 >
                   {zipping && zipProgress
                     ? `打包 ${zipProgress.done}/${zipProgress.total}`
@@ -272,8 +272,8 @@ export function JobProgressPanel({
                       }}
                       className={`w-4 h-4 rounded border-2 flex items-center justify-center text-[9px] ${
                         isSel
-                          ? "bg-blue-600 border-blue-600 text-white"
-                          : "bg-white/90 border-gray-400"
+                          ? "bg-brand-600 border-transparent text-white"
+                          : "bg-bg-elevated/90 border-border-strong"
                       }`}
                     >
                       {isSel ? "✓" : ""}
@@ -297,7 +297,7 @@ export function JobProgressPanel({
                           );
                         }
                       }}
-                      className="px-2 py-0.5 bg-white/90 text-gray-800 text-[10px] rounded"
+                      className="px-2 py-0.5 bg-bg-elevated/90 text-fg-primary text-[10px] rounded"
                     >
                       下载
                     </button>
@@ -309,7 +309,7 @@ export function JobProgressPanel({
               <div
                 key={it.id}
                 title={it.error_message ?? "生成失败"}
-                className="relative aspect-[3/4] rounded-md bg-red-50 border border-red-300 flex items-center justify-center text-[10px] text-red-700 p-1.5 text-center overflow-hidden"
+                className="relative aspect-[3/4] rounded-md bg-[var(--danger-bg)] border border-red-300 flex items-center justify-center text-[10px] text-danger p-1.5 text-center overflow-hidden"
               >
                 <div>
                   <div className="font-medium">✕ 失败</div>
@@ -379,13 +379,13 @@ function jobStatusLabel(s: PolledJob["status"]): string {
 function StatusDot({ status }: { status: PolledJob["status"] }) {
   const color =
     status === "running"
-      ? "bg-blue-500 animate-pulse"
+      ? "bg-brand-500 animate-pulse"
       : status === "canceling"
         ? "bg-amber-500 animate-pulse"
         : status === "completed"
           ? "bg-green-500"
           : status === "canceled"
-            ? "bg-gray-400"
+            ? "bg-fg-muted"
             : "bg-red-500";
   return <span className={`inline-block w-2 h-2 rounded-full ${color}`} />;
 }
@@ -393,13 +393,13 @@ function StatusDot({ status }: { status: PolledJob["status"] }) {
 function itemStatusColor(s: PolledJobItem["status"]): string {
   return (
     {
-      queued: "bg-gray-300",
+      queued: "bg-fg-muted",
       waiting_quota: "bg-amber-500",
-      processing: "bg-blue-500 animate-pulse",
+      processing: "bg-brand-500 animate-pulse",
       completed: "bg-green-500",
       failed: "bg-red-500",
-      canceled: "bg-gray-300",
-    }[s] || "bg-gray-300"
+      canceled: "bg-fg-muted",
+    }[s] || "bg-fg-muted"
   );
 }
 
@@ -416,10 +416,10 @@ function ProgressBar({
 }) {
   const pct = (n: number) => (total > 0 ? (n / total) * 100 : 0);
   return (
-    <div className="relative h-2 w-full rounded-full bg-gray-200 overflow-hidden flex">
+    <div className="relative h-2 w-full rounded-full bg-bg-elevated overflow-hidden flex">
       <div className="h-full bg-green-500" style={{ width: `${pct(completed)}%` }} />
       <div className="h-full bg-red-500" style={{ width: `${pct(failed)}%` }} />
-      <div className="h-full bg-gray-400" style={{ width: `${pct(canceled)}%` }} />
+      <div className="h-full bg-fg-muted" style={{ width: `${pct(canceled)}%` }} />
     </div>
   );
 }

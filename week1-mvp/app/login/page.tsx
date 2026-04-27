@@ -2,6 +2,7 @@
 
 import { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { Sparkles } from "lucide-react";
 
 function LoginForm() {
   const router = useRouter();
@@ -37,19 +38,50 @@ function LoginForm() {
   }
 
   return (
-    <main className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+    <main className="min-h-screen bg-bg-primary flex items-center justify-center p-4 relative overflow-hidden">
+      {/* 背景光晕装饰 */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -top-24 -right-24 w-[480px] h-[480px] rounded-full"
+        style={{
+          background:
+            "radial-gradient(circle, rgba(59, 130, 246, 0.15) 0%, transparent 70%)",
+        }}
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -bottom-24 -left-24 w-[480px] h-[480px] rounded-full"
+        style={{
+          background:
+            "radial-gradient(circle, rgba(59, 130, 246, 0.08) 0%, transparent 70%)",
+        }}
+      />
+
       <form
         onSubmit={handleSubmit}
-        className="w-full max-w-sm bg-white rounded-lg shadow border border-gray-200 p-6"
+        className="w-full max-w-sm bg-bg-secondary rounded-lg border border-border-default shadow-lg p-7 relative z-10"
       >
-        <h1 className="text-2xl font-bold text-gray-900 mb-1">
-          伴娘服 AI 图像工具
-        </h1>
-        <p className="text-xs text-gray-500 mb-6">团队内部登录</p>
+        <div className="flex items-center gap-3 mb-1.5">
+          <span
+            className="w-10 h-10 rounded-md flex items-center justify-center text-white"
+            style={{
+              background: "var(--brand-gradient)",
+              boxShadow: "0 0 20px var(--brand-glow)",
+            }}
+          >
+            <Sparkles size={18} strokeWidth={2.2} />
+          </span>
+          <h1 className="text-[18px] font-bold text-fg-primary tracking-tight">
+            服装AI生图工具
+          </h1>
+        </div>
+        <p className="text-[12px] text-fg-tertiary mb-6 ml-[52px]">
+          团队内部登录
+        </p>
 
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-[12px] font-medium text-fg-secondary mb-1.5">
               用户名
             </label>
             <input
@@ -57,13 +89,13 @@ function LoginForm() {
               autoComplete="username"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              className="input"
               required
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-[12px] font-medium text-fg-secondary mb-1.5">
               密码
             </label>
             <input
@@ -71,13 +103,20 @@ function LoginForm() {
               autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              className="input"
               required
             />
           </div>
 
           {error && (
-            <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
+            <div
+              className="p-3 rounded-md text-[13px] border"
+              style={{
+                background: "var(--danger-bg)",
+                borderColor: "rgba(239, 68, 68, 0.3)",
+                color: "var(--danger)",
+              }}
+            >
               {error}
             </div>
           )}
@@ -85,7 +124,7 @@ function LoginForm() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+            className="btn btn-primary btn-md w-full"
           >
             {loading ? "登录中..." : "登录"}
           </button>
@@ -97,7 +136,7 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<div />}>
+    <Suspense fallback={<div className="min-h-screen bg-bg-primary" />}>
       <LoginForm />
     </Suspense>
   );

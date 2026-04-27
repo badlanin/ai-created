@@ -180,26 +180,34 @@ export function ImageCropper({
       </div>
 
       {/* 底部操作台 */}
-      <div className="bg-white border-t border-gray-300 px-4 py-3">
+      <div className="bg-bg-secondary border-t border-border-default px-4 py-3">
         <div className="max-w-4xl mx-auto space-y-3">
           {/* 比例切换 */}
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-gray-500 mr-1">比例</span>
+            <span className="text-xs text-fg-tertiary mr-1">比例</span>
             {ASPECT_PRESETS.map((p) => (
               <button
                 key={p.label}
                 onClick={() => handleAspectChange(p.value)}
-                className={`px-3 py-1 rounded-md border text-xs ${
+                className={`px-3 py-1.5 rounded-md border text-xs transition-colors ${
                   aspect === p.value
-                    ? "border-blue-500 bg-blue-50 text-blue-800"
-                    : "border-gray-300 hover:border-gray-400"
+                    ? "border-transparent text-brand-400 font-medium"
+                    : "border-border-default text-fg-secondary hover:border-border-strong hover:text-fg-primary"
                 }`}
+                style={
+                  aspect === p.value
+                    ? {
+                        background: "var(--brand-50-bg)",
+                        borderColor: "rgba(59, 130, 246, 0.4)",
+                      }
+                    : undefined
+                }
               >
                 {p.label}
               </button>
             ))}
             {completedCrop && imgNaturalSize ? (
-              <span className="ml-auto text-xs text-gray-500 font-mono">
+              <span className="ml-auto text-xs text-fg-tertiary font-mono">
                 {Math.round(
                   (completedCrop.width * imgNaturalSize.w) /
                     (imgRef.current?.width || 1),
@@ -214,21 +222,18 @@ export function ImageCropper({
             ) : null}
           </div>
 
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-gray-500">
+          <div className="flex items-center justify-between gap-4">
+            <p className="text-xs text-fg-tertiary flex-1">
               拖拽裁剪框四角或四边的锚点调整大小；拖动中间移动位置。建议把原图上的人物 / 水印裁掉，只留服装部分。
             </p>
-            <div className="flex gap-2">
-              <button
-                onClick={onCancel}
-                className="px-4 py-2 text-sm text-gray-600 rounded-md hover:bg-gray-100"
-              >
+            <div className="flex gap-2 shrink-0">
+              <button onClick={onCancel} className="btn btn-ghost btn-md">
                 取消
               </button>
               <button
                 onClick={handleConfirm}
                 disabled={!completedCrop || processing}
-                className="px-5 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+                className="btn btn-primary btn-md"
               >
                 {processing ? "处理中..." : "确认裁剪"}
               </button>

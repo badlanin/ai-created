@@ -23,18 +23,14 @@ export interface AppShellProps {
 }
 
 /**
- * 应用三栏骨架
+ * 应用三栏骨架（深色主题版）
  *
  * 布局：
- *   [左栏 260px] [中栏 flex-1] [右栏 380px]
+ *   [左栏 240px] [中栏 flex-1] [右栏 380px / 可选]
  *
  * 响应式：
- *   - 屏幕 < 1280px：左栏默认折叠到 56px（仅图标）
+ *   - 屏幕 < 1280px：左栏自动折叠到 56px（仅图标）
  *   - 用户可手动点折叠/展开按钮
- *   - 右栏始终显示（要自己 sticky）
- *
- * 使用：
- *   pages 只需要写中栏 + 右栏内容，布局外壳由 shell 负责。
  */
 export function AppShell({
   leftNav,
@@ -61,7 +57,7 @@ export function AppShell({
   }, [narrow, manuallyCollapsed]);
 
   return (
-    <div className="flex h-full w-full overflow-hidden bg-gray-50">
+    <div className="flex h-full w-full overflow-hidden bg-bg-primary">
       {/* 左栏 */}
       <LeftNav
         {...leftNav}
@@ -80,7 +76,7 @@ export function AppShell({
       {/* 右栏（可选）*/}
       {rightPanel ? (
         <aside
-          className="border-l border-gray-200 bg-white overflow-y-auto flex-shrink-0"
+          className="border-l border-border-subtle bg-bg-secondary overflow-y-auto flex-shrink-0"
           style={{ width: rightWidth }}
         >
           {rightPanel}

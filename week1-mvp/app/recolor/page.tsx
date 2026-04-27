@@ -1,12 +1,22 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Palette, Sparkles, X, Upload, Crop as CropIcon, Search } from "lucide-react";
 import { ImageCropper } from "@/app/_components/image-cropper";
 import { AppShell } from "@/app/_components/app-shell";
-import { NotificationStack, useNotifications, notifyHelpers } from "@/app/_components/notification-stack";
+import {
+  NotificationStack,
+  useNotifications,
+  notifyHelpers,
+} from "@/app/_components/notification-stack";
 import { TaskViewport } from "@/app/_components/task-viewport";
 import { Thumbnail, ThumbnailBadge } from "@/app/_components/thumbnail";
 import { ResetButton } from "@/app/_components/reset-button";
+import {
+  CollapsibleSection,
+  Dropzone,
+  SearchInput,
+} from "@/app/_components/ui";
 import { useCurrentUser } from "@/lib/hooks/use-current-user";
 import { useJobPolling } from "@/lib/hooks/use-job-polling";
 import { useSlotStore } from "@/lib/stores/task-store";
@@ -69,21 +79,19 @@ const QUALITY_LEVELS: Array<{
   label: string;
   desc: string;
 }> = [
-  {
-    value: "2k",
-    label: "2K 高清（推荐）",
-    desc: "约 1792×2400 · 速度/成本/清晰度平衡最佳",
-  },
-  {
-    value: "4k",
-    label: "4K 超清",
-    desc: "约 3584×4800 · 最大清晰度，成本 ~15x",
-  },
-  {
-    value: "hd",
-    label: "HD 清晰",
-    desc: "约 896×1200 · 最快最省",
-  },
+  { value: "2k", label: "2K 高清（推荐）", desc: "约 1792×2400" },
+  { value: "4k", label: "4K 超清", desc: "约 3584×4800 · 贵 15x" },
+  { value: "hd", label: "HD 清晰", desc: "约 896×1200 · 最省" },
+];
+
+const COLOR_GROUP_ORDER = [
+  "蓝色系",
+  "绿色系",
+  "中性色系",
+  "粉/红色系",
+  "紫色系",
+  "黄色系",
+  "深色系",
 ];
 
 /* ─────────── 客户端压缩 ─────────── */
@@ -146,7 +154,8 @@ export default function RecolorPage() {
   const [selectedColorIds, setSelectedColorIds] = useState<Set<number>>(
     new Set(),
   );
-  /** 临时颜色列表（点"添加"后入栈）。提交时会作为 custom_colors 发送 */
+  const [colorQuery, setColorQuery] = useState(""); // 颜色搜索
+
   const [customColors, setCustomColors] = useState<
     Array<{ name: string; hex: string }>
   >([]);
@@ -158,16 +167,10 @@ export default function RecolorPage() {
 
   // ─── 提交 / 任务 ───
   const [submitting, setSubmitting] = useState(false);
-  /** 初始化：如果 slotStore 里有活跃 job_id，恢复；否则 null */
   const [activeJobId, setActiveJobId] = useState<string | null>(
     () => slotStore.get<string>("activeJobId") ?? null,
   );
   const [activeJobCount, setActiveJobCount] = useState(0);
-  /**
-   * 中栏显示模式：
-   *   - 有 activeJobId 时初始 = "task"（让用户回来直接看到进度）
-   *   - 没有时初始 = "form"（正常编辑）
-   */
   const [viewMode, setViewMode] = useState<"form" | "task">(
     () => (slotStore.get<string>("activeJobId") ? "task" : "form"),
   );
@@ -208,7 +211,6 @@ export default function RecolorPage() {
       })
       .catch(() => {});
 
-    // 恢复 slot 里存着的其他状态
     const savedAspect = slotStore.get<string>("aspectRatio");
     if (savedAspect) setAspectRatio(savedAspect);
     const savedQuality = slotStore.get<QualityLevel>("qualityLevel");
@@ -225,7 +227,6 @@ export default function RecolorPage() {
     const savedMatIds = slotStore.get<number[]>("selectedMaterialIds");
     if (savedMatIds) setSelectedMaterialIds(savedMatIds);
 
-    // 活跃任务数
     fetch("/api/jobs/active")
       .then((r) => (r.ok ? r.json() : { count: 0 }))
       .then((d) => setActiveJobCount(d.count || 0))
@@ -233,7 +234,7 @@ export default function RecolorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ─── 持久化状态到 slotStore ─── */
+  /* ─── 持久化 ─── */
   useEffect(() => {
     slotStore.merge({
       aspectRatio,
@@ -259,7 +260,6 @@ export default function RecolorPage() {
     garmentAttrs,
   ]);
 
-  /* ─── 估价（参数变化时 debounce 查询） ─── */
   const totalCount = useMemo(() => {
     const c = selectedColorIds.size + customColors.length;
     return files.length * c;
@@ -274,20 +274,22 @@ export default function RecolorPage() {
     }
     if (
       customColors.some(
-        (c) => c.name === name || c.hex.toLowerCase() === customHex.toLowerCase(),
+        (c) =>
+          c.name === name || c.hex.toLowerCase() === customHex.toLowerCase(),
       )
     ) {
       notifyHelpers.warn(push, "已有同名或同色号的临时色");
       return;
     }
     setCustomColors((prev) => [...prev, { name, hex: customHex }]);
-    setCustomName(""); // 加完清空名字，色号保留方便下一个微调
+    setCustomName("");
   }
 
   function removeCustomColor(i: number) {
     setCustomColors((prev) => prev.filter((_, idx) => idx !== i));
   }
 
+  /* ─── 估价 ─── */
   useEffect(() => {
     if (totalCount === 0 || !model) {
       setEstimate(null);
@@ -320,10 +322,8 @@ export default function RecolorPage() {
     return () => clearTimeout(t);
   }, [totalCount, model, qualityLevel]);
 
-  /* ─── 轮询当前 job ─── */
+  /* ─── 轮询 ─── */
   const handleJobFinished = useCallback(() => {
-    // 成功完成 / 取消 / 失败时，跳一条通知，不自动清 activeJobId
-    // 保留状态让用户看结果 + 手动点"收起"才清掉
     fetch("/api/jobs/active")
       .then((r) => (r.ok ? r.json() : { count: 0 }))
       .then((d) => setActiveJobCount(d.count || 0))
@@ -334,7 +334,6 @@ export default function RecolorPage() {
     intervalMs: 1500,
     onFinished: (result) => {
       handleJobFinished();
-      // 注意：onFinished 由 useJobPolling 在 job 进入终态时调用一次
       const { job } = result;
       if (job.status === "completed") {
         notifyHelpers.success(
@@ -360,8 +359,6 @@ export default function RecolorPage() {
     },
   });
 
-  // 轮询错误自恢复：如果轮询报"任务不存在"（被删了或后台清理了），
-  // 清掉 activeJobId 并切回表单，避免用户卡在空视窗
   useEffect(() => {
     if (polling.error && polling.error.includes("不存在")) {
       setActiveJobId(null);
@@ -377,25 +374,31 @@ export default function RecolorPage() {
   }, [polling.error]);
 
   /* ─── 文件处理 ─── */
-  async function onPickFiles(fileList: FileList | null) {
-    if (!fileList || fileList.length === 0) {
+  async function onPickFiles(picked: File[]) {
+    if (picked.length === 0) {
       setFiles([]);
       setCompressedBlobs([]);
       setGarmentAttrs(null);
       setSelectedMaterialIds([]);
       return;
     }
-    const picked = Array.from(fileList).slice(0, 5);
-    setFiles(picked);
+    const trimmed = picked.slice(0, 5);
+    setFiles(trimmed);
     setCompressedBlobs([]);
-    setCroppedFlags(new Array(picked.length).fill(false));
+    setCroppedFlags(new Array(trimmed.length).fill(false));
     setGarmentAttrs(null);
     setSelectedMaterialIds([]);
     try {
-      const blobs = await Promise.all(picked.map((f) => resizeImage(f, 2048)));
+      const blobs = await Promise.all(
+        trimmed.map((f) => resizeImage(f, 2048)),
+      );
       setCompressedBlobs(blobs);
     } catch (e) {
-      notifyHelpers.error(push, "图片读取失败", e instanceof Error ? e.message : String(e));
+      notifyHelpers.error(
+        push,
+        "图片读取失败",
+        e instanceof Error ? e.message : String(e),
+      );
     }
   }
 
@@ -480,7 +483,9 @@ export default function RecolorPage() {
   }
 
   function addMaterial(id: number) {
-    setSelectedMaterialIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    setSelectedMaterialIds((prev) =>
+      prev.includes(id) ? prev : [...prev, id],
+    );
     setShowMaterialPicker(false);
   }
   function removeMaterial(id: number) {
@@ -494,7 +499,42 @@ export default function RecolorPage() {
     (m) => !selectedMaterialIds.includes(m.id),
   );
 
-  /* ─── 提交（走异步 API） ─── */
+  /* ─── 颜色：搜索 + 分组 ─── */
+  const colorGroups = useMemo(() => {
+    // 1) 应用搜索过滤（按 name 或 hex 模糊匹配，不区分大小写）
+    const q = colorQuery.trim().toLowerCase();
+    const filtered = q
+      ? colors.filter(
+          (c) =>
+            c.name.toLowerCase().includes(q) ||
+            c.hex.toLowerCase().includes(q),
+        )
+      : colors;
+
+    // 2) 按 color_group_label 分组
+    const groups = new Map<string, Color[]>();
+    for (const c of filtered) {
+      const key = c.color_group_label || "未分类";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(c);
+    }
+
+    // 3) 按预设顺序排列
+    const orderedKeys = [
+      ...COLOR_GROUP_ORDER.filter((k) => groups.has(k)),
+      ...Array.from(groups.keys()).filter(
+        (k) => !COLOR_GROUP_ORDER.includes(k),
+      ),
+    ];
+    return orderedKeys.map((key) => ({ key, items: groups.get(key)! }));
+  }, [colors, colorQuery]);
+
+  const totalFilteredColors = useMemo(
+    () => colorGroups.reduce((acc, g) => acc + g.items.length, 0),
+    [colorGroups],
+  );
+
+  /* ─── 提交 ─── */
   async function handleSubmit() {
     if (compressedBlobs.length === 0 || files.length === 0) {
       notifyHelpers.warn(push, "请先上传产品图");
@@ -549,11 +589,11 @@ export default function RecolorPage() {
       setActiveJobId(body.job_id);
       slotStore.setActiveJob(body.job_id);
       setActiveJobCount((v) => v + 1);
-      setViewMode("task"); // 自动切到任务视窗，消除黑盒感
+      setViewMode("task");
       notifyHelpers.info(
         push,
         `任务已提交`,
-        `共 ${totalCount} 张 · Google quota 2/分钟，预计耗时 ${Math.ceil(totalCount / 2)}+ 分钟`,
+        `共 ${totalCount} 张 · 受 quota 限制，预计耗时 ${Math.ceil(totalCount / 2)}+ 分钟`,
       );
     } catch (e) {
       notifyHelpers.error(
@@ -577,6 +617,7 @@ export default function RecolorPage() {
     setCustomColors([]);
     setCustomName("");
     setUserSeed("");
+    setColorQuery("");
     setActiveJobId(null);
     slotStore.reset();
     notifyHelpers.info(push, "已清空当前任务");
@@ -588,22 +629,16 @@ export default function RecolorPage() {
   }
 
   if (!user) {
-    return (
-      <div className="p-8 text-gray-500 text-sm">正在加载…</div>
-    );
+    return <div className="p-8 text-fg-tertiary text-sm">正在加载…</div>;
   }
 
   /* ─────────── 渲染 ─────────── */
 
-  // 动态中栏：有活跃任务且 viewMode='task' 时，中栏整个换成 TaskViewport
   const showTaskViewport = viewMode === "task" && polling.data;
 
   return (
     <AppShell
-      leftNav={{
-        user,
-        activeJobCount,
-      }}
+      leftNav={{ user, activeJobCount }}
       rightPanel={
         <RightPanel
           aiModels={aiModels}
@@ -628,7 +663,9 @@ export default function RecolorPage() {
           onDismissJob={dismissCurrentJob}
           hasActiveTask={Boolean(polling.data)}
           viewMode={viewMode}
-          onSwitchView={() => setViewMode((m) => (m === "task" ? "form" : "task"))}
+          onSwitchView={() =>
+            setViewMode((m) => (m === "task" ? "form" : "task"))
+          }
         />
       }
     >
@@ -653,407 +690,483 @@ export default function RecolorPage() {
           }}
         />
       ) : (
-      <div className="p-4 md:p-6 max-w-4xl mx-auto">
-        <header className="mb-6">
-          <h1 className="text-2xl font-bold text-gray-900">HEX 精准换色</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            上传 → 解析款式 + 识别材质 → 选颜色批量生成
-          </p>
-        </header>
-
-        <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 space-y-6">
-          {/* Step 1: 上传 */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              1. 上传产品图
-              <span className="ml-2 text-xs text-gray-500 font-normal">
-                最多 5 张同款不同角度
-              </span>
-            </label>
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              onChange={(e) => onPickFiles(e.target.files)}
-              className="block w-full text-sm text-gray-600
-                file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0
-                file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700
-                hover:file:bg-blue-100"
-            />
-            {files.length > 0 && (
-              <div className="mt-3 grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
-                {files.map((f, i) => (
-                  <Thumbnail
-                    key={i}
-                    src={
-                      compressedBlobs[i]
-                        ? URL.createObjectURL(compressedBlobs[i])
-                        : URL.createObjectURL(f)
-                    }
-                    alt={`原图 ${i + 1}`}
-                    ratio="3/4"
-                    fit="contain"
-                    selected={croppedFlags[i]}
-                    checkbox={
-                      <span className="w-5 h-5 rounded bg-black/60 text-white text-[10px] flex items-center justify-center">
-                        {i + 1}
-                      </span>
-                    }
-                    badge={
-                      croppedFlags[i] ? (
-                        <ThumbnailBadge tone="green">已裁</ThumbnailBadge>
-                      ) : undefined
-                    }
-                    hoverOverlay={
-                      <div className="flex flex-col gap-1">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setCroppingIndex(i);
-                          }}
-                          className="px-3 py-1 bg-white/90 text-gray-800 text-xs rounded hover:bg-white"
-                        >
-                          裁剪
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            removeFile(i);
-                          }}
-                          className="px-3 py-1 bg-red-600/90 text-white text-xs rounded hover:bg-red-700"
-                        >
-                          删除
-                        </button>
-                      </div>
-                    }
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-
-          {croppingIndex !== null && compressedBlobs[croppingIndex] && (
-            <ImageCropper
-              imageSrc={URL.createObjectURL(compressedBlobs[croppingIndex])}
-              initialAspect={0}
-              onConfirm={(blob) => onCropConfirm(croppingIndex, blob)}
-              onCancel={() => setCroppingIndex(null)}
-            />
-          )}
-
-          {/* Step 2: 款式解析 */}
-          {files.length > 0 && (
+        <div className="mx-auto w-full max-w-7xl px-5 md:px-8 py-6 md:py-8">
+          <header className="mb-6 flex items-center gap-3">
+            <span
+              className="w-10 h-10 rounded-md flex items-center justify-center text-white"
+              style={{
+                background: "var(--brand-gradient)",
+                boxShadow: "0 0 16px var(--brand-glow)",
+              }}
+            >
+              <Palette size={18} strokeWidth={2.2} />
+            </span>
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="block text-sm font-medium text-gray-700">
-                  2. 款式解析
-                  <span className="ml-2 text-xs text-gray-500 font-normal">
-                    （可选，解析结果可编辑）
-                  </span>
-                </label>
-                <button
-                  type="button"
-                  onClick={handleAnalyze}
-                  disabled={analyzing || compressedBlobs.length === 0}
-                  className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {analyzing ? "解析中..." : garmentAttrs ? "重新解析" : "解析款式"}
-                </button>
-              </div>
-              {garmentAttrs && (
-                <GarmentAttrsEditor
-                  attrs={garmentAttrs}
-                  onChange={updateGarmentAttr}
-                  onMaterialTextBlur={rematchMaterials}
-                />
-              )}
+              <h1 className="text-[22px] font-bold text-fg-primary tracking-tight">
+                HEX 精准换色
+              </h1>
+              <p className="mt-0.5 text-[13px] text-fg-tertiary">
+                上传 → 解析款式 + 识别材质 → 选颜色批量生成
+              </p>
             </div>
-          )}
+          </header>
 
-          {/* Step 3: 材质 */}
-          {(garmentAttrs || selectedMaterials.length > 0) && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                3. 服装材质
-                <span className="ml-2 text-xs text-gray-500 font-normal">
-                  （自动匹配，可手动增删）
-                </span>
-              </label>
-              <div className="flex flex-wrap gap-2 items-center">
-                {selectedMaterials.map((m) => (
-                  <span
-                    key={m.id}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-blue-50 border border-blue-200 text-sm text-blue-800"
-                  >
-                    <span>{m.name}</span>
-                    {m.english_name && (
-                      <span className="text-xs text-blue-500 font-mono">
-                        {m.english_name}
-                      </span>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => removeMaterial(m.id)}
-                      className="ml-1 text-blue-400 hover:text-red-600"
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setShowMaterialPicker((v) => !v)}
-                    className="px-3 py-1.5 rounded-full border border-dashed border-gray-400 text-sm text-gray-600 hover:border-blue-500 hover:text-blue-600"
-                  >
-                    + 添加材质
-                  </button>
-                  {showMaterialPicker && (
-                    <div className="absolute top-full mt-1 left-0 z-10 bg-white border border-gray-200 rounded-md shadow-lg p-2 max-h-64 overflow-y-auto w-64">
-                      {unselectedMaterials.length === 0 ? (
-                        <div className="text-xs text-gray-500 p-2">
-                          所有材质都已添加
-                        </div>
-                      ) : (
-                        unselectedMaterials.map((m) => (
-                          <button
-                            key={m.id}
-                            onClick={() => addMaterial(m.id)}
-                            className="w-full text-left px-2 py-1.5 text-sm hover:bg-blue-50 rounded"
+          <div className="space-y-4">
+            {/* Step 1: 上传 */}
+            <CollapsibleSection
+              title="① 上传产品图"
+              description="最多 5 张同款不同角度 · 拖拽 / 点击 / Ctrl+V 粘贴"
+              defaultOpen
+            >
+              {files.length === 0 ? (
+                <Dropzone
+                  accept="image/*"
+                  multiple
+                  onFiles={onPickFiles}
+                  icon={<Upload size={28} strokeWidth={1.6} />}
+                  title="拖拽 / 点击 / Ctrl+V 粘贴上传产品图"
+                  description="支持多张同时上传（最多 5 张）"
+                />
+              ) : (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2.5">
+                    {files.map((f, i) => (
+                      <Thumbnail
+                        key={i}
+                        src={
+                          compressedBlobs[i]
+                            ? URL.createObjectURL(compressedBlobs[i])
+                            : URL.createObjectURL(f)
+                        }
+                        alt={`原图 ${i + 1}`}
+                        ratio="3/4"
+                        fit="contain"
+                        selected={croppedFlags[i]}
+                        checkbox={
+                          <span
+                            className="w-5 h-5 rounded text-white text-[10px] flex items-center justify-center"
+                            style={{ background: "rgba(0, 0, 0, 0.6)" }}
                           >
-                            <div className="font-medium text-gray-900">
-                              {m.name}
-                              {m.english_name && (
-                                <span className="ml-1 text-xs text-gray-500 font-mono">
-                                  {m.english_name}
-                                </span>
-                              )}
-                            </div>
-                            {m.description && (
-                              <div className="text-xs text-gray-500 mt-0.5 truncate">
-                                {m.description}
-                              </div>
-                            )}
-                          </button>
-                        ))
-                      )}
-                    </div>
+                            {i + 1}
+                          </span>
+                        }
+                        badge={
+                          croppedFlags[i] ? (
+                            <ThumbnailBadge tone="green">已裁</ThumbnailBadge>
+                          ) : undefined
+                        }
+                        hoverOverlay={
+                          <div className="flex flex-col gap-1">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setCroppingIndex(i);
+                              }}
+                              className="px-3 py-1 bg-white/95 text-gray-900 text-xs rounded hover:bg-white flex items-center gap-1"
+                            >
+                              <CropIcon size={11} strokeWidth={2.2} />
+                              裁剪
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeFile(i);
+                              }}
+                              className="px-3 py-1 text-white text-xs rounded flex items-center gap-1"
+                              style={{ background: "var(--danger)" }}
+                            >
+                              <X size={11} strokeWidth={2.2} />
+                              删除
+                            </button>
+                          </div>
+                        }
+                      />
+                    ))}
+                  </div>
+                  {files.length < 5 && (
+                    <Dropzone
+                      accept="image/*"
+                      multiple
+                      onFiles={(more) =>
+                        onPickFiles([...files, ...more].slice(0, 5))
+                      }
+                      compact
+                      className="aspect-[5/1] flex items-center justify-center"
+                    >
+                      <div className="absolute inset-0 flex items-center justify-center text-[12px] text-fg-tertiary pointer-events-none gap-2">
+                        <Upload size={14} strokeWidth={1.8} />
+                        继续添加（{5 - files.length} 张剩余 · 支持 Ctrl+V）
+                      </div>
+                    </Dropzone>
                   )}
                 </div>
-              </div>
-              {selectedMaterials.length === 0 && (
-                <p className="mt-2 text-xs text-amber-600">
-                  ⚠ 未匹配到任何材质，AI 可能误判面料
-                </p>
               )}
-            </div>
-          )}
+            </CollapsibleSection>
 
-          {/* Step 4: 真实感 */}
-          {realisms.length > 0 && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                4. 真实感预设
-              </label>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                {realisms.map((r) => {
-                  const active = realismId === r.id;
-                  return (
-                    <button
-                      key={r.id}
-                      type="button"
-                      onClick={() => setRealismId(r.id)}
-                      className={`text-left p-3 rounded-md border transition ${
-                        active
-                          ? "border-blue-500 bg-blue-50 ring-1 ring-blue-500"
-                          : "border-gray-300 hover:border-gray-400"
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-gray-900">
-                          {r.name}
-                        </span>
-                        {r.is_default === 1 && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700">
-                            默认
-                          </span>
-                        )}
-                      </div>
-                      {r.description && (
-                        <div className="text-xs text-gray-500 mt-1">
-                          {r.description}
-                        </div>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Step 5: 颜色 */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              5. 选择目标颜色（可多选）
-            </label>
-            {colors.length === 0 ? (
-              <div className="text-xs text-gray-500 p-3 bg-gray-50 rounded border border-dashed border-gray-300">
-                颜色库是空的，
-                <a href="/admin/colors" className="text-blue-600 underline">
-                  去添加
-                </a>
-                ，或使用下面的「临时颜色」
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {(() => {
-                  // 按色系分组（保持后端 sort_order 顺序），无分组的归到「未分类」
-                  const GROUP_ORDER = [
-                    "蓝色系",
-                    "绿色系",
-                    "中性色系",
-                    "粉/红色系",
-                    "紫色系",
-                    "黄色系",
-                    "深色系",
-                  ];
-                  const groups = new Map<string, Color[]>();
-                  for (const c of colors) {
-                    const key = c.color_group_label || "未分类";
-                    if (!groups.has(key)) groups.set(key, []);
-                    groups.get(key)!.push(c);
-                  }
-                  // 已知色系按预设顺序，未知色系追加到末尾
-                  const orderedKeys = [
-                    ...GROUP_ORDER.filter((k) => groups.has(k)),
-                    ...Array.from(groups.keys()).filter(
-                      (k) => !GROUP_ORDER.includes(k),
-                    ),
-                  ];
-                  return orderedKeys.map((groupLabel) => (
-                    <div key={groupLabel}>
-                      <div className="text-xs text-gray-500 mb-1.5 flex items-center gap-1.5">
-                        <span>{groupLabel}</span>
-                        <span className="text-gray-400">
-                          · {groups.get(groupLabel)!.length}
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
-                        {groups.get(groupLabel)!.map((c) => {
-                          const active = selectedColorIds.has(c.id);
-                          return (
-                            <button
-                              key={c.id}
-                              type="button"
-                              onClick={() => toggleColor(c.id)}
-                              className={`relative p-2 rounded-md border text-left transition ${
-                                active
-                                  ? "border-blue-500 ring-1 ring-blue-500 bg-blue-50"
-                                  : "border-gray-300 hover:border-gray-400"
-                              }`}
-                            >
-                              {c.is_popular ? (
-                                <span className="absolute top-1 right-1 px-1 py-px rounded text-[9px] font-medium leading-none bg-amber-100 text-amber-700 border border-amber-200">
-                                  流行
-                                </span>
-                              ) : null}
-                              <div
-                                className="w-full h-10 rounded border border-gray-200"
-                                style={{ backgroundColor: c.hex }}
-                              />
-                              <div className="text-xs mt-1 truncate">
-                                {c.name}
-                              </div>
-                              <div className="text-[10px] text-gray-400 font-mono truncate">
-                                {c.hex}
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ));
-                })()}
-              </div>
+            {croppingIndex !== null && compressedBlobs[croppingIndex] && (
+              <ImageCropper
+                imageSrc={URL.createObjectURL(compressedBlobs[croppingIndex])}
+                initialAspect={0}
+                onConfirm={(blob) => onCropConfirm(croppingIndex, blob)}
+                onCancel={() => setCroppingIndex(null)}
+              />
             )}
-            {/* 临时颜色 */}
-            <div className="mt-3 p-3 bg-gray-50 rounded-md border border-gray-200">
-              <div className="text-xs text-gray-500 mb-2">
-                临时颜色（可选） · 不保存到颜色库，但本次任务会参与生成
-              </div>
 
-              {/* 已添加的临时色 chip 列表 */}
-              {customColors.length > 0 && (
-                <div className="mb-2 flex flex-wrap gap-2">
-                  {customColors.map((c, i) => (
+            {/* Step 2: 款式解析 */}
+            {files.length > 0 && (
+              <CollapsibleSection
+                title="② 款式解析"
+                description="可选 · 解析结果可编辑"
+                defaultOpen={!!garmentAttrs}
+              >
+                <div className="mb-3">
+                  <button
+                    type="button"
+                    onClick={handleAnalyze}
+                    disabled={analyzing || compressedBlobs.length === 0}
+                    className="btn btn-secondary btn-sm"
+                  >
+                    <Sparkles size={12} strokeWidth={2.2} />
+                    {analyzing
+                      ? "解析中..."
+                      : garmentAttrs
+                        ? "重新解析"
+                        : "解析款式"}
+                  </button>
+                </div>
+                {garmentAttrs && (
+                  <GarmentAttrsEditor
+                    attrs={garmentAttrs}
+                    onChange={updateGarmentAttr}
+                    onMaterialTextBlur={rematchMaterials}
+                  />
+                )}
+              </CollapsibleSection>
+            )}
+
+            {/* Step 3: 材质 */}
+            {(garmentAttrs || selectedMaterials.length > 0) && (
+              <CollapsibleSection
+                title="③ 服装材质"
+                description="自动匹配，可手动增删"
+                defaultOpen
+              >
+                <div className="flex flex-wrap gap-2 items-center">
+                  {selectedMaterials.map((m) => (
                     <span
-                      key={i}
-                      className="inline-flex items-center gap-1.5 pl-1 pr-2 py-1 rounded-full bg-white border border-blue-300 text-xs text-gray-700"
+                      key={m.id}
+                      className="inline-flex items-center gap-1.5 chip chip-brand"
                     >
-                      <span
-                        className="w-4 h-4 rounded-full border border-gray-300"
-                        style={{ backgroundColor: c.hex }}
-                      />
-                      <span>{c.name}</span>
-                      <span className="text-[10px] text-gray-400 font-mono">
-                        {c.hex}
-                      </span>
+                      <span>{m.name}</span>
+                      {m.english_name && (
+                        <span className="text-[10px] text-brand-400/80 font-mono">
+                          {m.english_name}
+                        </span>
+                      )}
                       <button
                         type="button"
-                        onClick={() => removeCustomColor(i)}
-                        className="ml-0.5 text-gray-400 hover:text-red-600"
-                        aria-label="移除"
+                        onClick={() => removeMaterial(m.id)}
+                        className="ml-0.5 opacity-60 hover:opacity-100 hover:text-danger"
                       >
-                        ×
+                        <X size={10} strokeWidth={2.5} />
                       </button>
                     </span>
                   ))}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setShowMaterialPicker((v) => !v)}
+                      className="px-3 py-0.5 h-[22px] rounded-full border border-dashed border-border-default text-[11px] text-fg-tertiary hover:border-brand-500 hover:text-brand-400 inline-flex items-center"
+                    >
+                      + 添加材质
+                    </button>
+                    {showMaterialPicker && (
+                      <div className="absolute top-full mt-1 left-0 z-20 bg-bg-elevated border border-border-default rounded-md shadow-lg p-2 max-h-64 overflow-y-auto w-72 animate-fade-in">
+                        {unselectedMaterials.length === 0 ? (
+                          <div className="text-xs text-fg-tertiary p-2">
+                            所有材质都已添加
+                          </div>
+                        ) : (
+                          unselectedMaterials.map((m) => (
+                            <button
+                              key={m.id}
+                              onClick={() => addMaterial(m.id)}
+                              className="w-full text-left px-2 py-1.5 rounded hover:bg-bg-hover text-fg-primary"
+                            >
+                              <div className="text-sm font-medium">
+                                {m.name}
+                                {m.english_name && (
+                                  <span className="ml-1 text-xs text-fg-tertiary font-mono">
+                                    {m.english_name}
+                                  </span>
+                                )}
+                              </div>
+                              {m.description && (
+                                <div className="text-xs text-fg-tertiary mt-0.5 truncate">
+                                  {m.description}
+                                </div>
+                              )}
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {selectedMaterials.length === 0 && (
+                  <p className="mt-2 text-[11px] text-warn">
+                    ⚠ 未匹配到任何材质，AI 可能误判面料
+                  </p>
+                )}
+              </CollapsibleSection>
+            )}
+
+            {/* Step 4: 真实感 */}
+            {realisms.length > 0 && (
+              <CollapsibleSection
+                title="④ 真实感预设"
+                description="控制皮肤 / 发丝真实度"
+                defaultOpen={false}
+              >
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5">
+                  {realisms.map((r) => {
+                    const active = realismId === r.id;
+                    return (
+                      <button
+                        key={r.id}
+                        type="button"
+                        onClick={() => setRealismId(r.id)}
+                        className={`text-left p-3 rounded-md border text-[12px] transition-colors ${
+                          active
+                            ? "border-transparent text-fg-primary"
+                            : "border-border-default text-fg-secondary hover:border-border-strong hover:bg-bg-hover"
+                        }`}
+                        style={
+                          active
+                            ? {
+                                background: "var(--brand-50-bg)",
+                                borderColor: "rgba(59, 130, 246, 0.4)",
+                              }
+                            : undefined
+                        }
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{r.name}</span>
+                          {r.is_default === 1 && (
+                            <span className="chip chip-success text-[10px]">
+                              默认
+                            </span>
+                          )}
+                        </div>
+                        {r.description && (
+                          <div className="text-fg-tertiary mt-0.5 text-[11px]">
+                            {r.description}
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </CollapsibleSection>
+            )}
+
+            {/* Step 5: 颜色（含搜索 + 折叠分组）*/}
+            <CollapsibleSection
+              title="⑤ 选择目标颜色"
+              description={
+                selectedColorIds.size + customColors.length > 0
+                  ? `已选 ${selectedColorIds.size + customColors.length} 个`
+                  : "可多选 · 按色系折叠 · 支持搜索"
+              }
+              badge={
+                selectedColorIds.size + customColors.length > 0
+                  ? selectedColorIds.size + customColors.length
+                  : undefined
+              }
+              headerExtra={
+                <div className="w-56">
+                  <SearchInput
+                    placeholder="搜色名 / 色号（如 酒红 / #722F37）"
+                    value={colorQuery}
+                    onChange={(e) => setColorQuery(e.target.value)}
+                    onClear={() => setColorQuery("")}
+                    size="sm"
+                  />
+                </div>
+              }
+              defaultOpen
+            >
+              {colors.length === 0 ? (
+                <div className="text-xs text-fg-tertiary p-3 bg-bg-tertiary rounded-md border border-dashed border-border-default">
+                  颜色库是空的，
+                  <a
+                    href="/admin/colors"
+                    className="text-brand-400 hover:underline"
+                  >
+                    去添加
+                  </a>
+                  ，或使用下面的「临时颜色」
+                </div>
+              ) : totalFilteredColors === 0 ? (
+                <div className="text-center py-8 text-[13px] text-fg-tertiary">
+                  <Search
+                    size={20}
+                    strokeWidth={1.6}
+                    className="mx-auto mb-2 opacity-50"
+                  />
+                  没有匹配「{colorQuery}」的颜色
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {colorGroups.map((g, idx) => {
+                    const selectedInGroup = g.items.filter((c) =>
+                      selectedColorIds.has(c.id),
+                    ).length;
+                    return (
+                      <CollapsibleSection
+                        key={g.key}
+                        variant="minimal"
+                        title={g.key}
+                        badge={
+                          selectedInGroup > 0
+                            ? `${selectedInGroup}/${g.items.length}`
+                            : g.items.length
+                        }
+                        // 搜索时全部展开；否则展开第一组 + 当前选中所属组
+                        defaultOpen={
+                          colorQuery.trim().length > 0 ||
+                          idx === 0 ||
+                          g.items.some((c) => selectedColorIds.has(c.id))
+                        }
+                      >
+                        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2 mt-2">
+                          {g.items.map((c) => {
+                            const active = selectedColorIds.has(c.id);
+                            return (
+                              <button
+                                key={c.id}
+                                type="button"
+                                onClick={() => toggleColor(c.id)}
+                                className={`relative p-2 rounded-md border text-left transition-colors ${
+                                  active
+                                    ? "border-transparent ring-2 ring-brand-500 ring-offset-2 ring-offset-bg-primary"
+                                    : "border-border-default hover:border-border-strong"
+                                }`}
+                                style={
+                                  active
+                                    ? { background: "var(--brand-50-bg)" }
+                                    : undefined
+                                }
+                              >
+                                {c.is_popular ? (
+                                  <span
+                                    className="absolute top-1 right-1 px-1 py-px rounded text-[9px] font-medium leading-none border"
+                                    style={{
+                                      background: "var(--warn-bg)",
+                                      borderColor: "rgba(245, 158, 11, 0.3)",
+                                      color: "var(--warn)",
+                                    }}
+                                  >
+                                    流行
+                                  </span>
+                                ) : null}
+                                <div
+                                  className="w-full h-10 rounded border border-border-subtle"
+                                  style={{ backgroundColor: c.hex }}
+                                />
+                                <div className="text-[12px] mt-1.5 truncate text-fg-primary">
+                                  {c.name}
+                                </div>
+                                <div className="text-[10px] text-fg-tertiary font-mono truncate">
+                                  {c.hex}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </CollapsibleSection>
+                    );
+                  })}
                 </div>
               )}
 
-              {/* 输入行 */}
-              <div className="flex flex-wrap gap-2 items-center">
-                <input
-                  type="color"
-                  value={customHex}
-                  onChange={(e) => setCustomHex(e.target.value)}
-                  className="w-10 h-10 rounded cursor-pointer border-0"
-                  title="选色号"
-                />
-                <input
-                  type="text"
-                  placeholder="颜色名"
-                  value={customName}
-                  onChange={(e) => setCustomName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      addCustomColor();
-                    }
-                  }}
-                  className="flex-1 min-w-[140px] px-2 py-1.5 text-sm border border-gray-300 rounded"
-                />
-                <input
-                  type="text"
-                  value={customHex}
-                  onChange={(e) => setCustomHex(e.target.value)}
-                  className="w-24 px-2 py-1.5 text-sm font-mono border border-gray-300 rounded"
-                />
-                <button
-                  type="button"
-                  onClick={addCustomColor}
-                  disabled={!customName.trim()}
-                  className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  + 添加
-                </button>
+              {/* 临时颜色 */}
+              <div className="mt-4 p-4 rounded-md border border-border-subtle bg-bg-tertiary">
+                <div className="text-[11px] text-fg-tertiary mb-2.5">
+                  临时颜色（可选） · 不保存到颜色库，但本次任务会参与生成
+                </div>
+
+                {customColors.length > 0 && (
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {customColors.map((c, i) => (
+                      <span
+                        key={i}
+                        className="inline-flex items-center gap-1.5 pl-1 pr-2 py-1 rounded-full bg-bg-secondary border text-[12px] text-fg-primary"
+                        style={{ borderColor: "rgba(59, 130, 246, 0.4)" }}
+                      >
+                        <span
+                          className="w-4 h-4 rounded-full border border-border-subtle"
+                          style={{ backgroundColor: c.hex }}
+                        />
+                        <span>{c.name}</span>
+                        <span className="text-[10px] text-fg-tertiary font-mono">
+                          {c.hex}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => removeCustomColor(i)}
+                          className="ml-0.5 text-fg-tertiary hover:text-danger"
+                          aria-label="移除"
+                        >
+                          <X size={10} strokeWidth={2.5} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex flex-wrap gap-2 items-center">
+                  <input
+                    type="color"
+                    value={customHex}
+                    onChange={(e) => setCustomHex(e.target.value)}
+                    className="w-10 h-10 rounded cursor-pointer border-0 bg-transparent"
+                    title="选色号"
+                  />
+                  <input
+                    type="text"
+                    placeholder="颜色名"
+                    value={customName}
+                    onChange={(e) => setCustomName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        addCustomColor();
+                      }
+                    }}
+                    className="input flex-1 min-w-[140px] h-9 text-[12px]"
+                  />
+                  <input
+                    type="text"
+                    value={customHex}
+                    onChange={(e) => setCustomHex(e.target.value)}
+                    className="input w-24 h-9 text-[12px] font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={addCustomColor}
+                    disabled={!customName.trim()}
+                    className="btn btn-primary btn-md"
+                  >
+                    + 添加
+                  </button>
+                </div>
               </div>
-            </div>
+            </CollapsibleSection>
           </div>
-        </section>
-      </div>
+        </div>
       )}
     </AppShell>
   );
@@ -1111,48 +1224,62 @@ function RightPanel({
   onSwitchView: () => void;
 }) {
   return (
-    <div className="p-3 space-y-3 text-sm">
+    <div className="p-4 space-y-3 text-sm">
       <NotificationStack />
 
-      {/* 任务切换提示条 */}
       {hasActiveTask ? (
         <button
           type="button"
           onClick={onSwitchView}
-          className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-blue-50 hover:bg-blue-100 border border-blue-200 text-xs text-blue-900 transition-colors"
+          className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-md border text-xs transition-colors"
+          style={{
+            background: "var(--brand-50-bg)",
+            borderColor: "rgba(59, 130, 246, 0.3)",
+            color: "var(--brand-400)",
+          }}
         >
           <span className="flex items-center gap-2">
-            {poll && (poll.job.status === "running" || poll.job.status === "canceling") ? (
-              <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+            {poll &&
+            (poll.job.status === "running" ||
+              poll.job.status === "canceling") ? (
+              <span className="status-dot status-dot-success status-dot-pulse" />
             ) : null}
-            {viewMode === "task" ? "切到「表单」编辑" : "切到「任务视窗」看进度"}
+            {viewMode === "task"
+              ? "切到「表单」编辑"
+              : "切到「任务视窗」看进度"}
           </span>
-          <span className="text-[11px] font-mono text-blue-600">
+          <span className="text-[11px] font-mono opacity-90">
             {poll ? `${poll.job.completed_count}/${poll.job.total_count}` : ""}
           </span>
         </button>
       ) : null}
 
       {pollError ? (
-        <div className="p-2 rounded border border-red-200 bg-red-50 text-xs text-red-700">
+        <div
+          className="p-2.5 rounded border text-xs"
+          style={{
+            background: "var(--danger-bg)",
+            borderColor: "rgba(239, 68, 68, 0.3)",
+            color: "var(--danger)",
+          }}
+        >
           轮询失败：{pollError}
         </div>
       ) : null}
 
       {/* 生成参数 */}
-      <div className="rounded-md border border-gray-200 bg-white p-3 space-y-3">
-        <div className="text-xs font-medium text-gray-500">生成参数</div>
+      <div className="card p-4 space-y-3">
+        <div className="section-label">生成参数</div>
 
-        {/* 模型 */}
         <div>
-          <div className="text-xs text-gray-500 mb-1">模型</div>
+          <div className="text-[11px] text-fg-tertiary mb-1.5">模型</div>
           {aiModels.length === 0 ? (
-            <div className="text-xs text-gray-500">暂无模型</div>
+            <div className="text-xs text-fg-tertiary">暂无模型</div>
           ) : (
             <select
               value={model}
               onChange={(e) => onModelChange(e.target.value)}
-              className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded bg-white"
+              className="input select text-[12px] h-9"
             >
               {aiModels.map((m) => (
                 <option key={m.model_id} value={m.model_id}>
@@ -1164,13 +1291,12 @@ function RightPanel({
           )}
         </div>
 
-        {/* 输出比例 */}
         <div>
-          <div className="text-xs text-gray-500 mb-1">输出比例</div>
+          <div className="text-[11px] text-fg-tertiary mb-1.5">输出比例</div>
           <select
             value={aspectRatio}
             onChange={(e) => onAspectChange(e.target.value)}
-            className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded bg-white"
+            className="input select text-[12px] h-9"
           >
             {ASPECT_RATIOS.map((a) => (
               <option key={a.value} value={a.value}>
@@ -1180,13 +1306,12 @@ function RightPanel({
           </select>
         </div>
 
-        {/* 质量 */}
         <div>
-          <div className="text-xs text-gray-500 mb-1">清晰度</div>
+          <div className="text-[11px] text-fg-tertiary mb-1.5">清晰度</div>
           <select
             value={qualityLevel}
             onChange={(e) => onQualityChange(e.target.value as QualityLevel)}
-            className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded bg-white"
+            className="input select text-[12px] h-9"
           >
             {QUALITY_LEVELS.map((q) => (
               <option key={q.value} value={q.value}>
@@ -1194,35 +1319,43 @@ function RightPanel({
               </option>
             ))}
           </select>
-          <div className="text-[10px] text-gray-400 mt-0.5">
+          <div className="text-[10px] text-fg-muted mt-1">
             {QUALITY_LEVELS.find((q) => q.value === qualityLevel)?.desc}
           </div>
         </div>
 
-        {/* Seed */}
         <div>
-          <div className="text-xs text-gray-500 mb-1">
+          <div className="text-[11px] text-fg-tertiary mb-1.5">
             追加指令{" "}
-            <span className="text-gray-400 font-normal">（可选）</span>
+            <span className="text-fg-muted font-normal">（可选）</span>
           </div>
           <textarea
             value={userSeed}
             onChange={(e) => onUserSeedChange(e.target.value)}
             rows={2}
             placeholder="例：保留蕾丝立体感，背景留白"
-            className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded resize-none"
+            className="input text-[12px] resize-none"
           />
         </div>
       </div>
 
-      {/* 预估 + 余额 */}
       {estimate && (
         <div
-          className={`rounded-md border p-3 text-xs ${
-            estimate.is_unlimited || estimate.affordable
-              ? "border-blue-200 bg-blue-50 text-blue-900"
-              : "border-amber-300 bg-amber-50 text-amber-900"
-          }`}
+          className="rounded-md border p-3 text-xs"
+          style={{
+            background:
+              estimate.is_unlimited || estimate.affordable
+                ? "var(--brand-50-bg)"
+                : "var(--warn-bg)",
+            borderColor:
+              estimate.is_unlimited || estimate.affordable
+                ? "rgba(59, 130, 246, 0.3)"
+                : "rgba(245, 158, 11, 0.3)",
+            color:
+              estimate.is_unlimited || estimate.affordable
+                ? "var(--brand-400)"
+                : "var(--warn)",
+          }}
         >
           <div className="flex justify-between items-baseline mb-1.5">
             <span className="font-medium">预估</span>
@@ -1239,23 +1372,24 @@ function RightPanel({
             ) : (
               <span>
                 余额 ¥{estimate.remaining_cny.toFixed(2)}
-                {estimate.affordable ? " · 充足" : ` · 仅能做 ${estimate.can_afford_count} 张`}
+                {estimate.affordable
+                  ? " · 充足"
+                  : ` · 仅能做 ${estimate.can_afford_count} 张`}
               </span>
             )}
           </div>
         </div>
       )}
 
-      {/* 提交按钮 */}
       <div className="space-y-2">
         <button
           onClick={onSubmit}
           disabled={!canSubmit || submitting}
-          className="w-full px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          className="btn btn-primary btn-lg w-full"
         >
           {submitting ? (
             <>
-              <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
               提交中…
             </>
           ) : (
@@ -1275,14 +1409,14 @@ function RightPanel({
             onConfirm={onReset}
             confirmDetail="将清除已上传的图片、解析结果、选择的颜色和预设。当前正在进行的任务不受影响（可在右栏继续查看）。"
           />
-          <div className="text-[10px] text-gray-400 flex-1 self-center">
-            刷新浏览器会清空所有状态（除 GC 中的任务）
+          <div className="text-[10px] text-fg-muted flex-1 self-center">
+            刷新浏览器会清空所有状态
           </div>
         </div>
       </div>
 
-      <div className="text-[10px] text-gray-400 text-center pt-2">
-        受 Google quota 限制，每分钟最多 2 张
+      <div className="text-[10px] text-fg-muted text-center pt-2">
+        受 quota 限制，速度按当前 RPM 配置
       </div>
     </div>
   );
@@ -1306,11 +1440,14 @@ function GarmentAttrsEditor({
         const strValue = Array.isArray(value) ? value.join("、") : String(value);
         const isMaterial = key === "面料材质";
         return (
-          <div key={key} className="p-2 bg-gray-50 border border-gray-200 rounded">
-            <div className="text-xs text-gray-500 mb-1">
+          <div
+            key={key}
+            className="p-2.5 bg-bg-tertiary border border-border-subtle rounded-md"
+          >
+            <div className="text-[11px] text-fg-tertiary mb-1">
               {key}
               {isMaterial && (
-                <span className="ml-1 text-[10px] text-blue-500">
+                <span className="ml-1 text-[10px] text-brand-400">
                   （失焦重匹配）
                 </span>
               )}
@@ -1320,9 +1457,11 @@ function GarmentAttrsEditor({
               value={strValue}
               onChange={(e) => onChange(key, e.target.value)}
               onBlur={
-                isMaterial ? (e) => onMaterialTextBlur(e.target.value) : undefined
+                isMaterial
+                  ? (e) => onMaterialTextBlur(e.target.value)
+                  : undefined
               }
-              className="w-full px-2 py-1 text-sm border border-gray-300 rounded bg-white focus:border-blue-500 focus:outline-none"
+              className="input text-[12px] h-8 px-2.5"
             />
           </div>
         );

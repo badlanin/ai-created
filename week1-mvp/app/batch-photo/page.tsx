@@ -1,12 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Camera, Sparkles, Upload, ImageIcon, Crop as CropIcon, X } from "lucide-react";
 import { ImageCropper } from "@/app/_components/image-cropper";
 import { AppShell } from "@/app/_components/app-shell";
 import { NotificationStack, useNotifications, notifyHelpers } from "@/app/_components/notification-stack";
 import { TaskViewport } from "@/app/_components/task-viewport";
 import { Thumbnail, ThumbnailBadge } from "@/app/_components/thumbnail";
 import { ResetButton } from "@/app/_components/reset-button";
+import {
+  CollapsibleSection,
+  Dropzone,
+} from "@/app/_components/ui";
 import { useCurrentUser } from "@/lib/hooks/use-current-user";
 import { useJobPolling } from "@/lib/hooks/use-job-polling";
 import { useSlotStore } from "@/lib/stores/task-store";
@@ -56,6 +61,8 @@ type Scene = {
   name: string;
   image_url: string;
   tags: string | null;
+  category: string | null;
+  category_label: string | null;
 };
 type PoseType = "full" | "half" | "closeup";
 type Pose = {
@@ -108,7 +115,6 @@ const PRODUCT_SLOTS = [
   { key: "detail", label: "细节", hint: "可选" },
 ] as const;
 
-/** 单个槽位的状态（空 = null） */
 interface SlotFile {
   file: File;
   blob: Blob;
@@ -185,12 +191,10 @@ export default function BatchPhotoPage() {
   // ─── 估价 + 提交 ───
   const [estimate, setEstimate] = useState<CostEstimate | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  /** 初始化：如果 slotStore 里有活跃 job_id，恢复；否则 null */
   const [activeJobId, setActiveJobId] = useState<string | null>(
     () => slotStore.get<string>("activeJobId") ?? null,
   );
   const [activeJobCount, setActiveJobCount] = useState(0);
-  /** 有 activeJobId 时初始 viewMode = "task"，让用户切回来直接看到进度 */
   const [viewMode, setViewMode] = useState<"form" | "task">(
     () => (slotStore.get<string>("activeJobId") ? "task" : "form"),
   );
@@ -230,7 +234,6 @@ export default function BatchPhotoPage() {
           setAiModels(models);
           setAllMaterials(mats);
 
-          // 默认选中（slot 有值优先）
           const savedTpl = slotStore.get<number>("templateId");
           if (savedTpl && tpls.find((t) => t.id === savedTpl)) {
             setTemplateId(savedTpl);
@@ -254,7 +257,6 @@ export default function BatchPhotoPage() {
       )
       .catch(() => {});
 
-    // 恢复 slot 其他状态
     const savedIdentity = slotStore.get<number>("identityId");
     if (savedIdentity) setIdentityId(savedIdentity);
     const savedScene = slotStore.get<number>("sceneId");
@@ -272,7 +274,6 @@ export default function BatchPhotoPage() {
     const savedMatIds = slotStore.get<number[]>("selectedMaterialIds");
     if (savedMatIds) setSelectedMaterialIds(savedMatIds);
 
-    // 活跃任务数
     fetch("/api/jobs/active")
       .then((r) => (r.ok ? r.json() : { count: 0 }))
       .then((d) => setActiveJobCount(d.count || 0))
@@ -383,7 +384,6 @@ export default function BatchPhotoPage() {
     },
   });
 
-  // 轮询错误自恢复：任务不存在时自动回到表单
   useEffect(() => {
     if (polling.error && polling.error.includes("不存在")) {
       setActiveJobId(null);
@@ -413,14 +413,13 @@ export default function BatchPhotoPage() {
     }
   }
 
-  function onSlotPick(slotIdx: number, fileList: FileList | null) {
-    if (!fileList || fileList.length === 0) return;
-    // 如果用户一次选了多张，自动分到后续空槽位
-    const files = Array.from(fileList);
+  function onSlotPick(slotIdx: number, files: File[]) {
+    if (!files || files.length === 0) return;
     if (files.length === 1) {
       void setSlotFromFile(slotIdx, files[0]);
       return;
     }
+    // 一次拖入多张：依次填充后续空槽位
     let pointer = slotIdx;
     for (const f of files) {
       if (pointer >= slots.length) break;
@@ -435,7 +434,6 @@ export default function BatchPhotoPage() {
       next[slotIdx] = null;
       return next;
     });
-    // 清掉解析（原图变了）
     if (slotIdx === 0) {
       setGarmentAttrs(null);
       setSelectedMaterialIds([]);
@@ -521,6 +519,38 @@ export default function BatchPhotoPage() {
     return map;
   }, [poses]);
 
+  // 模特按 category 分组（保持稳定排序）
+  const identityGroups = useMemo(() => {
+    const CATEGORY_ORDER = ["通用", "大码", "孕妇", "青少年"];
+    const groups = new Map<string, Identity[]>();
+    for (const m of identities) {
+      const key = m.category_label || "未分类";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(m);
+    }
+    const orderedKeys = [
+      ...CATEGORY_ORDER.filter((k) => groups.has(k)),
+      ...Array.from(groups.keys()).filter((k) => !CATEGORY_ORDER.includes(k)),
+    ];
+    return orderedKeys.map((key) => ({ key, items: groups.get(key)! }));
+  }, [identities]);
+
+  // 场景按 category 分组（与 admin/scenes 顺序一致）
+  const sceneGroups = useMemo(() => {
+    const SCENE_ORDER = ["婚礼", "户外", "影棚", "街拍", "室内", "花园"];
+    const groups = new Map<string, Scene[]>();
+    for (const s of scenes) {
+      const key = s.category_label || "未分类";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(s);
+    }
+    const orderedKeys = [
+      ...SCENE_ORDER.filter((k) => groups.has(k)),
+      ...Array.from(groups.keys()).filter((k) => !SCENE_ORDER.includes(k)),
+    ];
+    return orderedKeys.map((key) => ({ key, items: groups.get(key)! }));
+  }, [scenes]);
+
   function togglePose(id: number) {
     setSelectedPoseIds((prev) => {
       const next = new Set(prev);
@@ -559,7 +589,6 @@ export default function BatchPhotoPage() {
     setSubmitting(true);
     try {
       const fd = new FormData();
-      // 产品图按 slot 顺序依次 append（空槽跳过）
       let productIdx = 0;
       slots.forEach((s) => {
         if (s) {
@@ -630,7 +659,8 @@ export default function BatchPhotoPage() {
     slotStore.setActiveJob(null);
   }
 
-  if (!user) return <div className="p-8 text-gray-500 text-sm">正在加载…</div>;
+  if (!user)
+    return <div className="p-8 text-fg-tertiary text-sm">正在加载…</div>;
 
   /* ─────────── 渲染 ─────────── */
 
@@ -681,313 +711,393 @@ export default function BatchPhotoPage() {
           zipPrefix="batch_photo"
         />
       ) : (
-      <div className="p-4 md:p-6 max-w-4xl mx-auto">
-        <header className="mb-6">
-          <h1 className="text-2xl font-bold text-gray-900">批量摄影图</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            产品图 → 解析款式 → 选模特/场景/姿势 → 批量生成模特穿着图
-          </p>
-        </header>
-
-        <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 space-y-6">
-          {/* Step 1: 3 固定槽位产品图 */}
-          <StepBlock step={1} title="上传产品图（3 槽位）">
-            <div className="grid grid-cols-3 gap-3">
-              {PRODUCT_SLOTS.map((cfg, i) => (
-                <ProductSlot
-                  key={cfg.key}
-                  label={cfg.label}
-                  hint={cfg.hint}
-                  slot={slots[i]}
-                  slotIndex={i}
-                  onPick={onSlotPick}
-                  onRemove={() => onSlotRemove(i)}
-                  onStartCrop={() => setCroppingSlot(i)}
-                />
-              ))}
-            </div>
-            {hasProductImages && (
-              <p className="mt-2 text-[11px] text-gray-500">
-                一次选多张时会自动填入后续空槽位。点"删除"清空，点"替换"重传，点"裁剪"手动调整。
-              </p>
-            )}
-          </StepBlock>
-
-          {/* 裁剪模态 */}
-          {croppingSlot !== null && slots[croppingSlot] && (
-            <ImageCropper
-              imageSrc={URL.createObjectURL(slots[croppingSlot]!.blob)}
-              initialAspect={0}
-              onConfirm={(blob) => onCropConfirm(croppingSlot, blob)}
-              onCancel={() => setCroppingSlot(null)}
-            />
-          )}
-
-          {/* Step 2: 款式解析 */}
-          {hasProductImages && (
-            <StepBlock
-              step={2}
-              title="款式解析 + 服装材质（可选）"
+        <div className="mx-auto w-full max-w-7xl px-5 md:px-8 py-6 md:py-8">
+          <header className="mb-6 flex items-center gap-3">
+            <span
+              className="w-10 h-10 rounded-md flex items-center justify-center text-white"
+              style={{
+                background: "var(--brand-gradient)",
+                boxShadow: "0 0 16px var(--brand-glow)",
+              }}
             >
-              <div className="mb-3">
-                <button
-                  type="button"
-                  onClick={handleAnalyze}
-                  disabled={analyzing || !slots[0]}
-                  className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {analyzing ? "解析中..." : garmentAttrs ? "重新解析" : "解析款式"}
-                </button>
-              </div>
-              {garmentAttrs && (
-                <GarmentAttrsEditor
-                  attrs={garmentAttrs}
-                  onChange={updateGarmentAttr}
-                  onMaterialTextBlur={rematchMaterials}
-                />
-              )}
-              {garmentAttrs && (
-                <div className="mt-3 flex flex-wrap gap-2 items-center">
-                  <span className="text-xs text-gray-500">匹配材质：</span>
-                  {selectedMaterials.map((m) => (
-                    <span
-                      key={m.id}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-50 border border-blue-200 text-xs text-blue-800"
-                    >
-                      {m.name}
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setSelectedMaterialIds((p) =>
-                            p.filter((x) => x !== m.id),
-                          )
-                        }
-                        className="ml-1 text-blue-400 hover:text-red-600"
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onClick={() => setShowMaterialPicker((v) => !v)}
-                      className="px-2 py-1 rounded-full border border-dashed border-gray-400 text-xs text-gray-600 hover:border-blue-500"
-                    >
-                      + 添加
-                    </button>
-                    {showMaterialPicker && (
-                      <div className="absolute top-full mt-1 left-0 z-10 bg-white border border-gray-200 rounded-md shadow-lg p-2 max-h-64 overflow-y-auto w-64">
-                        {unselectedMaterials.length === 0 ? (
-                          <div className="text-xs text-gray-500 p-2">
-                            全部已添加
-                          </div>
-                        ) : (
-                          unselectedMaterials.map((m) => (
-                            <button
-                              key={m.id}
-                              onClick={() => {
-                                setSelectedMaterialIds((p) => [...p, m.id]);
-                                setShowMaterialPicker(false);
-                              }}
-                              className="w-full text-left px-2 py-1.5 text-sm hover:bg-blue-50 rounded"
-                            >
-                              {m.name}
-                              {m.english_name && (
-                                <span className="ml-1 text-xs text-gray-500 font-mono">
-                                  {m.english_name}
-                                </span>
-                              )}
-                            </button>
-                          ))
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </StepBlock>
-          )}
+              <Camera size={18} strokeWidth={2.2} />
+            </span>
+            <div>
+              <h1 className="text-[22px] font-bold text-fg-primary tracking-tight">
+                批量摄影
+              </h1>
+              <p className="mt-0.5 text-[13px] text-fg-tertiary">
+                产品图 → 解析款式 → 选模特/场景/姿势 → 批量生成模特穿着图
+              </p>
+            </div>
+          </header>
 
-          {/* Step 3: 模特 */}
-          <StepBlock step={3} title="选择模特形象">
-            {identities.length === 0 ? (
-              <EmptyHint
-                href="/admin/models"
-                label="去添加模特形象（需 PNG 透明底）"
-              />
-            ) : (
-              (() => {
-                // 按分类分组：通用 → 大码 → 孕妇 → 青少年，未分类放最后
-                const CATEGORY_ORDER = ["通用", "大码", "孕妇", "青少年"];
-                const groups = new Map<string, Identity[]>();
-                for (const m of identities) {
-                  const key = m.category_label || "未分类";
-                  if (!groups.has(key)) groups.set(key, []);
-                  groups.get(key)!.push(m);
-                }
-                const orderedKeys = [
-                  ...CATEGORY_ORDER.filter((k) => groups.has(k)),
-                  ...Array.from(groups.keys()).filter(
-                    (k) => !CATEGORY_ORDER.includes(k),
-                  ),
-                ];
-                return (
-                  <div className="space-y-3">
-                    {orderedKeys.map((cat) => (
-                      <div key={cat}>
-                        <div className="text-xs text-gray-500 mb-1.5 flex items-center gap-1.5">
-                          <span>{cat}</span>
-                          <span className="text-gray-400">
-                            · {groups.get(cat)!.length}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
-                          {groups.get(cat)!.map((m) => (
-                            <Thumbnail
-                              key={m.id}
-                              src={m.image_url}
-                              alt={m.name}
-                              ratio="3/4"
-                              fit="contain"
-                              selected={identityId === m.id}
-                              onClick={() => setIdentityId(m.id)}
-                              badge={
-                                identityId === m.id ? (
-                                  <ThumbnailBadge tone="blue">
-                                    已选
-                                  </ThumbnailBadge>
-                                ) : undefined
-                              }
-                              className="cursor-pointer"
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                );
-              })()
-            )}
-          </StepBlock>
-
-          {/* Step 4: 场景 */}
-          <StepBlock step={4} title="选择场景">
-            {scenes.length === 0 ? (
-              <EmptyHint href="/admin/scenes" label="去添加场景" />
-            ) : (
-              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                {scenes.map((s) => (
-                  <Thumbnail
-                    key={s.id}
-                    src={s.image_url}
-                    alt={s.name}
-                    ratio="3/4"
-                    fit="contain"
-                    selected={sceneId === s.id}
-                    onClick={() => setSceneId(s.id)}
-                    badge={
-                      sceneId === s.id ? (
-                        <ThumbnailBadge tone="blue">已选</ThumbnailBadge>
-                      ) : undefined
-                    }
+          <div className="space-y-4">
+            {/* Step 1: 产品图上传 */}
+            <CollapsibleSection
+              title="① 上传产品图"
+              description="拖拽 / 点击 / Ctrl+V 粘贴；一张图也能开始"
+              defaultOpen
+            >
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {PRODUCT_SLOTS.map((cfg, i) => (
+                  <ProductSlot
+                    key={cfg.key}
+                    label={cfg.label}
+                    hint={cfg.hint}
+                    slot={slots[i]}
+                    slotIndex={i}
+                    onPick={onSlotPick}
+                    onRemove={() => onSlotRemove(i)}
+                    onStartCrop={() => setCroppingSlot(i)}
                   />
                 ))}
               </div>
-            )}
-          </StepBlock>
+              {hasProductImages && (
+                <p className="mt-3 text-[11px] text-fg-tertiary">
+                  支持 Ctrl+V 粘贴：鼠标移到任意槽位上即可粘贴。一次拖多张会自动分配到后续空槽位。
+                </p>
+              )}
+            </CollapsibleSection>
 
-          {/* Step 5: 姿势 */}
-          <StepBlock
-            step={5}
-            title={`选择姿势（已选 ${selectedPoseIds.size}，生成 ${selectedPoseIds.size} 张）`}
-          >
-            {poses.length === 0 ? (
-              <EmptyHint href="/admin/poses" label="去添加姿势" />
-            ) : (
-              <div className="space-y-3">
-                {(["full", "half", "closeup"] as PoseType[]).map((type) => (
-                  <div key={type}>
-                    <div className="text-xs text-gray-500 mb-1">
-                      {POSE_TYPE_LABEL[type]}
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {posesByType[type].map((p) => {
-                        const active = selectedPoseIds.has(p.id);
-                        return (
-                          <button
-                            key={p.id}
-                            type="button"
-                            onClick={() => togglePose(p.id)}
-                            title={p.text}
-                            className={`px-2.5 py-1 rounded-full border text-xs transition ${
-                              active
-                                ? "border-blue-500 bg-blue-50 text-blue-800"
-                                : "border-gray-300 hover:border-gray-400"
-                            }`}
-                          >
-                            {p.name}
-                          </button>
-                        );
-                      })}
+            {/* 裁剪模态 */}
+            {croppingSlot !== null && slots[croppingSlot] && (
+              <ImageCropper
+                imageSrc={URL.createObjectURL(slots[croppingSlot]!.blob)}
+                initialAspect={0}
+                onConfirm={(blob) => onCropConfirm(croppingSlot, blob)}
+                onCancel={() => setCroppingSlot(null)}
+              />
+            )}
+
+            {/* Step 2: 款式解析 */}
+            {hasProductImages && (
+              <CollapsibleSection
+                title="② 款式解析 + 服装材质"
+                description="可选 · AI 自动识别款式属性，提升出图准确度"
+                defaultOpen={!!garmentAttrs}
+              >
+                <div className="mb-3">
+                  <button
+                    type="button"
+                    onClick={handleAnalyze}
+                    disabled={analyzing || !slots[0]}
+                    className="btn btn-secondary btn-sm"
+                  >
+                    <Sparkles size={12} strokeWidth={2.2} />
+                    {analyzing
+                      ? "解析中..."
+                      : garmentAttrs
+                        ? "重新解析"
+                        : "解析款式"}
+                  </button>
+                </div>
+                {garmentAttrs && (
+                  <GarmentAttrsEditor
+                    attrs={garmentAttrs}
+                    onChange={updateGarmentAttr}
+                    onMaterialTextBlur={rematchMaterials}
+                  />
+                )}
+                {garmentAttrs && (
+                  <div className="mt-3 flex flex-wrap gap-2 items-center">
+                    <span className="text-xs text-fg-tertiary">匹配材质：</span>
+                    {selectedMaterials.map((m) => (
+                      <span
+                        key={m.id}
+                        className="inline-flex items-center gap-1 chip chip-brand"
+                      >
+                        {m.name}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setSelectedMaterialIds((p) =>
+                              p.filter((x) => x !== m.id),
+                            )
+                          }
+                          className="ml-1 opacity-60 hover:opacity-100 hover:text-danger"
+                        >
+                          <X size={10} strokeWidth={2.5} />
+                        </button>
+                      </span>
+                    ))}
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setShowMaterialPicker((v) => !v)}
+                        className="px-2.5 py-0.5 h-[22px] rounded-full border border-dashed border-border-default text-[11px] text-fg-tertiary hover:border-brand-500 hover:text-brand-400 inline-flex items-center"
+                      >
+                        + 添加
+                      </button>
+                      {showMaterialPicker && (
+                        <div
+                          className="absolute top-full mt-1 left-0 z-20 bg-bg-elevated border border-border-default rounded-md shadow-lg p-2 max-h-64 overflow-y-auto w-64 animate-fade-in"
+                        >
+                          {unselectedMaterials.length === 0 ? (
+                            <div className="text-xs text-fg-tertiary p-2">
+                              全部已添加
+                            </div>
+                          ) : (
+                            unselectedMaterials.map((m) => (
+                              <button
+                                key={m.id}
+                                onClick={() => {
+                                  setSelectedMaterialIds((p) => [...p, m.id]);
+                                  setShowMaterialPicker(false);
+                                }}
+                                className="w-full text-left px-2 py-1.5 text-sm hover:bg-bg-hover rounded text-fg-primary"
+                              >
+                                {m.name}
+                                {m.english_name && (
+                                  <span className="ml-1 text-xs text-fg-tertiary font-mono">
+                                    {m.english_name}
+                                  </span>
+                                )}
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
-                ))}
-              </div>
+                )}
+              </CollapsibleSection>
             )}
-          </StepBlock>
 
-          {/* Step 6: 风格组合 */}
-          <StepBlock step={6} title="风格组合">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <ChoiceGroup
-                label="Prompt 模板"
-                items={templates.map((t) => ({
-                  id: t.id,
-                  label: t.name,
-                  desc: t.notes || null,
-                }))}
-                selectedId={templateId}
-                onChange={setTemplateId}
-                emptyHint={{ href: "/admin/prompts", label: "Prompt 模板为空" }}
-              />
-              <ChoiceGroup
-                label="摄影参数"
-                items={photoParams.map((p) => ({
-                  id: p.id,
-                  label: p.name,
-                  desc: p.description,
-                  isDefault: p.is_default === 1,
-                }))}
-                selectedId={photographyId}
-                onChange={setPhotographyId}
-                emptyHint={{
-                  href: "/admin/photography",
-                  label: "摄影参数为空",
-                }}
-              />
-              <ChoiceGroup
-                label="真实感"
-                items={realisms.map((r) => ({
-                  id: r.id,
-                  label: r.name,
-                  desc: r.description,
-                  isDefault: r.is_default === 1,
-                }))}
-                selectedId={realismId}
-                onChange={setRealismId}
-                emptyHint={{ href: "/admin/realism", label: "真实感为空" }}
-              />
-            </div>
-          </StepBlock>
-        </section>
-      </div>
+            {/* Step 3: 模特（按分类折叠）*/}
+            <CollapsibleSection
+              title="③ 选择模特形象"
+              description={
+                identityId
+                  ? `已选择`
+                  : `${identities.length} 个模特，按体型分类`
+              }
+              badge={identityId ? "✓" : undefined}
+              defaultOpen={!identityId}
+            >
+              {identities.length === 0 ? (
+                <EmptyHint
+                  href="/admin/models"
+                  label="去添加模特形象（需 PNG 透明底）"
+                />
+              ) : (
+                <div className="space-y-2">
+                  {identityGroups.map((g, idx) => (
+                    <CollapsibleSection
+                      key={g.key}
+                      variant="minimal"
+                      title={g.key}
+                      badge={g.items.length}
+                      defaultOpen={
+                        // 默认展开第一组 + 当前选中所属组
+                        idx === 0 ||
+                        (identityId !== null &&
+                          g.items.some((m) => m.id === identityId))
+                      }
+                    >
+                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2.5 mt-2">
+                        {g.items.map((m) => (
+                          <Thumbnail
+                            key={m.id}
+                            src={m.image_url}
+                            alt={m.name}
+                            ratio="3/4"
+                            fit="contain"
+                            selected={identityId === m.id}
+                            onClick={() => setIdentityId(m.id)}
+                            badge={
+                              identityId === m.id ? (
+                                <ThumbnailBadge tone="blue">已选</ThumbnailBadge>
+                              ) : undefined
+                            }
+                          />
+                        ))}
+                      </div>
+                    </CollapsibleSection>
+                  ))}
+                </div>
+              )}
+            </CollapsibleSection>
+
+            {/* Step 4: 场景（按分类折叠） */}
+            <CollapsibleSection
+              title="④ 选择场景"
+              description={
+                sceneId
+                  ? `已选择`
+                  : `${scenes.length} 个场景背景，按分类折叠`
+              }
+              badge={sceneId ? "✓" : undefined}
+              defaultOpen={!sceneId}
+            >
+              {scenes.length === 0 ? (
+                <EmptyHint href="/admin/scenes" label="去添加场景" />
+              ) : (
+                <div className="space-y-2">
+                  {sceneGroups.map((g, idx) => (
+                    <CollapsibleSection
+                      key={g.key}
+                      variant="minimal"
+                      title={g.key}
+                      badge={g.items.length}
+                      defaultOpen={
+                        idx === 0 ||
+                        (sceneId !== null &&
+                          g.items.some((s) => s.id === sceneId))
+                      }
+                    >
+                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2.5 mt-2">
+                        {g.items.map((s) => (
+                          <Thumbnail
+                            key={s.id}
+                            src={s.image_url}
+                            alt={s.name}
+                            ratio="3/4"
+                            fit="contain"
+                            selected={sceneId === s.id}
+                            onClick={() => setSceneId(s.id)}
+                            badge={
+                              sceneId === s.id ? (
+                                <ThumbnailBadge tone="blue">已选</ThumbnailBadge>
+                              ) : undefined
+                            }
+                          />
+                        ))}
+                      </div>
+                    </CollapsibleSection>
+                  ))}
+                </div>
+              )}
+            </CollapsibleSection>
+
+            {/* Step 5: 姿势（按类型折叠） */}
+            <CollapsibleSection
+              title="⑤ 选择姿势"
+              description={
+                selectedPoseIds.size > 0
+                  ? `已选 ${selectedPoseIds.size}，将生成 ${selectedPoseIds.size} 张图`
+                  : `按拍摄类型分组，可多选`
+              }
+              badge={
+                selectedPoseIds.size > 0 ? selectedPoseIds.size : undefined
+              }
+              defaultOpen={selectedPoseIds.size === 0}
+            >
+              {poses.length === 0 ? (
+                <EmptyHint href="/admin/poses" label="去添加姿势" />
+              ) : (
+                <div className="space-y-2">
+                  {(["full", "half", "closeup"] as PoseType[]).map((type) => {
+                    const list = posesByType[type];
+                    if (list.length === 0) return null;
+                    const selectedInGroup = list.filter((p) =>
+                      selectedPoseIds.has(p.id),
+                    ).length;
+                    return (
+                      <CollapsibleSection
+                        key={type}
+                        variant="minimal"
+                        title={POSE_TYPE_LABEL[type]}
+                        badge={
+                          selectedInGroup > 0
+                            ? `${selectedInGroup}/${list.length}`
+                            : list.length
+                        }
+                        defaultOpen
+                      >
+                        <div className="flex flex-wrap gap-1.5 mt-2">
+                          {list.map((p) => {
+                            const active = selectedPoseIds.has(p.id);
+                            return (
+                              <button
+                                key={p.id}
+                                type="button"
+                                onClick={() => togglePose(p.id)}
+                                title={p.text}
+                                className={`px-3 py-1.5 rounded-md border text-[12px] transition-colors ${
+                                  active
+                                    ? "border-transparent text-brand-400 font-medium"
+                                    : "border-border-default text-fg-secondary hover:border-border-strong hover:text-fg-primary"
+                                }`}
+                                style={
+                                  active
+                                    ? {
+                                        background: "var(--brand-50-bg)",
+                                        borderColor: "rgba(59, 130, 246, 0.4)",
+                                      }
+                                    : undefined
+                                }
+                              >
+                                {p.name}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </CollapsibleSection>
+                    );
+                  })}
+                </div>
+              )}
+            </CollapsibleSection>
+
+            {/* Step 6: 风格组合（默认折叠） */}
+            <CollapsibleSection
+              title="⑥ 风格组合"
+              description="Prompt 模板 / 摄影参数 / 真实感预设（已自动选默认值）"
+              defaultOpen={false}
+            >
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <ChoiceGroup
+                  label="Prompt 模板"
+                  items={templates.map((t) => ({
+                    id: t.id,
+                    label: t.name,
+                    desc: t.notes || null,
+                  }))}
+                  selectedId={templateId}
+                  onChange={setTemplateId}
+                  emptyHint={{
+                    href: "/admin/prompts",
+                    label: "Prompt 模板为空",
+                  }}
+                />
+                <ChoiceGroup
+                  label="摄影参数"
+                  items={photoParams.map((p) => ({
+                    id: p.id,
+                    label: p.name,
+                    desc: p.description,
+                    isDefault: p.is_default === 1,
+                  }))}
+                  selectedId={photographyId}
+                  onChange={setPhotographyId}
+                  emptyHint={{
+                    href: "/admin/photography",
+                    label: "摄影参数为空",
+                  }}
+                />
+                <ChoiceGroup
+                  label="真实感"
+                  items={realisms.map((r) => ({
+                    id: r.id,
+                    label: r.name,
+                    desc: r.description,
+                    isDefault: r.is_default === 1,
+                  }))}
+                  selectedId={realismId}
+                  onChange={setRealismId}
+                  emptyHint={{ href: "/admin/realism", label: "真实感为空" }}
+                />
+              </div>
+            </CollapsibleSection>
+          </div>
+        </div>
       )}
     </AppShell>
   );
 }
 
-/* ─────────── 3 槽位组件 ─────────── */
+/* ─────────── 单产品图槽位（Dropzone + Ctrl+V） ─────────── */
 
 function ProductSlot({
   label,
@@ -1002,77 +1112,152 @@ function ProductSlot({
   hint: string;
   slot: SlotFile | null;
   slotIndex: number;
-  onPick: (slotIdx: number, files: FileList | null) => void;
+  onPick: (slotIdx: number, files: File[]) => void;
   onRemove: () => void;
   onStartCrop: () => void;
 }) {
-  const inputId = `product-slot-${slotIndex}`;
   if (!slot) {
     return (
-      <label
-        htmlFor={inputId}
-        className="relative aspect-[3/4] rounded-md border-2 border-dashed border-gray-300 bg-gray-50 hover:border-blue-400 hover:bg-blue-50/50 cursor-pointer flex flex-col items-center justify-center text-center p-3"
+      <Dropzone
+        compact
+        accept="image/*"
+        multiple={slotIndex === 0}
+        onFiles={(files) => onPick(slotIndex, files)}
+        className="aspect-[3/4] flex items-center justify-center"
       >
-        <input
-          id={inputId}
-          type="file"
-          accept="image/*"
-          multiple={slotIndex === 0 /* 只有第一个支持一次选多张自动分配 */}
-          onChange={(e) => onPick(slotIndex, e.target.files)}
-          className="hidden"
-        />
-        <div className="text-2xl text-gray-400">+</div>
-        <div className="mt-1 text-sm font-medium text-gray-700">{label}</div>
-        <div className="mt-0.5 text-[10px] text-gray-400">{hint}</div>
-      </label>
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-3 pointer-events-none">
+          <Upload size={24} strokeWidth={1.6} className="text-fg-tertiary mb-2" />
+          <div className="text-[13px] font-medium text-fg-primary">{label}</div>
+          <div className="mt-0.5 text-[10px] text-fg-tertiary">{hint}</div>
+          <div className="mt-2 text-[10px] text-fg-muted">
+            拖拽 / 点击 / Ctrl+V
+          </div>
+        </div>
+      </Dropzone>
     );
   }
 
   return (
-    <div className="relative aspect-[3/4] rounded-md border-2 border-gray-200 bg-gray-100 overflow-hidden group">
+    <SlotFilled
+      label={label}
+      slot={slot}
+      slotIndex={slotIndex}
+      onPick={onPick}
+      onRemove={onRemove}
+      onStartCrop={onStartCrop}
+    />
+  );
+}
+
+/**
+ * 已上传槽位 —— 仍然支持 hover 后 Ctrl+V 替换图片
+ */
+function SlotFilled({
+  label,
+  slot,
+  slotIndex,
+  onPick,
+  onRemove,
+  onStartCrop,
+}: {
+  label: string;
+  slot: SlotFile;
+  slotIndex: number;
+  onPick: (slotIdx: number, files: File[]) => void;
+  onRemove: () => void;
+  onStartCrop: () => void;
+}) {
+  const inputId = `slot-replace-${slotIndex}`;
+  const [hover, setHover] = useState(false);
+
+  // hover 时也允许 Ctrl+V 替换
+  useEffect(() => {
+    if (!hover) return;
+    function onPaste(e: ClipboardEvent) {
+      const items = Array.from(e.clipboardData?.items || []);
+      const fileItems = items
+        .filter((it) => it.kind === "file")
+        .map((it) => it.getAsFile())
+        .filter((f): f is File => f !== null && f.type.startsWith("image/"));
+      if (fileItems.length === 0) return;
+      e.preventDefault();
+      onPick(slotIndex, fileItems.slice(0, 1));
+    }
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [hover, onPick, slotIndex]);
+
+  return (
+    <div
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      className="relative aspect-[3/4] rounded-md border border-border-default bg-bg-tertiary overflow-hidden group"
+    >
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={URL.createObjectURL(slot.blob)}
         alt={label}
         className="w-full h-full object-contain"
       />
-      {/* 左上角：槽位名 */}
-      <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/60 text-white text-[10px]">
+      <div
+        className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded text-white text-[10px] font-medium"
+        style={{ background: "rgba(0, 0, 0, 0.6)" }}
+      >
         {label}
       </div>
-      {/* 右上角：状态 */}
       {slot.cropped ? (
-        <div className="absolute top-1 right-1 px-1.5 py-0.5 rounded bg-green-600 text-white text-[10px]">
+        <div
+          className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded text-white text-[10px] font-medium"
+          style={{ background: "var(--success)" }}
+        >
           已裁
         </div>
       ) : null}
-      {/* 悬浮层：替换 / 裁剪 / 删除 */}
-      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100 gap-1">
+      {/* hover 提示：可粘贴 */}
+      {hover ? (
+        <div className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded text-[10px] text-white opacity-80"
+          style={{ background: "rgba(0, 0, 0, 0.6)" }}
+        >
+          Ctrl+V 替换
+        </div>
+      ) : null}
+      <div
+        className="absolute inset-0 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100 gap-1.5"
+        style={{ background: hover ? "rgba(0, 0, 0, 0.55)" : "transparent" }}
+      >
         <label
           htmlFor={inputId}
-          className="px-2 py-1 bg-white/90 hover:bg-white text-[11px] text-gray-800 rounded cursor-pointer"
+          className="px-2.5 py-1 bg-white/95 hover:bg-white text-[11px] text-gray-900 rounded cursor-pointer flex items-center gap-1"
         >
+          <ImageIcon size={11} strokeWidth={2.2} />
           替换
           <input
             id={inputId}
             type="file"
             accept="image/*"
-            onChange={(e) => onPick(slotIndex, e.target.files)}
+            onChange={(e) => {
+              const files = Array.from(e.target.files || []);
+              if (files.length > 0) onPick(slotIndex, files);
+              e.target.value = "";
+            }}
             className="hidden"
           />
         </label>
         <button
           type="button"
           onClick={onStartCrop}
-          className="px-2 py-1 bg-white/90 hover:bg-white text-[11px] text-gray-800 rounded"
+          className="px-2.5 py-1 bg-white/95 hover:bg-white text-[11px] text-gray-900 rounded flex items-center gap-1"
         >
+          <CropIcon size={11} strokeWidth={2.2} />
           裁剪
         </button>
         <button
           type="button"
           onClick={onRemove}
-          className="px-2 py-1 bg-red-600/90 hover:bg-red-700 text-[11px] text-white rounded"
+          className="px-2.5 py-1 text-[11px] text-white rounded flex items-center gap-1"
+          style={{ background: "var(--danger)" }}
         >
+          <X size={11} strokeWidth={2.2} />
           删除
         </button>
       </div>
@@ -1128,46 +1313,62 @@ function RightPanel({
   onSwitchView: () => void;
 }) {
   return (
-    <div className="p-3 space-y-3 text-sm">
+    <div className="p-4 space-y-3 text-sm">
       <NotificationStack />
 
       {hasActiveTask ? (
         <button
           type="button"
           onClick={onSwitchView}
-          className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-blue-50 hover:bg-blue-100 border border-blue-200 text-xs text-blue-900 transition-colors"
+          className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-md border text-xs transition-colors"
+          style={{
+            background: "var(--brand-50-bg)",
+            borderColor: "rgba(59, 130, 246, 0.3)",
+            color: "var(--brand-400)",
+          }}
         >
           <span className="flex items-center gap-2">
-            {poll && (poll.job.status === "running" || poll.job.status === "canceling") ? (
-              <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+            {poll &&
+            (poll.job.status === "running" ||
+              poll.job.status === "canceling") ? (
+              <span className="status-dot status-dot-success status-dot-pulse" />
             ) : null}
-            {viewMode === "task" ? "切到「表单」编辑" : "切到「任务视窗」看进度"}
+            {viewMode === "task"
+              ? "切到「表单」编辑"
+              : "切到「任务视窗」看进度"}
           </span>
-          <span className="text-[11px] font-mono text-blue-600">
+          <span className="text-[11px] font-mono opacity-90">
             {poll ? `${poll.job.completed_count}/${poll.job.total_count}` : ""}
           </span>
         </button>
       ) : null}
 
       {pollError ? (
-        <div className="p-2 rounded border border-red-200 bg-red-50 text-xs text-red-700">
+        <div
+          className="p-2.5 rounded border text-xs"
+          style={{
+            background: "var(--danger-bg)",
+            borderColor: "rgba(239, 68, 68, 0.3)",
+            color: "var(--danger)",
+          }}
+        >
           轮询失败：{pollError}
         </div>
       ) : null}
 
       {/* 参数 */}
-      <div className="rounded-md border border-gray-200 bg-white p-3 space-y-3">
-        <div className="text-xs font-medium text-gray-500">生成参数</div>
+      <div className="card p-4 space-y-3">
+        <div className="section-label">生成参数</div>
 
         <div>
-          <div className="text-xs text-gray-500 mb-1">模型</div>
+          <div className="text-[11px] text-fg-tertiary mb-1.5">模型</div>
           {aiModels.length === 0 ? (
-            <div className="text-xs text-gray-500">暂无模型</div>
+            <div className="text-xs text-fg-tertiary">暂无模型</div>
           ) : (
             <select
               value={modelId}
               onChange={(e) => onModelChange(e.target.value)}
-              className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded bg-white"
+              className="input select text-[12px] h-9 select"
             >
               {aiModels.map((m) => (
                 <option key={m.model_id} value={m.model_id}>
@@ -1180,11 +1381,11 @@ function RightPanel({
         </div>
 
         <div>
-          <div className="text-xs text-gray-500 mb-1">输出比例</div>
+          <div className="text-[11px] text-fg-tertiary mb-1.5">输出比例</div>
           <select
             value={aspectRatio}
             onChange={(e) => onAspectChange(e.target.value)}
-            className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded bg-white"
+            className="input select text-[12px] h-9"
           >
             {ASPECT_RATIOS.map((a) => (
               <option key={a.value} value={a.value}>
@@ -1195,11 +1396,11 @@ function RightPanel({
         </div>
 
         <div>
-          <div className="text-xs text-gray-500 mb-1">清晰度</div>
+          <div className="text-[11px] text-fg-tertiary mb-1.5">清晰度</div>
           <select
             value={qualityLevel}
             onChange={(e) => onQualityChange(e.target.value as QualityLevel)}
-            className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded bg-white"
+            className="input select text-[12px] h-9"
           >
             {QUALITY_LEVELS.map((q) => (
               <option key={q.value} value={q.value}>
@@ -1207,22 +1408,22 @@ function RightPanel({
               </option>
             ))}
           </select>
-          <div className="text-[10px] text-gray-400 mt-0.5">
+          <div className="text-[10px] text-fg-muted mt-1">
             {QUALITY_LEVELS.find((q) => q.value === qualityLevel)?.desc}
           </div>
         </div>
 
         <div>
-          <div className="text-xs text-gray-500 mb-1">
+          <div className="text-[11px] text-fg-tertiary mb-1.5">
             追加指令{" "}
-            <span className="text-gray-400 font-normal">（可选）</span>
+            <span className="text-fg-muted font-normal">（可选）</span>
           </div>
           <textarea
             value={userSeed}
             onChange={(e) => onUserSeedChange(e.target.value)}
             rows={2}
             placeholder="如：强化温馨感、保留原腰带、头发微动"
-            className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded resize-none"
+            className="input text-[12px] resize-none"
           />
         </div>
       </div>
@@ -1230,11 +1431,21 @@ function RightPanel({
       {/* 估价 */}
       {estimate && (
         <div
-          className={`rounded-md border p-3 text-xs ${
-            estimate.is_unlimited || estimate.affordable
-              ? "border-blue-200 bg-blue-50 text-blue-900"
-              : "border-amber-300 bg-amber-50 text-amber-900"
-          }`}
+          className="rounded-md border p-3 text-xs"
+          style={{
+            background:
+              estimate.is_unlimited || estimate.affordable
+                ? "var(--brand-50-bg)"
+                : "var(--warn-bg)",
+            borderColor:
+              estimate.is_unlimited || estimate.affordable
+                ? "rgba(59, 130, 246, 0.3)"
+                : "rgba(245, 158, 11, 0.3)",
+            color:
+              estimate.is_unlimited || estimate.affordable
+                ? "var(--brand-400)"
+                : "var(--warn)",
+          }}
         >
           <div className="flex justify-between items-baseline mb-1.5">
             <span className="font-medium">预估</span>
@@ -1251,7 +1462,9 @@ function RightPanel({
             ) : (
               <span>
                 余额 ¥{estimate.remaining_cny.toFixed(2)}
-                {estimate.affordable ? " · 充足" : ` · 仅 ${estimate.can_afford_count} 张`}
+                {estimate.affordable
+                  ? " · 充足"
+                  : ` · 仅 ${estimate.can_afford_count} 张`}
               </span>
             )}
           </div>
@@ -1263,15 +1476,18 @@ function RightPanel({
         <button
           onClick={onSubmit}
           disabled={!canSubmit || submitting}
-          className="w-full px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          className="btn btn-primary btn-lg w-full"
         >
           {submitting ? (
             <>
-              <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
               提交中…
             </>
           ) : (
-            <>开始生成 <span className="text-xs opacity-80">· {totalCount} 张</span></>
+            <>
+              开始生成
+              <span className="text-xs opacity-80">· {totalCount} 张</span>
+            </>
           )}
         </button>
         <div className="flex gap-2">
@@ -1282,14 +1498,14 @@ function RightPanel({
             onConfirm={onReset}
             confirmDetail="将清除已上传的产品图、解析结果、选择的模特/场景/姿势/风格组合。当前正在进行的任务不受影响。"
           />
-          <div className="text-[10px] text-gray-400 flex-1 self-center">
+          <div className="text-[10px] text-fg-muted flex-1 self-center">
             F5 刷新会清空所有状态
           </div>
         </div>
       </div>
 
-      <div className="text-[10px] text-gray-400 text-center pt-2">
-        受 Google quota 限制，每分钟最多 2 张
+      <div className="text-[10px] text-fg-muted text-center pt-2">
+        受 quota 限制，速度按当前 RPM 配置
       </div>
     </div>
   );
@@ -1297,29 +1513,10 @@ function RightPanel({
 
 /* ─────────── 子组件 ─────────── */
 
-function StepBlock({
-  step,
-  title,
-  children,
-}: {
-  step: number;
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <h3 className="text-sm font-semibold text-gray-700 mb-2">
-        {step}. {title}
-      </h3>
-      {children}
-    </div>
-  );
-}
-
 function EmptyHint({ href, label }: { href: string; label: string }) {
   return (
-    <div className="text-xs text-gray-500 p-3 bg-gray-50 rounded border border-dashed border-gray-300">
-      <a href={href} className="text-blue-600 underline">
+    <div className="text-xs text-fg-tertiary p-3 bg-bg-tertiary rounded-md border border-dashed border-border-default">
+      <a href={href} className="text-brand-400 hover:underline">
         {label}
       </a>
     </div>
@@ -1346,11 +1543,11 @@ function ChoiceGroup({
 }) {
   return (
     <div>
-      <div className="text-xs text-gray-500 mb-1">{label}</div>
+      <div className="text-[11px] text-fg-tertiary mb-1.5">{label}</div>
       {items.length === 0 ? (
         <EmptyHint href={emptyHint.href} label={emptyHint.label} />
       ) : (
-        <div className="grid gap-1">
+        <div className="grid gap-1.5">
           {items.map((it) => {
             const active = selectedId === it.id;
             return (
@@ -1358,22 +1555,28 @@ function ChoiceGroup({
                 key={it.id}
                 type="button"
                 onClick={() => onChange(it.id)}
-                className={`text-left p-2 rounded-md border text-xs transition ${
+                className={`text-left p-2.5 rounded-md border text-[12px] transition-colors ${
                   active
-                    ? "border-blue-500 bg-blue-50"
-                    : "border-gray-300 hover:border-gray-400"
+                    ? "border-transparent text-fg-primary"
+                    : "border-border-default text-fg-secondary hover:border-border-strong hover:bg-bg-hover"
                 }`}
+                style={
+                  active
+                    ? {
+                        background: "var(--brand-50-bg)",
+                        borderColor: "rgba(59, 130, 246, 0.4)",
+                      }
+                    : undefined
+                }
               >
-                <div className="font-medium text-gray-900 flex items-center gap-1">
+                <div className="font-medium flex items-center gap-1.5">
                   {it.label}
                   {it.isDefault && (
-                    <span className="text-[10px] px-1 rounded bg-green-100 text-green-700">
-                      默认
-                    </span>
+                    <span className="chip chip-success text-[10px]">默认</span>
                   )}
                 </div>
                 {it.desc && (
-                  <div className="text-gray-500 mt-0.5 line-clamp-2">
+                  <div className="text-fg-tertiary mt-0.5 line-clamp-2 text-[11px]">
                     {it.desc}
                   </div>
                 )}
@@ -1402,11 +1605,14 @@ function GarmentAttrsEditor({
         const strValue = Array.isArray(value) ? value.join("、") : String(value);
         const isMaterial = key === "面料材质";
         return (
-          <div key={key} className="p-2 bg-gray-50 border border-gray-200 rounded">
-            <div className="text-xs text-gray-500 mb-1">
+          <div
+            key={key}
+            className="p-2.5 bg-bg-tertiary border border-border-subtle rounded-md"
+          >
+            <div className="text-[11px] text-fg-tertiary mb-1">
               {key}
               {isMaterial && (
-                <span className="ml-1 text-[10px] text-blue-500">
+                <span className="ml-1 text-[10px] text-brand-400">
                   （失焦重匹配）
                 </span>
               )}
@@ -1416,9 +1622,11 @@ function GarmentAttrsEditor({
               value={strValue}
               onChange={(e) => onChange(key, e.target.value)}
               onBlur={
-                isMaterial ? (e) => onMaterialTextBlur(e.target.value) : undefined
+                isMaterial
+                  ? (e) => onMaterialTextBlur(e.target.value)
+                  : undefined
               }
-              className="w-full px-2 py-1 text-sm border border-gray-300 rounded bg-white focus:border-blue-500 focus:outline-none"
+              className="input text-[12px] h-8 px-2.5"
             />
           </div>
         );

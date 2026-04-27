@@ -109,51 +109,51 @@ export default function ColorsAdminPage() {
   return (
     <main className="max-w-4xl mx-auto p-4 md:p-8">
       <header className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">颜色库管理</h1>
-        <p className="mt-1 text-sm text-gray-500">
+        <h1 className="text-2xl font-bold text-fg-primary">颜色库管理</h1>
+        <p className="mt-1 text-sm text-fg-tertiary">
           常用颜色预设，换色时直接选择，避免每次手填 HEX
         </p>
       </header>
 
-      <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-        <h2 className="text-sm font-semibold text-gray-700 mb-3">新增颜色</h2>
+      <section className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle p-6 mb-6">
+        <h2 className="text-sm font-semibold text-fg-secondary mb-3">新增颜色</h2>
         <form
           onSubmit={handleCreate}
           className="flex flex-wrap items-end gap-3"
         >
           <div className="flex-1 min-w-[200px]">
-            <label className="block text-xs text-gray-600 mb-1">名称</label>
+            <label className="block text-xs text-fg-secondary mb-1">名称</label>
             <input
               type="text"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               placeholder="如：香槟金"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+              className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
             />
           </div>
           <div>
-            <label className="block text-xs text-gray-600 mb-1">HEX</label>
+            <label className="block text-xs text-fg-secondary mb-1">HEX</label>
             <div className="flex gap-2">
               <input
                 type="color"
                 value={newHex}
                 onChange={(e) => setNewHex(e.target.value.toUpperCase())}
-                className="w-10 h-10 border border-gray-300 rounded cursor-pointer"
+                className="w-10 h-10 border border-border-default rounded cursor-pointer"
               />
               <input
                 type="text"
                 value={newHex}
                 onChange={(e) => setNewHex(e.target.value.toUpperCase())}
-                className="w-28 px-3 py-2 border border-gray-300 rounded-md text-sm font-mono"
+                className="w-28 px-3 py-2 border border-border-default rounded-md text-sm font-mono"
               />
             </div>
           </div>
           <div>
-            <label className="block text-xs text-gray-600 mb-1">色系</label>
+            <label className="block text-xs text-fg-secondary mb-1">色系</label>
             <select
               value={newGroup}
               onChange={(e) => setNewGroup(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-md text-sm bg-white min-w-[120px]"
+              className="px-3 py-2 border border-border-default rounded-md text-sm bg-bg-secondary min-w-[120px]"
             >
               {COLOR_GROUP_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
@@ -162,7 +162,7 @@ export default function ColorsAdminPage() {
               ))}
             </select>
           </div>
-          <label className="flex items-center gap-1.5 text-xs text-gray-700 self-end mb-2.5">
+          <label className="flex items-center gap-1.5 text-xs text-fg-secondary self-end mb-2.5">
             <input
               type="checkbox"
               checked={newPopular}
@@ -174,7 +174,7 @@ export default function ColorsAdminPage() {
           <button
             type="submit"
             disabled={creating || !newName.trim()}
-            className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50"
+            className="px-4 py-2 bg-brand-600 text-white text-sm rounded-md hover:bg-brand-700 disabled:opacity-50"
           >
             {creating ? "保存中..." : "新增"}
           </button>
@@ -182,22 +182,22 @@ export default function ColorsAdminPage() {
       </section>
 
       {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
+        <div className="mb-4 p-3 bg-[var(--danger-bg)] border border-[rgba(239,68,68,0.3)] text-danger text-sm rounded">
           {error}
         </div>
       )}
 
-      <section className="bg-white rounded-lg shadow-sm border border-gray-200">
-        <div className="px-6 py-3 border-b border-gray-200">
-          <h2 className="text-sm font-semibold text-gray-700">
+      <section className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle">
+        <div className="px-6 py-3 border-b border-border-subtle">
+          <h2 className="text-sm font-semibold text-fg-secondary">
             已有颜色 ({colors.length})
           </h2>
         </div>
 
         {loading ? (
-          <div className="p-6 text-sm text-gray-500">加载中...</div>
+          <div className="p-6 text-sm text-fg-tertiary">加载中...</div>
         ) : colors.length === 0 ? (
-          <div className="p-6 text-sm text-gray-500">
+          <div className="p-6 text-sm text-fg-tertiary">
             还没有颜色，先在上面新增几个常用色
           </div>
         ) : (
@@ -235,7 +235,7 @@ function ColorRow({
   return (
     <li className="px-6 py-3 flex items-center gap-4">
       <div
-        className="w-10 h-10 rounded border border-gray-200 shrink-0"
+        className="w-10 h-10 rounded border border-border-subtle shrink-0"
         style={{ backgroundColor: color.hex }}
       />
       {editing ? (
@@ -244,7 +244,7 @@ function ColorRow({
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
+            className="flex-1 px-2 py-1 border border-border-default rounded text-sm"
           />
           <input
             type="color"
@@ -256,12 +256,12 @@ function ColorRow({
             type="text"
             value={hex}
             onChange={(e) => setHex(e.target.value.toUpperCase())}
-            className="w-24 px-2 py-1 border border-gray-300 rounded text-sm font-mono"
+            className="w-24 px-2 py-1 border border-border-default rounded text-sm font-mono"
           />
           <select
             value={group}
             onChange={(e) => setGroup(e.target.value)}
-            className="px-2 py-1 border border-gray-300 rounded text-xs bg-white"
+            className="px-2 py-1 border border-border-default rounded text-xs bg-bg-secondary"
           >
             {COLOR_GROUP_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
@@ -269,7 +269,7 @@ function ColorRow({
               </option>
             ))}
           </select>
-          <label className="flex items-center gap-1 text-xs text-gray-700">
+          <label className="flex items-center gap-1 text-xs text-fg-secondary">
             <input
               type="checkbox"
               checked={popular}
@@ -287,7 +287,7 @@ function ColorRow({
               } as Partial<Color>);
               setEditing(false);
             }}
-            className="px-3 py-1 bg-blue-600 text-white text-xs rounded"
+            className="px-3 py-1 bg-brand-600 text-white text-xs rounded"
           >
             保存
           </button>
@@ -299,7 +299,7 @@ function ColorRow({
               setPopular(color.is_popular === 1);
               setEditing(false);
             }}
-            className="px-3 py-1 text-gray-600 text-xs rounded hover:bg-gray-100"
+            className="px-3 py-1 text-fg-secondary text-xs rounded hover:bg-bg-tertiary"
           >
             取消
           </button>
@@ -307,30 +307,30 @@ function ColorRow({
       ) : (
         <>
           <div className="flex-1">
-            <div className="text-sm font-medium text-gray-900 flex items-center gap-1.5 flex-wrap">
+            <div className="text-sm font-medium text-fg-primary flex items-center gap-1.5 flex-wrap">
               <span>{color.name}</span>
               {color.color_group_label && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 border border-gray-200 font-normal">
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-tertiary text-fg-secondary border border-border-subtle font-normal">
                   {color.color_group_label}
                 </span>
               )}
               {color.is_popular === 1 && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-200 font-normal">
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--warn-bg)] text-warn border border-amber-200 font-normal">
                   流行
                 </span>
               )}
             </div>
-            <div className="text-xs text-gray-500 font-mono">{color.hex}</div>
+            <div className="text-xs text-fg-tertiary font-mono">{color.hex}</div>
           </div>
           <button
             onClick={() => setEditing(true)}
-            className="text-xs text-gray-600 hover:text-gray-900 px-2 py-1"
+            className="text-xs text-fg-secondary hover:text-fg-primary px-2 py-1"
           >
             编辑
           </button>
           <button
             onClick={() => onDelete(color.id)}
-            className="text-xs text-red-600 hover:text-red-800 px-2 py-1"
+            className="text-xs text-danger hover:text-red-800 px-2 py-1"
           >
             删除
           </button>

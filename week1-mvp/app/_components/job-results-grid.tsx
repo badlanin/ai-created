@@ -120,7 +120,7 @@ export function JobResultsGrid({
 
   if (successful.length === 0) {
     return (
-      <div className="text-sm text-gray-500 p-6 text-center bg-gray-50 rounded-md border border-dashed border-gray-300">
+      <div className="text-sm text-fg-tertiary p-6 text-center bg-bg-tertiary rounded-md border border-dashed border-border-default">
         暂无成功的结果
       </div>
     );
@@ -129,26 +129,26 @@ export function JobResultsGrid({
   return (
     <section className="space-y-4">
       {/* 顶部工具栏 */}
-      <div className="flex flex-wrap items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-md">
-        <span className="text-sm text-blue-800">
+      <div className="flex flex-wrap items-center gap-2 p-3 bg-[var(--brand-50-bg)] border border-[rgba(59,130,246,0.3)] rounded-md">
+        <span className="text-sm text-brand-400">
           已选 <b>{selected.size}</b> / {successful.length}
         </span>
         <button
           onClick={selectAll}
-          className="px-2 py-1 text-xs bg-white border border-blue-300 text-blue-700 rounded hover:bg-blue-100"
+          className="px-2 py-1 text-xs bg-bg-secondary border border-[rgba(59,130,246,0.4)] text-brand-400 rounded hover:bg-[var(--brand-100-bg)]"
         >
           全选
         </button>
         <button
           onClick={selectNone}
-          className="px-2 py-1 text-xs bg-white border border-gray-300 text-gray-700 rounded hover:bg-gray-100"
+          className="px-2 py-1 text-xs bg-bg-secondary border border-border-default text-fg-secondary rounded hover:bg-bg-tertiary"
         >
           清除
         </button>
         <button
           onClick={downloadSelected}
           disabled={selected.size === 0 || zipping}
-          className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+          className="px-3 py-1 text-xs bg-brand-600 text-white rounded hover:bg-brand-700 disabled:opacity-50"
         >
           {zipping && zipProgress
             ? `打包中 ${zipProgress.done}/${zipProgress.total}`
@@ -157,12 +157,12 @@ export function JobResultsGrid({
         <button
           onClick={downloadAll}
           disabled={zipping}
-          className="px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
+          className="px-3 py-1 text-xs bg-success text-white rounded hover:bg-green-700 disabled:opacity-50"
         >
           {zipping ? "打包中…" : "下载全部 (ZIP)"}
         </button>
         {subtitle ? (
-          <span className="ml-auto text-xs text-gray-500">{subtitle}</span>
+          <span className="ml-auto text-xs text-fg-tertiary">{subtitle}</span>
         ) : null}
       </div>
 
@@ -171,9 +171,9 @@ export function JobResultsGrid({
         {groups.map((g) => (
           <div key={g.title || "all"}>
             {g.title ? (
-              <div className="text-sm font-medium text-gray-700 mb-2">
+              <div className="text-sm font-medium text-fg-secondary mb-2">
                 {g.title}{" "}
-                <span className="text-xs text-gray-400">
+                <span className="text-xs text-fg-tertiary">
                   · {g.items.length} 张
                 </span>
               </div>
@@ -198,8 +198,8 @@ export function JobResultsGrid({
                         }}
                         className={`w-5 h-5 rounded border-2 flex items-center justify-center text-xs ${
                           isSelected
-                            ? "bg-blue-600 border-blue-600 text-white"
-                            : "bg-white/90 border-gray-400"
+                            ? "bg-brand-600 border-transparent text-white"
+                            : "bg-bg-elevated/90 border-border-strong"
                         }`}
                       >
                         {isSelected ? "✓" : ""}
@@ -221,7 +221,7 @@ export function JobResultsGrid({
                             resolveFilename(it),
                           );
                         }}
-                        className="px-3 py-1.5 bg-white/90 text-gray-800 text-xs rounded-md shadow hover:bg-white"
+                        className="px-3 py-1.5 bg-bg-elevated/90 text-fg-primary text-xs rounded-md shadow hover:bg-bg-secondary"
                       >
                         下载单张
                       </button>

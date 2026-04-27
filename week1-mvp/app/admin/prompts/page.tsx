@@ -125,51 +125,51 @@ export default function PromptsAdminPage() {
     <main className="max-w-5xl mx-auto p-4 md:p-8">
       <header className="mb-6 flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Prompt 模板库</h1>
-          <p className="mt-1 text-sm text-gray-500">
+          <h1 className="text-2xl font-bold text-fg-primary">Prompt 模板库</h1>
+          <p className="mt-1 text-sm text-fg-tertiary">
             生成任务使用的指令模板。占位符会在调用时自动替换
           </p>
         </div>
         <button
           onClick={() => setShowForm((v) => !v)}
-          className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700"
+          className="px-4 py-2 bg-brand-600 text-white text-sm rounded-md hover:bg-brand-700"
         >
           {showForm ? "取消" : "+ 添加模板"}
         </button>
       </header>
 
       {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
+        <div className="mb-4 p-3 bg-[var(--danger-bg)] border border-[rgba(239,68,68,0.3)] text-danger text-sm rounded">
           {error}
         </div>
       )}
 
       {showForm && (
-        <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+        <section className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle p-6 mb-6">
           <form onSubmit={handleCreate} className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs text-gray-600 mb-1">
-                  名称 <span className="text-red-500">*</span>
+                <label className="block text-xs text-fg-secondary mb-1">
+                  名称 <span className="text-danger">*</span>
                 </label>
                 <input
                   type="text"
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                   placeholder="如：标准模特穿着图"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                  className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
                 />
               </div>
               <div>
-                <label className="block text-xs text-gray-600 mb-1">
-                  类型 <span className="text-red-500">*</span>
+                <label className="block text-xs text-fg-secondary mb-1">
+                  类型 <span className="text-danger">*</span>
                 </label>
                 <select
                   value={form.kind}
                   onChange={(e) =>
                     setForm({ ...form, kind: e.target.value as PromptKind })
                   }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                  className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
                 >
                   <option value="on_model">模特换装 on_model</option>
                   <option value="recolor">换色 recolor</option>
@@ -178,19 +178,19 @@ export default function PromptsAdminPage() {
               </div>
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">备注</label>
+              <label className="block text-xs text-fg-secondary mb-1">备注</label>
               <input
                 type="text"
                 value={form.notes}
                 onChange={(e) => setForm({ ...form, notes: e.target.value })}
                 placeholder="简短描述这个模板的用途 / 风格"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">
-                模板内容 <span className="text-red-500">*</span>
-                <span className="ml-2 text-gray-400">
+              <label className="block text-xs text-fg-secondary mb-1">
+                模板内容 <span className="text-danger">*</span>
+                <span className="ml-2 text-fg-tertiary">
                   {KIND_HINT[form.kind]}
                 </span>
               </label>
@@ -201,13 +201,13 @@ export default function PromptsAdminPage() {
                 }
                 rows={14}
                 placeholder="完整 Prompt 文本，使用 {{占位符}} 作为动态注入点"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono"
+                className="w-full px-3 py-2 border border-border-default rounded-md text-sm font-mono"
               />
             </div>
             <button
               type="submit"
               disabled={submitting}
-              className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50"
+              className="px-4 py-2 bg-brand-600 text-white text-sm rounded-md hover:bg-brand-700 disabled:opacity-50"
             >
               {submitting ? "保存中..." : "保存"}
             </button>
@@ -218,21 +218,21 @@ export default function PromptsAdminPage() {
       {(["on_model", "recolor", "generic"] as PromptKind[]).map((kind) => (
         <section
           key={kind}
-          className="bg-white rounded-lg shadow-sm border border-gray-200 mb-6"
+          className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle mb-6"
         >
-          <div className="px-6 py-3 border-b border-gray-200">
-            <h2 className="text-sm font-semibold text-gray-800">
+          <div className="px-6 py-3 border-b border-border-subtle">
+            <h2 className="text-sm font-semibold text-fg-primary">
               {KIND_LABEL[kind]}
-              <span className="ml-2 text-gray-400">
+              <span className="ml-2 text-fg-tertiary">
                 ({grouped[kind].length})
               </span>
             </h2>
-            <p className="mt-0.5 text-xs text-gray-500">{KIND_HINT[kind]}</p>
+            <p className="mt-0.5 text-xs text-fg-tertiary">{KIND_HINT[kind]}</p>
           </div>
           {loading ? (
-            <div className="p-6 text-sm text-gray-500">加载中...</div>
+            <div className="p-6 text-sm text-fg-tertiary">加载中...</div>
           ) : grouped[kind].length === 0 ? (
-            <div className="p-6 text-sm text-gray-500">暂无模板</div>
+            <div className="p-6 text-sm text-fg-tertiary">暂无模板</div>
           ) : (
             <ul className="divide-y divide-gray-200">
               {grouped[kind].map((p) => (
@@ -270,21 +270,21 @@ function PromptRow({
 
   if (editing) {
     return (
-      <li className="px-6 py-4 bg-blue-50 space-y-2">
+      <li className="px-6 py-4 bg-[var(--brand-50-bg)] space-y-2">
         <input
-          className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+          className="w-full px-2 py-1 border border-border-default rounded text-sm"
           value={draft.name}
           onChange={(e) => setDraft({ ...draft, name: e.target.value })}
         />
         <input
-          className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+          className="w-full px-2 py-1 border border-border-default rounded text-sm"
           placeholder="备注"
           value={draft.notes}
           onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
         />
         <textarea
           rows={14}
-          className="w-full px-2 py-1 border border-gray-300 rounded text-sm font-mono"
+          className="w-full px-2 py-1 border border-border-default rounded text-sm font-mono"
           value={draft.template}
           onChange={(e) => setDraft({ ...draft, template: e.target.value })}
         />
@@ -294,13 +294,13 @@ function PromptRow({
               onPatch(prompt.id, draft);
               setEditing(false);
             }}
-            className="px-3 py-1 bg-blue-600 text-white text-xs rounded"
+            className="px-3 py-1 bg-brand-600 text-white text-xs rounded"
           >
             保存
           </button>
           <button
             onClick={() => setEditing(false)}
-            className="px-3 py-1 text-gray-600 text-xs rounded hover:bg-gray-100"
+            className="px-3 py-1 text-fg-secondary text-xs rounded hover:bg-bg-tertiary"
           >
             取消
           </button>
@@ -313,18 +313,18 @@ function PromptRow({
     <li className="px-6 py-3">
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium text-gray-900">{prompt.name}</div>
+          <div className="text-sm font-medium text-fg-primary">{prompt.name}</div>
           {prompt.notes && (
-            <div className="text-xs text-gray-500 mt-0.5">{prompt.notes}</div>
+            <div className="text-xs text-fg-tertiary mt-0.5">{prompt.notes}</div>
           )}
           <button
             onClick={() => setExpanded((v) => !v)}
-            className="mt-1 text-xs text-blue-600 hover:underline"
+            className="mt-1 text-xs text-brand-400 hover:underline"
           >
             {expanded ? "收起模板" : "查看模板"}
           </button>
           {expanded && (
-            <pre className="mt-2 p-2 bg-gray-50 border border-gray-200 rounded text-xs text-gray-700 whitespace-pre-wrap max-h-96 overflow-auto">
+            <pre className="mt-2 p-2 bg-bg-tertiary border border-border-subtle rounded text-xs text-fg-secondary whitespace-pre-wrap max-h-96 overflow-auto">
               {prompt.template}
             </pre>
           )}
@@ -332,13 +332,13 @@ function PromptRow({
         <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={() => setEditing(true)}
-            className="text-xs text-gray-600 hover:text-gray-900 px-2 py-1"
+            className="text-xs text-fg-secondary hover:text-fg-primary px-2 py-1"
           >
             编辑
           </button>
           <button
             onClick={() => onDelete(prompt.id)}
-            className="text-xs text-red-600 hover:text-red-800 px-2 py-1"
+            className="text-xs text-danger hover:text-red-800 px-2 py-1"
           >
             删除
           </button>

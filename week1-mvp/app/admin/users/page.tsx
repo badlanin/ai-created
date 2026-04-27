@@ -112,32 +112,32 @@ export default function UsersAdminPage() {
     <main className="max-w-6xl mx-auto p-4 md:p-8">
       <header className="mb-6 flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">用户管理</h1>
-          <p className="mt-1 text-sm text-gray-500">
+          <h1 className="text-2xl font-bold text-fg-primary">用户管理</h1>
+          <p className="mt-1 text-sm text-fg-tertiary">
             团队成员账号 + 月度预算。管理员账号不受预算限制。
           </p>
         </div>
         <button
           onClick={() => setShowForm((v) => !v)}
-          className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700"
+          className="px-4 py-2 bg-brand-600 text-white text-sm rounded-md hover:bg-brand-700"
         >
           {showForm ? "取消" : "+ 新增用户"}
         </button>
       </header>
 
       {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
+        <div className="mb-4 p-3 bg-[var(--danger-bg)] border border-[rgba(239,68,68,0.3)] text-danger text-sm rounded">
           {error}
         </div>
       )}
 
       {showForm && (
-        <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+        <section className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle p-6 mb-6">
           <form onSubmit={handleCreate} className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs text-gray-600 mb-1">
-                  用户名 <span className="text-red-500">*</span>
+                <label className="block text-xs text-fg-secondary mb-1">
+                  用户名 <span className="text-danger">*</span>
                 </label>
                 <input
                   type="text"
@@ -146,12 +146,12 @@ export default function UsersAdminPage() {
                     setForm({ ...form, username: e.target.value })
                   }
                   required
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                  className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
                 />
               </div>
               <div>
-                <label className="block text-xs text-gray-600 mb-1">
-                  密码（至少 6 位） <span className="text-red-500">*</span>
+                <label className="block text-xs text-fg-secondary mb-1">
+                  密码（至少 6 位） <span className="text-danger">*</span>
                 </label>
                 <input
                   type="text"
@@ -161,11 +161,11 @@ export default function UsersAdminPage() {
                   }
                   minLength={6}
                   required
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                  className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
                 />
               </div>
               <div>
-                <label className="block text-xs text-gray-600 mb-1">
+                <label className="block text-xs text-fg-secondary mb-1">
                   显示名
                 </label>
                 <input
@@ -174,11 +174,11 @@ export default function UsersAdminPage() {
                   onChange={(e) =>
                     setForm({ ...form, display_name: e.target.value })
                   }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                  className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
                 />
               </div>
               <div>
-                <label className="block text-xs text-gray-600 mb-1">角色</label>
+                <label className="block text-xs text-fg-secondary mb-1">角色</label>
                 <select
                   value={form.role}
                   onChange={(e) =>
@@ -187,7 +187,7 @@ export default function UsersAdminPage() {
                       role: e.target.value as "user" | "admin",
                     })
                   }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                  className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
                 >
                   <option value="user">普通用户</option>
                   <option value="admin">管理员</option>
@@ -218,14 +218,14 @@ export default function UsersAdminPage() {
                         monthly_budget_cny: Number(e.target.value),
                       })
                     }
-                    className="w-28 px-2 py-1 border border-gray-300 rounded text-sm"
+                    className="w-28 px-2 py-1 border border-border-default rounded text-sm"
                   />
                 </label>
               )}
             </div>
             <button
               type="submit"
-              className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700"
+              className="px-4 py-2 bg-brand-600 text-white text-sm rounded-md hover:bg-brand-700"
             >
               创建
             </button>
@@ -233,16 +233,16 @@ export default function UsersAdminPage() {
         </section>
       )}
 
-      <section className="bg-white rounded-lg shadow-sm border border-gray-200">
-        <div className="px-6 py-3 border-b border-gray-200">
-          <h2 className="text-sm font-semibold text-gray-700">
+      <section className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle">
+        <div className="px-6 py-3 border-b border-border-subtle">
+          <h2 className="text-sm font-semibold text-fg-secondary">
             成员 ({users.length})
           </h2>
         </div>
         {loading ? (
-          <div className="p-6 text-sm text-gray-500">加载中...</div>
+          <div className="p-6 text-sm text-fg-tertiary">加载中...</div>
         ) : users.length === 0 ? (
-          <div className="p-6 text-sm text-gray-500">无</div>
+          <div className="p-6 text-sm text-fg-tertiary">无</div>
         ) : (
           <ul className="divide-y divide-gray-200">
             {users.map((u) => (
@@ -290,20 +290,20 @@ function UserRow({
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="font-medium text-gray-900">
+            <span className="font-medium text-fg-primary">
               {user.display_name || user.username}
             </span>
-            <span className="text-xs text-gray-500">@{user.username}</span>
+            <span className="text-xs text-fg-tertiary">@{user.username}</span>
             {user.role === "admin" && (
-              <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded">
+              <span className="text-[10px] px-1.5 py-0.5 bg-[var(--warn-bg)] text-warn rounded">
                 管理员
               </span>
             )}
           </div>
-          <div className="mt-1 text-xs text-gray-500">
+          <div className="mt-1 text-xs text-fg-tertiary">
             本月消费 {fmtCny(user.used_this_month_cny)}
             {user.is_unlimited === 1 ? (
-              <span className="ml-2 text-green-600">· 无限额度</span>
+              <span className="ml-2 text-success">· 无限额度</span>
             ) : (
               <>
                 {" / "}
@@ -311,10 +311,10 @@ function UserRow({
                 <span
                   className={
                     pct > 90
-                      ? "text-red-600"
+                      ? "text-danger"
                       : pct > 70
-                        ? "text-amber-600"
-                        : "text-gray-500"
+                        ? "text-warn"
+                        : "text-fg-tertiary"
                   }
                 >
                   ({pct.toFixed(0)}%)
@@ -323,7 +323,7 @@ function UserRow({
             )}
           </div>
           {editing && (
-            <div className="mt-3 p-3 bg-blue-50 rounded border border-blue-200 space-y-2">
+            <div className="mt-3 p-3 bg-[var(--brand-50-bg)] rounded border border-[rgba(59,130,246,0.3)] space-y-2">
               <div className="grid grid-cols-2 gap-2">
                 <input
                   type="text"
@@ -332,14 +332,14 @@ function UserRow({
                     setDraft({ ...draft, display_name: e.target.value })
                   }
                   placeholder="显示名"
-                  className="px-2 py-1 border border-gray-300 rounded text-sm"
+                  className="px-2 py-1 border border-border-default rounded text-sm"
                 />
                 <select
                   value={draft.role}
                   onChange={(e) =>
                     setDraft({ ...draft, role: e.target.value as "user" | "admin" })
                   }
-                  className="px-2 py-1 border border-gray-300 rounded text-sm"
+                  className="px-2 py-1 border border-border-default rounded text-sm"
                 >
                   <option value="user">普通用户</option>
                   <option value="admin">管理员</option>
@@ -369,7 +369,7 @@ function UserRow({
                           monthly_budget_cny: Number(e.target.value),
                         })
                       }
-                      className="w-28 px-2 py-1 border border-gray-300 rounded text-sm"
+                      className="w-28 px-2 py-1 border border-border-default rounded text-sm"
                     />
                   </label>
                 )}
@@ -380,13 +380,13 @@ function UserRow({
                     onPatch(user.id, draft);
                     setEditing(false);
                   }}
-                  className="px-3 py-1 bg-blue-600 text-white text-xs rounded"
+                  className="px-3 py-1 bg-brand-600 text-white text-xs rounded"
                 >
                   保存
                 </button>
                 <button
                   onClick={() => setEditing(false)}
-                  className="px-3 py-1 text-gray-600 text-xs hover:bg-gray-100 rounded"
+                  className="px-3 py-1 text-fg-secondary text-xs hover:bg-bg-tertiary rounded"
                 >
                   取消
                 </button>
@@ -397,19 +397,19 @@ function UserRow({
         <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={() => setEditing((v) => !v)}
-            className="text-xs text-gray-600 hover:text-gray-900 px-2 py-1"
+            className="text-xs text-fg-secondary hover:text-fg-primary px-2 py-1"
           >
             编辑
           </button>
           <button
             onClick={() => onResetPwd(user.id, user.username)}
-            className="text-xs text-blue-600 hover:text-blue-800 px-2 py-1"
+            className="text-xs text-brand-400 hover:text-brand-400 px-2 py-1"
           >
             重置密码
           </button>
           <button
             onClick={() => onDelete(user.id, user.username)}
-            className="text-xs text-red-600 hover:text-red-800 px-2 py-1"
+            className="text-xs text-danger hover:text-red-800 px-2 py-1"
           >
             删除
           </button>
