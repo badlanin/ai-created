@@ -16,6 +16,8 @@ type Setting = {
   value: string;
   notes: string | null;
   updated_at: number;
+  /** 敏感配置（如 API key），后端已 mask，前端禁止内联编辑 */
+  sensitive?: boolean;
 };
 
 export default function ModelPricesPage() {
@@ -244,6 +246,41 @@ function SettingRow({
 }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(s.value);
+
+  // 敏感 key（API key 等）：值已被后端 mask，禁止在此页面编辑——
+  // 防止用户点"修改"再"保存"把 mask 字符串原样回写覆盖真 key。
+  // 编辑入口走专门的 /admin/settings 页面（有完整的 password 输入 + 留空=不改流程）。
+  if (s.sensitive) {
+    return (
+      <div className="p-3 bg-gray-50 border border-gray-200 rounded">
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-gray-500 font-mono">{s.key}</span>
+          <span
+            title="敏感配置，已加密展示"
+            className="text-xs text-amber-600"
+            aria-label="sensitive"
+          >
+            🔒
+          </span>
+        </div>
+        {s.notes && (
+          <div className="text-xs text-gray-400 mt-0.5">{s.notes}</div>
+        )}
+        <div className="flex items-center justify-between mt-1">
+          <div className="text-base font-mono text-gray-700 select-none">
+            {s.value || <span className="text-gray-400">未配置</span>}
+          </div>
+          <a
+            href="/admin/settings"
+            className="text-xs text-blue-600 hover:underline"
+          >
+            在「系统设置」中修改 →
+          </a>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-3 bg-gray-50 border border-gray-200 rounded">
       <div className="text-xs text-gray-500 font-mono">{s.key}</div>
