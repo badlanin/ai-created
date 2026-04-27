@@ -20,6 +20,7 @@ import { recordUsage } from "@/lib/usage";
 import { assertWithinBudget, getUserBudgetStatus } from "@/lib/pricing";
 import { createJob } from "@/lib/jobs-db";
 import { startJobWorker, type HandlerContext } from "@/lib/job-runner";
+import { pickShoeSpec } from "@/lib/shoe-spec";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -216,6 +217,10 @@ export async function POST(req: NextRequest) {
     // 同一个 batch 共享一个 random seed，保证多张图模特脸/光线/背景的一致性
     const batchSeed = Math.floor(Math.random() * 2_147_483_647);
 
+    // 整批锁定一种鞋型：根据服装主色调决定颜色（裸/黑/银/香槟金），
+    // 款式 / 跟高 / 材质固定。每张图 prompt 里注入同一份 → 大幅提升鞋的一致性
+    const shoeSpec = pickShoeSpec(garmentAttrs);
+
     // ─── 创建 job（items = 一个 pose 一个）───
     const job = createJob({
       user_id: user.id,
@@ -249,6 +254,7 @@ export async function POST(req: NextRequest) {
         realism_name: realism?.name ?? null,
         realism_constraints_text: formatRealismConstraints(realism),
         garment_attrs_text: formatGarmentAttrs(garmentAttrs),
+        shoe_spec: shoeSpec,
         material_details_text: formatMaterialDetails(materials),
         material_ids: materials.map((m) => m.id),
         material_names: materials.map((m) => m.name),
@@ -346,6 +352,7 @@ async function batchPhotoItemHandler(
     photography_params_text?: string;
     realism_constraints_text?: string;
     garment_attrs_text?: string;
+    shoe_spec?: string;
     material_details_text?: string;
     poses: Array<{ id: number; name: string; text: string; type: string }>;
     product_paths: string[];
@@ -419,6 +426,8 @@ async function batchPhotoItemHandler(
     user_seed: p.user_seed ? `【用户补充指令】${p.user_seed}` : "",
     identity_name: p.identity.name,
     scene_name: p.scene.name,
+    // 整批锁定的鞋型描述（在 job 创建时由 pickShoeSpec 决定，所有 item 共用）
+    shoe_spec: p.shoe_spec || "",
   };
   const filledTemplate = p.template.template.replace(
     /\{\{(\w+)\}\}/g,
