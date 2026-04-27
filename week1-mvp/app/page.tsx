@@ -24,7 +24,12 @@ interface Feature {
   href: string;
   title: string;
   desc: string;
-  Icon: React.ComponentType<{ size?: number; strokeWidth?: number; className?: string }>;
+  Icon: React.ComponentType<{
+    size?: number;
+    strokeWidth?: number;
+    className?: string;
+    style?: React.CSSProperties;
+  }>;
   accent: "blue" | "pink" | "amber" | "green";
 }
 
