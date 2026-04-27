@@ -1,0 +1,1987 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 服装图像工具 - 深色主题UI预览</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    /* ════════════════════════════════════════════════════════
+       深色主题设计系统 - Dark Mode Design System
+       ════════════════════════════════════════════════════════ */
+    :root {
+      /* 深色背景色 */
+      --bg-primary: #0a0a0f;
+      --bg-secondary: #111118;
+      --bg-tertiary: #1a1a24;
+      --bg-elevated: #22222e;
+      --bg-card: rgba(26, 26, 36, 0.8);
+      
+      /* 品牌色 - 明亮蓝 */
+      --brand-400: #60a5fa;
+      --brand-500: #3b82f6;
+      --brand-600: #2563eb;
+      --brand-gradient: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+      --brand-glow: rgba(59, 130, 246, 0.4);
+      
+      /* 文字颜色 */
+      --text-primary: #f8fafc;
+      --text-secondary: #94a3b8;
+      --text-tertiary: #64748b;
+      --text-muted: #475569;
+      
+      /* 边框 */
+      --border-subtle: rgba(255, 255, 255, 0.06);
+      --border-default: rgba(255, 255, 255, 0.1);
+      --border-strong: rgba(255, 255, 255, 0.15);
+      
+      /* 语义色 */
+      --success: #10b981;
+      --success-bg: rgba(16, 185, 129, 0.15);
+      --warn: #f59e0b;
+      --warn-bg: rgba(245, 158, 11, 0.15);
+      --danger: #ef4444;
+      --danger-bg: rgba(239, 68, 68, 0.15);
+      
+      /* 阴影 */
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+      --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+      --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.5);
+      --shadow-glow: 0 0 40px rgba(59, 130, 246, 0.15);
+      
+      /* 圆角 */
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+      --radius-xl: 20px;
+      --radius-full: 9999px;
+      
+      /* 动画 */
+      --ease-out: cubic-bezier(0.25, 1, 0.5, 1);
+      --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+      --duration-fast: 150ms;
+      --duration-base: 250ms;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: 'Inter', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--text-primary);
+      background: var(--bg-primary);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* 滚动条 */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: var(--bg-secondary); }
+    ::-webkit-scrollbar-thumb {
+      background: var(--border-default);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+
+    /* ════════════════════════════════════════════════════════
+       布局容器
+       ════════════════════════════════════════════════════════ */
+    .app-container {
+      display: flex;
+      min-height: 100vh;
+    }
+
+    /* 侧边栏 */
+    .sidebar {
+      width: 260px;
+      background: var(--bg-secondary);
+      border-right: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      position: fixed;
+      top: 0;
+      left: 0;
+      height: 100vh;
+      z-index: 100;
+    }
+
+    .sidebar-header {
+      padding: 24px 20px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo-icon {
+      width: 36px;
+      height: 36px;
+      background: var(--brand-gradient);
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      box-shadow: 0 0 20px var(--brand-glow);
+    }
+
+    .logo-text {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text-primary);
+      letter-spacing: -0.02em;
+    }
+
+    .sidebar-nav {
+      flex: 1;
+      padding: 16px 12px;
+      overflow-y: auto;
+    }
+
+    .nav-section {
+      margin-bottom: 24px;
+    }
+
+    .nav-section-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-tertiary);
+      padding: 0 12px;
+      margin-bottom: 8px;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 12px;
+      border-radius: var(--radius-md);
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-weight: 500;
+      font-size: 14px;
+      transition: all var(--duration-fast);
+      cursor: pointer;
+      margin-bottom: 2px;
+    }
+
+    .nav-item:hover {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+    }
+
+    .nav-item.active {
+      background: rgba(59, 130, 246, 0.15);
+      color: var(--brand-400);
+    }
+
+    .nav-item.active .nav-icon {
+      color: var(--brand-400);
+    }
+
+    .nav-icon {
+      width: 20px;
+      height: 20px;
+      color: var(--text-tertiary);
+      transition: color var(--duration-fast);
+    }
+
+    .nav-item:hover .nav-icon {
+      color: var(--text-primary);
+    }
+
+    .nav-badge {
+      margin-left: auto;
+      background: var(--brand-500);
+      color: white;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: var(--radius-full);
+    }
+
+    .sidebar-footer {
+      padding: 16px;
+      border-top: 1px solid var(--border-subtle);
+    }
+
+    .user-card {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px;
+      border-radius: var(--radius-md);
+      background: var(--bg-tertiary);
+      transition: all var(--duration-fast);
+      cursor: pointer;
+    }
+
+    .user-card:hover {
+      background: var(--bg-elevated);
+    }
+
+    .user-avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: var(--radius-full);
+      background: var(--brand-gradient);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    .user-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .user-name {
+      font-weight: 600;
+      color: var(--text-primary);
+      font-size: 14px;
+    }
+
+    .user-role {
+      font-size: 12px;
+      color: var(--text-tertiary);
+    }
+
+    /* 主内容区 */
+    .main-content {
+      flex: 1;
+      margin-left: 260px;
+      background: var(--bg-primary);
+    }
+
+    /* 顶部栏 */
+    .topbar {
+      background: var(--bg-primary);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 16px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .page-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text-primary);
+      letter-spacing: -0.02em;
+    }
+
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    /* 搜索框 */
+    .search-box {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 10px 14px;
+      width: 280px;
+      transition: all var(--duration-fast);
+    }
+
+    .search-box:focus-within {
+      border-color: var(--brand-500);
+      background: var(--bg-elevated);
+    }
+
+    .search-box input {
+      border: none;
+      background: transparent;
+      outline: none;
+      width: 100%;
+      font-size: 14px;
+      color: var(--text-primary);
+    }
+
+    .search-box input::placeholder {
+      color: var(--text-tertiary);
+    }
+
+    /* 页面内容 */
+    .page-content {
+      padding: 32px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    /* ════════════════════════════════════════════════════════
+       按钮组件
+       ════════════════════════════════════════════════════════ */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      font-weight: 600;
+      border: none;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      transition: all var(--duration-fast);
+      white-space: nowrap;
+      text-decoration: none;
+      font-family: inherit;
+      font-size: 14px;
+    }
+
+    .btn:active { transform: scale(0.97); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* 尺寸 */
+    .btn-sm { padding: 6px 12px; height: 32px; font-size: 13px; }
+    .btn-md { padding: 10px 16px; height: 40px; }
+    .btn-lg { padding: 12px 24px; height: 48px; font-size: 15px; }
+
+    /* 主要按钮 */
+    .btn-primary {
+      background: var(--brand-gradient);
+      color: white;
+      box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+    }
+    .btn-primary:hover:not(:disabled) {
+      box-shadow: 0 0 30px rgba(59, 130, 246, 0.5);
+      transform: translateY(-1px);
+    }
+
+    /* 次要按钮 */
+    .btn-secondary {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      border: 1px solid var(--border-default);
+    }
+    .btn-secondary:hover:not(:disabled) {
+      background: var(--bg-elevated);
+      border-color: var(--border-strong);
+    }
+
+    /* 幽灵按钮 */
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-secondary);
+    }
+    .btn-ghost:hover:not(:disabled) {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+    }
+
+    /* 图标按钮 */
+    .btn-icon {
+      padding: 8px;
+      width: 40px;
+      height: 40px;
+    }
+    .btn-icon.btn-sm { width: 32px; height: 32px; padding: 6px; }
+
+    /* ════════════════════════════════════════════════════════
+       卡片组件
+       ════════════════════════════════════════════════════════ */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      transition: all var(--duration-base);
+      backdrop-filter: blur(10px);
+    }
+
+    .card:hover {
+      border-color: var(--border-default);
+      box-shadow: var(--shadow-lg);
+    }
+
+    .card-header {
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .card-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .card-body {
+      padding: 24px;
+    }
+
+    .card-footer {
+      padding: 16px 24px;
+      border-top: 1px solid var(--border-subtle);
+      background: rgba(0, 0, 0, 0.2);
+    }
+
+    /* 功能卡片 */
+    .feature-card {
+      padding: 24px;
+      border-radius: var(--radius-lg);
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      transition: all var(--duration-base);
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .feature-card:hover {
+      border-color: var(--border-default);
+      transform: translateY(-4px);
+      box-shadow: var(--shadow-lg);
+    }
+
+    .feature-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--brand-gradient);
+      opacity: 0;
+      transition: opacity var(--duration-base);
+    }
+
+    .feature-card:hover::before {
+      opacity: 1;
+    }
+
+    .feature-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-subtle);
+      color: var(--brand-400);
+    }
+
+    .feature-icon svg {
+      width: 24px;
+      height: 24px;
+    }
+
+    .feature-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 8px;
+    }
+
+    .feature-desc {
+      font-size: 14px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+
+    /* ════════════════════════════════════════════════════════
+       状态标签
+       ════════════════════════════════════════════════════════ */
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: var(--radius-full);
+      line-height: 1;
+    }
+
+    .chip-brand { 
+      background: rgba(59, 130, 246, 0.15); 
+      color: var(--brand-400); 
+    }
+    .chip-success { 
+      background: var(--success-bg); 
+      color: var(--success);
+    }
+    .chip-warn { 
+      background: var(--warn-bg); 
+      color: var(--warn);
+    }
+    .chip-danger { 
+      background: var(--danger-bg); 
+      color: var(--danger);
+    }
+    .chip-gray { 
+      background: var(--bg-tertiary); 
+      color: var(--text-tertiary);
+    }
+
+    .chip-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    /* ════════════════════════════════════════════════════════
+       表单组件
+       ════════════════════════════════════════════════════════ */
+    .input {
+      width: 100%;
+      padding: 12px 16px;
+      font-size: 14px;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      transition: all var(--duration-fast);
+      font-family: inherit;
+    }
+
+    .input:focus {
+      outline: none;
+      border-color: var(--brand-500);
+      background: var(--bg-elevated);
+    }
+
+    .input::placeholder {
+      color: var(--text-tertiary);
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+    }
+
+    /* 选择器 */
+    .select {
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      padding-right: 40px;
+    }
+
+    /* 复选框 */
+    .checkbox {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+      font-size: 14px;
+      color: var(--text-secondary);
+    }
+
+    .checkbox input {
+      width: 18px;
+      height: 18px;
+      border: 1px solid var(--border-default);
+      border-radius: 4px;
+      appearance: none;
+      cursor: pointer;
+      transition: all var(--duration-fast);
+      background: var(--bg-tertiary);
+    }
+
+    .checkbox input:checked {
+      background: var(--brand-500);
+      border-color: var(--brand-500);
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3'%3E%3Cpath d='M20 6L9 17l-5-5'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: center;
+    }
+
+    /* ════════════════════════════════════════════════════════
+       进度条
+       ════════════════════════════════════════════════════════ */
+    .progress {
+      height: 6px;
+      background: var(--bg-tertiary);
+      border-radius: var(--radius-full);
+      overflow: hidden;
+    }
+
+    .progress-bar {
+      height: 100%;
+      background: var(--brand-gradient);
+      border-radius: var(--radius-full);
+      transition: width var(--duration-base) var(--ease-out);
+      box-shadow: 0 0 10px var(--brand-glow);
+    }
+
+    /* ════════════════════════════════════════════════════════
+       表格
+       ════════════════════════════════════════════════════════ */
+    .table-container {
+      overflow-x: auto;
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-card);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    thead {
+      background: var(--bg-tertiary);
+    }
+
+    th {
+      padding: 14px 20px;
+      text-align: left;
+      font-weight: 600;
+      color: var(--text-tertiary);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    td {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    tbody tr:hover {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    /* ════════════════════════════════════════════════════════
+       模态框
+       ════════════════════════════════════════════════════════ */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      animation: fadeIn var(--duration-fast);
+      padding: 20px;
+    }
+
+    .modal {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-lg);
+      max-width: 480px;
+      width: 100%;
+      max-height: 90vh;
+      overflow: hidden;
+      animation: slideUp var(--duration-base) var(--ease-spring);
+    }
+
+    .modal-header {
+      padding: 24px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .modal-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .modal-body {
+      padding: 24px;
+      overflow-y: auto;
+      max-height: calc(90vh - 160px);
+    }
+
+    .modal-footer {
+      padding: 20px 24px;
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      background: var(--bg-tertiary);
+    }
+
+    /* ════════════════════════════════════════════════════════
+       Toast 提示
+       ════════════════════════════════════════════════════════ */
+    .toast {
+      padding: 16px 20px;
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: var(--shadow-lg);
+      animation: slideInRight var(--duration-base) var(--ease-spring);
+      max-width: 400px;
+      border: 1px solid var(--border-subtle);
+    }
+
+    .toast-success { 
+      background: var(--bg-secondary); 
+      border-color: var(--success);
+      color: var(--success); 
+    }
+    .toast-error { 
+      background: var(--bg-secondary); 
+      border-color: var(--danger);
+      color: var(--danger); 
+    }
+    .toast-warn { 
+      background: var(--bg-secondary); 
+      border-color: var(--warn);
+      color: var(--warn); 
+    }
+    .toast-info { 
+      background: var(--bg-secondary); 
+      border-color: var(--brand-500);
+      color: var(--brand-400); 
+    }
+
+    /* ════════════════════════════════════════════════════════
+       空状态
+       ════════════════════════════════════════════════════════ */
+    .empty-state {
+      text-align: center;
+      padding: 60px 40px;
+    }
+
+    .empty-state-icon {
+      width: 80px;
+      height: 80px;
+      margin: 0 auto 24px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-tertiary);
+    }
+
+    .empty-state-icon svg {
+      width: 40px;
+      height: 40px;
+    }
+
+    .empty-state-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 8px;
+    }
+
+    .empty-state-desc {
+      font-size: 14px;
+      color: var(--text-secondary);
+      max-width: 320px;
+      margin: 0 auto;
+      line-height: 1.6;
+    }
+
+    /* ════════════════════════════════════════════════════════
+       加载状态
+       ════════════════════════════════════════════════════════ */
+    .skeleton {
+      background: linear-gradient(90deg, 
+        var(--bg-tertiary) 25%, 
+        var(--bg-elevated) 50%, 
+        var(--bg-tertiary) 75%
+      );
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+      border-radius: var(--radius-sm);
+    }
+
+    @keyframes shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    .spinner {
+      width: 20px;
+      height: 20px;
+      border: 2px solid var(--border-default);
+      border-top-color: var(--brand-500);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* ════════════════════════════════════════════════════════
+       徽章
+       ════════════════════════════════════════════════════════ */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      border-radius: var(--radius-sm);
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+    }
+
+    .badge-new { 
+      background: rgba(59, 130, 246, 0.15);
+      color: var(--brand-400);
+    }
+    .badge-hot { 
+      background: rgba(245, 158, 11, 0.15);
+      color: var(--warn);
+    }
+    .badge-pro { 
+      background: var(--brand-gradient);
+      color: white;
+    }
+
+    /* ════════════════════════════════════════════════════════
+       颜色选择
+       ════════════════════════════════════════════════════════ */
+    .color-swatch {
+      width: 40px;
+      height: 40px;
+      border-radius: var(--radius-md);
+      border: 2px solid transparent;
+      cursor: pointer;
+      transition: all var(--duration-fast);
+    }
+
+    .color-swatch:hover {
+      transform: scale(1.1);
+    }
+
+    .color-swatch.active {
+      border-color: var(--brand-500);
+      box-shadow: 0 0 0 2px var(--bg-primary), 0 0 0 4px var(--brand-500);
+    }
+
+    /* ════════════════════════════════════════════════════════
+       动画
+       ════════════════════════════════════════════════════════ */
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes slideInRight {
+      from { opacity: 0; transform: translateX(20px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+
+    /* ════════════════════════════════════════════════════════
+       演示内容样式
+       ════════════════════════════════════════════════════════ */
+    .demo-section {
+      margin-bottom: 48px;
+    }
+
+    .demo-section-title {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .demo-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .demo-block {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      flex: 1;
+      min-width: 280px;
+    }
+
+    .demo-block-title {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--text-tertiary);
+      margin-bottom: 16px;
+    }
+
+    /* 功能卡片网格 */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 20px;
+    }
+
+    /* 分隔线 */
+    .divider {
+      height: 1px;
+      background: var(--border-subtle);
+      margin: 40px 0;
+    }
+
+    /* 状态指示器 */
+    .status-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .status-dot.success { background: var(--success); box-shadow: 0 0 8px var(--success); }
+    .status-dot.warning { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
+    .status-dot.error { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+    .status-dot.idle { background: var(--text-muted); }
+
+    .status-dot.pulse {
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    /* 任务卡片 */
+    .job-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 20px;
+      transition: all var(--duration-base);
+    }
+
+    .job-card:hover {
+      border-color: var(--border-default);
+    }
+
+    .job-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    .job-title {
+      font-weight: 600;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+    }
+
+    .job-meta {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      font-size: 13px;
+      color: var(--text-tertiary);
+    }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      gap: 4px;
+      padding: 4px;
+      background: var(--bg-tertiary);
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-subtle);
+      width: fit-content;
+    }
+
+    .tab {
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-tertiary);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: all var(--duration-fast);
+      border: none;
+      background: transparent;
+    }
+
+    .tab:hover {
+      color: var(--text-secondary);
+    }
+
+    .tab.active {
+      background: var(--bg-elevated);
+      color: var(--text-primary);
+    }
+
+    /* 拖拽区域 */
+    .dropzone {
+      border: 2px dashed var(--border-default);
+      border-radius: var(--radius-lg);
+      padding: 48px 32px;
+      text-align: center;
+      cursor: pointer;
+      transition: all var(--duration-fast);
+      background: var(--bg-card);
+    }
+
+    .dropzone:hover, .dropzone.dragover {
+      border-color: var(--brand-500);
+      background: rgba(59, 130, 246, 0.05);
+    }
+
+    .dropzone-icon {
+      width: 64px;
+      height: 64px;
+      margin: 0 auto 20px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-tertiary);
+    }
+
+    .dropzone-icon svg {
+      width: 28px;
+      height: 28px;
+    }
+
+    .dropzone-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 6px;
+    }
+
+    .dropzone-desc {
+      font-size: 13px;
+      color: var(--text-tertiary);
+    }
+
+    /* 统计卡片 */
+    .stat-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      transition: all var(--duration-base);
+    }
+
+    .stat-card:hover {
+      border-color: var(--border-default);
+    }
+
+    .stat-label {
+      font-size: 13px;
+      color: var(--text-tertiary);
+      margin-bottom: 10px;
+      font-weight: 500;
+    }
+
+    .stat-value {
+      font-size: 32px;
+      font-weight: 700;
+      color: var(--text-primary);
+      line-height: 1;
+      margin-bottom: 10px;
+      letter-spacing: -0.02em;
+    }
+
+    .stat-change {
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-weight: 500;
+    }
+
+    .stat-change.up { color: var(--success); }
+    .stat-change.down { color: var(--danger); }
+
+    /* 欢迎区域 */
+    .welcome-section {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 28px;
+      margin-bottom: 28px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .welcome-section::before {
+      content: '';
+      position: absolute;
+      top: -50%;
+      right: -10%;
+      width: 300px;
+      height: 300px;
+      background: radial-gradient(circle, rgba(59, 130, 246, 0.1) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .welcome-title {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-bottom: 8px;
+      position: relative;
+      letter-spacing: -0.02em;
+    }
+
+    .welcome-title span {
+      color: var(--brand-400);
+    }
+
+    .welcome-desc {
+      color: var(--text-secondary);
+      font-size: 15px;
+      position: relative;
+    }
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    <!-- 侧边栏 -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="logo">
+          <div class="logo-icon">
+            <i data-lucide="sparkles" style="width: 20px; height: 20px;"></i>
+          </div>
+          <span class="logo-text">AI 服装工具</span>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section">
+          <div class="nav-section-title">工作台</div>
+          <a href="#" class="nav-item active">
+            <i data-lucide="home" class="nav-icon"></i>
+            首页概览
+          </a>
+          <a href="#" class="nav-item">
+            <i data-lucide="palette" class="nav-icon"></i>
+            HEX 换色
+            <span class="nav-badge">新</span>
+          </a>
+          <a href="#" class="nav-item">
+            <i data-lucide="camera" class="nav-icon"></i>
+            批量摄影
+            <span class="nav-badge">3</span>
+          </a>
+          <a href="#" class="nav-item">
+            <i data-lucide="scan-search" class="nav-icon"></i>
+            图片解析
+          </a>
+          <a href="#" class="nav-item">
+            <i data-lucide="history" class="nav-icon"></i>
+            历史记录
+          </a>
+          <a href="#" class="nav-item">
+            <i data-lucide="credit-card" class="nav-icon"></i>
+            我的账单
+          </a>
+        </div>
+
+        <div class="nav-section">
+          <div class="nav-section-title">素材库</div>
+          <a href="#" class="nav-item">
+            <i data-lucide="palette" class="nav-icon"></i>
+            颜色预设
+          </a>
+          <a href="#" class="nav-item">
+            <i data-lucide="user" class="nav-icon"></i>
+            模特形象
+          </a>
+          <a href="#" class="nav-item">
+            <i data-lucide="image" class="nav-icon"></i>
+            场景背景
+          </a>
+          <a href="#" class="nav-item">
+            <i data-lucide="person-standing" class="nav-icon"></i>
+            姿势模板
+          </a>
+        </div>
+
+        <div class="nav-section">
+          <div class="nav-section-title">系统</div>
+          <a href="#" class="nav-item">
+            <i data-lucide="settings" class="nav-icon"></i>
+            设置
+          </a>
+        </div>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="user-card">
+          <div class="user-avatar">李</div>
+          <div class="user-info">
+            <div class="user-name">李明</div>
+            <div class="user-role">管理员</div>
+          </div>
+          <button class="btn btn-ghost btn-icon btn-sm">
+            <i data-lucide="more-vertical" style="width: 16px; height: 16px;"></i>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 主内容 -->
+    <main class="main-content">
+      <!-- 顶部栏 -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <h1 class="page-title">工作台</h1>
+        </div>
+        <div class="topbar-right">
+          <div class="search-box">
+            <i data-lucide="search" style="width: 16px; height: 16px; color: var(--text-tertiary);"></i>
+            <input type="text" placeholder="搜索任务、素材...">
+          </div>
+          <button class="btn btn-secondary btn-icon">
+            <i data-lucide="bell" style="width: 18px; height: 18px;"></i>
+          </button>
+          <button class="btn btn-secondary btn-icon">
+            <i data-lucide="help-circle" style="width: 18px; height: 18px;"></i>
+          </button>
+        </div>
+      </header>
+
+      <!-- 页面内容 -->
+      <div class="page-content">
+        <!-- 欢迎区域 -->
+        <div class="welcome-section">
+          <h2 class="welcome-title">
+            你好，<span>李明</span>
+          </h2>
+          <p class="welcome-desc">
+            今天有 3 个任务正在进行中，已消耗 ¥12.50
+          </p>
+        </div>
+
+        <!-- 统计卡片 -->
+        <div class="demo-section">
+          <div class="demo-section-title">
+            <i data-lucide="bar-chart-3" style="width: 24px; height: 24px; color: var(--brand-400);"></i>
+            统计概览
+          </div>
+          <div class="demo-row">
+            <div class="stat-card">
+              <div class="stat-label">本月生成</div>
+              <div class="stat-value">247</div>
+              <div class="stat-change up">
+                <i data-lucide="trending-up" style="width: 14px; height: 14px;"></i>
+                12% 较上月
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">消耗金额</div>
+              <div class="stat-value">¥386</div>
+              <div class="stat-change down">
+                <i data-lucide="trending-down" style="width: 14px; height: 14px;"></i>
+                8% 较上月
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">余额</div>
+              <div class="stat-value">¥1,614</div>
+              <div class="stat-change" style="color: var(--brand-400);">月度预算 ¥2,000</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">活跃任务</div>
+              <div class="stat-value" style="display: flex; align-items: center; gap: 10px;">
+                3 <span class="status-dot success pulse"></span>
+              </div>
+              <div class="stat-change" style="color: var(--text-tertiary);">全部进行中</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <!-- 功能卡片 -->
+        <div class="demo-section">
+          <div class="demo-section-title">
+            <i data-lucide="rocket" style="width: 24px; height: 24px; color: var(--brand-400);"></i>
+            快捷功能
+          </div>
+          <div class="features-grid">
+            <div class="feature-card">
+              <div class="feature-icon">
+                <i data-lucide="palette"></i>
+              </div>
+              <div class="feature-title">HEX 精准换色</div>
+              <div class="feature-desc">一张产品图 + 多个颜色预设，批量生成同款不同颜色</div>
+            </div>
+            <div class="feature-card">
+              <div class="feature-icon">
+                <i data-lucide="camera"></i>
+              </div>
+              <div class="feature-title">批量摄影图</div>
+              <div class="feature-desc">产品图 → 解析款式 → 选模特/场景/姿势 → 批量出图</div>
+              <span class="badge badge-new" style="position: absolute; top: 20px; right: 20px;">新功能</span>
+            </div>
+            <div class="feature-card">
+              <div class="feature-icon">
+                <i data-lucide="scan-search"></i>
+              </div>
+              <div class="feature-title">AI 图片解析</div>
+              <div class="feature-desc">智能识别服装款式、面料、颜色等详细信息</div>
+            </div>
+            <div class="feature-card">
+              <div class="feature-icon">
+                <i data-lucide="history"></i>
+              </div>
+              <div class="feature-title">历史记录</div>
+              <div class="feature-desc">查看历次生成任务、结果图、成本和详细参数</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <!-- 按钮组件 -->
+        <div class="demo-section">
+          <div class="demo-section-title">
+            <i data-lucide="mouse-pointer-2" style="width: 24px; height: 24px; color: var(--brand-400);"></i>
+            按钮组件
+          </div>
+          <div class="demo-block">
+            <div class="demo-block-title">主要按钮</div>
+            <div class="demo-row">
+              <button class="btn btn-primary btn-sm">小按钮</button>
+              <button class="btn btn-primary btn-md">中等按钮</button>
+              <button class="btn btn-primary btn-lg">大按钮</button>
+              <button class="btn btn-primary btn-md" disabled>禁用</button>
+            </div>
+          </div>
+          <div class="demo-block">
+            <div class="demo-block-title">次要按钮</div>
+            <div class="demo-row">
+              <button class="btn btn-secondary btn-md">次要按钮</button>
+              <button class="btn btn-ghost btn-md">幽灵按钮</button>
+              <button class="btn btn-secondary btn-icon">
+                <i data-lucide="plus" style="width: 18px; height: 18px;"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <!-- 状态标签 -->
+        <div class="demo-section">
+          <div class="demo-section-title">
+            <i data-lucide="tag" style="width: 24px; height: 24px; color: var(--brand-400);"></i>
+            状态标签
+          </div>
+          <div class="demo-block">
+            <div class="demo-block-title">状态 Chips</div>
+            <div class="demo-row">
+              <span class="chip chip-brand"><span class="chip-dot"></span>进行中</span>
+              <span class="chip chip-success"><span class="chip-dot"></span>已完成</span>
+              <span class="chip chip-warn"><span class="chip-dot"></span>等待中</span>
+              <span class="chip chip-danger"><span class="chip-dot"></span>失败</span>
+              <span class="chip chip-gray">草稿</span>
+            </div>
+          </div>
+          <div class="demo-block">
+            <div class="demo-block-title">徽章</div>
+            <div class="demo-row">
+              <span class="badge badge-new">新功能</span>
+              <span class="badge badge-hot">热门</span>
+              <span class="badge badge-pro">Pro</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <!-- 进度指示 -->
+        <div class="demo-section">
+          <div class="demo-section-title">
+            <i data-lucide="activity" style="width: 24px; height: 24px; color: var(--brand-400);"></i>
+            进度指示
+          </div>
+          <div class="demo-row">
+            <div class="demo-block" style="min-width: 200px;">
+              <div class="demo-block-title">进度条</div>
+              <div style="margin-bottom: 16px;">
+                <div style="display: flex; justify-content: space-between; font-size: 13px; color: var(--text-tertiary); margin-bottom: 8px;">
+                  <span>进度</span>
+                  <span style="font-weight: 600; color: var(--brand-400);">65%</span>
+                </div>
+                <div class="progress">
+                  <div class="progress-bar" style="width: 65%;"></div>
+                </div>
+              </div>
+              <div class="progress">
+                <div class="progress-bar" style="width: 30%;"></div>
+              </div>
+            </div>
+            <div class="demo-block" style="min-width: 200px;">
+              <div class="demo-block-title">状态指示</div>
+              <div style="display: flex; flex-direction: column; gap: 12px;">
+                <div class="status-indicator">
+                  <span class="status-dot success pulse"></span>
+                  <span style="font-size: 14px; color: var(--text-secondary);">在线</span>
+                </div>
+                <div class="status-indicator">
+                  <span class="status-dot warning pulse"></span>
+                  <span style="font-size: 14px; color: var(--text-secondary);">处理中</span>
+                </div>
+                <div class="status-indicator">
+                  <span class="status-dot error"></span>
+                  <span style="font-size: 14px; color: var(--text-secondary);">离线</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <!-- 任务卡片 -->
+        <div class="demo-section">
+          <div class="demo-section-title">
+            <i data-lucide="clipboard-list" style="width: 24px; height: 24px; color: var(--brand-400);"></i>
+            任务卡片
+          </div>
+          <div class="demo-row">
+            <div class="job-card" style="flex: 1; min-width: 300px;">
+              <div class="job-header">
+                <div class="job-title">
+                  <i data-lucide="palette" style="width: 16px; height: 16px;"></i>
+                  HEX 换色批次
+                  <span class="chip chip-brand"><span class="chip-dot"></span>进行中</span>
+                </div>
+                <span style="font-size: 12px; color: var(--text-muted);">2分钟前</span>
+              </div>
+              <div style="margin-bottom: 16px;">
+                <div style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-tertiary); margin-bottom: 8px;">
+                  <span>处理中 5/12</span>
+                  <span style="font-weight: 600; color: var(--brand-400);">42%</span>
+                </div>
+                <div class="progress">
+                  <div class="progress-bar" style="width: 42%;"></div>
+                </div>
+              </div>
+              <div class="job-meta">
+                <span><i data-lucide="user" style="width: 14px; height: 14px; vertical-align: middle; margin-right: 4px;"></i>李明</span>
+                <span><i data-lucide="coins" style="width: 14px; height: 14px; vertical-align: middle; margin-right: 4px;"></i>¥2.40</span>
+                <span><i data-lucide="clock" style="width: 14px; height: 14px; vertical-align: middle; margin-right: 4px;"></i>~3分钟</span>
+              </div>
+            </div>
+            <div class="job-card" style="flex: 1; min-width: 300px;">
+              <div class="job-header">
+                <div class="job-title">
+                  <i data-lucide="camera" style="width: 16px; height: 16px;"></i>
+                  批量摄影
+                  <span class="chip chip-warn"><span class="chip-dot"></span>排队中</span>
+                </div>
+                <span style="font-size: 12px; color: var(--text-muted);">5分钟前</span>
+              </div>
+              <div style="margin-bottom: 16px;">
+                <div style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-tertiary); margin-bottom: 8px;">
+                  <span>等待处理 8/8</span>
+                  <span style="font-weight: 600; color: var(--warn);">排队中</span>
+                </div>
+                <div class="progress">
+                  <div class="progress-bar" style="width: 0%; opacity: 0.3;"></div>
+                </div>
+              </div>
+              <div class="job-meta">
+                <span><i data-lucide="user" style="width: 14px; height: 14px; vertical-align: middle; margin-right: 4px;"></i>李明</span>
+                <span><i data-lucide="coins" style="width: 14px; height: 14px; vertical-align: middle; margin-right: 4px;"></i>¥18.50</span>
+                <span><i data-lucide="clock" style="width: 14px; height: 14px; vertical-align: middle; margin-right: 4px;"></i>~10分钟</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <!-- 卡片组件 -->
+        <div class="demo-section">
+          <div class="demo-section-title">
+            <i data-lucide="layout" style="width: 24px; height: 24px; color: var(--brand-400);"></i>
+            卡片组件
+          </div>
+          <div class="card" style="max-width: 400px;">
+            <div class="card-header">
+              <div class="card-title">
+                <i data-lucide="file-text" style="width: 18px; height: 18px;"></i>
+                卡片标题
+              </div>
+              <button class="btn btn-ghost btn-icon btn-sm">
+                <i data-lucide="more-horizontal" style="width: 16px; height: 16px;"></i>
+              </button>
+            </div>
+            <div class="card-body">
+              <p style="color: var(--text-secondary); line-height: 1.7;">
+                这是深色主题卡片的内容区域，采用现代暗色设计，配合蓝色品牌色，营造专业、高端的视觉效果。
+              </p>
+            </div>
+            <div class="card-footer">
+              <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button class="btn btn-ghost btn-sm">取消</button>
+                <button class="btn btn-primary btn-sm">确认</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <!-- 表单组件 -->
+        <div class="demo-section">
+          <div class="demo-section-title">
+            <i data-lucide="form-input" style="width: 24px; height: 24px; color: var(--brand-400);"></i>
+            表单组件
+          </div>
+          <div class="demo-row">
+            <div class="demo-block" style="flex: 1; min-width: 280px;">
+              <div class="demo-block-title">输入框</div>
+              <div class="form-group">
+                <label class="form-label">文本输入</label>
+                <input type="text" class="input" placeholder="请输入内容...">
+              </div>
+              <div class="form-group">
+                <label class="form-label">选择器</label>
+                <select class="input select">
+                  <option>选项一</option>
+                  <option>选项二</option>
+                  <option>选项三</option>
+                </select>
+              </div>
+              <label class="checkbox">
+                <input type="checkbox" checked>
+                <span>同意服务条款和隐私政策</span>
+              </label>
+            </div>
+            <div class="demo-block" style="flex: 1; min-width: 280px;">
+              <div class="demo-block-title">颜色选择</div>
+              <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 20px;">
+                <div class="color-swatch active" style="background: #1a1a2e;"></div>
+                <div class="color-swatch" style="background: #d4a574;"></div>
+                <div class="color-swatch" style="background: #e8d5c4;"></div>
+                <div class="color-swatch" style="background: #c9a0dc;"></div>
+                <div class="color-swatch" style="background: #7da8c3;"></div>
+                <div class="color-swatch" style="background: #f4a460;"></div>
+                <div class="color-swatch" style="background: #2f4f4f;"></div>
+                <div class="color-swatch" style="background: #ffe4e1;"></div>
+              </div>
+              <div style="padding: 16px; background: var(--bg-tertiary); border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+                <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 8px;">
+                  <span style="color: var(--text-tertiary);">已选颜色</span>
+                  <span style="font-weight: 600; color: var(--brand-400);">#D4A574</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                  <div style="width: 36px; height: 36px; background: #d4a574; border-radius: var(--radius-md);"></div>
+                  <span style="font-size: 14px; color: var(--text-secondary); font-weight: 500;">浅杏色</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <!-- Tabs 组件 -->
+        <div class="demo-section">
+          <div class="demo-section-title">
+            <i data-lucide="toggle-left" style="width: 24px; height: 24px; color: var(--brand-400);"></i>
+            Tab 切换
+          </div>
+          <div class="tabs" style="margin-bottom: 24px;">
+            <button class="tab active">全部</button>
+            <button class="tab">进行中</button>
+            <button class="tab">已完成</button>
+            <button class="tab">失败</button>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <!-- 拖拽上传 -->
+        <div class="demo-section">
+          <div class="demo-section-title">
+            <i data-lucide="upload" style="width: 24px; height: 24px; color: var(--brand-400);"></i>
+            文件上传
+          </div>
+          <div class="dropzone" style="max-width: 480px;">
+            <div class="dropzone-icon">
+              <i data-lucide="folder-open"></i>
+            </div>
+            <div class="dropzone-title">拖拽图片到此处</div>
+            <div class="dropzone-desc">或点击选择文件 · 支持 JPG、PNG、WebP · 最大 10MB</div>
+            <div style="margin-top: 20px;">
+              <button class="btn btn-primary btn-md">
+                <i data-lucide="upload" style="width: 16px; height: 16px;"></i>
+                选择文件
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <!-- 空状态 -->
+        <div class="demo-section">
+          <div class="demo-section-title">
+            <i data-lucide="inbox" style="width: 24px; height: 24px; color: var(--brand-400);"></i>
+            空状态
+          </div>
+          <div class="card" style="max-width: 400px;">
+            <div class="empty-state">
+              <div class="empty-state-icon">
+                <i data-lucide="package"></i>
+              </div>
+              <div class="empty-state-title">暂无数据</div>
+              <div class="empty-state-desc">
+                这里还没有任何内容，点击下方按钮开始创建第一个项目
+              </div>
+              <div style="margin-top: 24px;">
+                <button class="btn btn-primary btn-md">
+                  <i data-lucide="plus" style="width: 16px; height: 16px;"></i>
+                  立即创建
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <!-- 模态框 -->
+        <div class="demo-section">
+          <div class="demo-section-title">
+            <i data-lucide="square" style="width: 24px; height: 24px; color: var(--brand-400);"></i>
+            模态框
+          </div>
+          <button class="btn btn-primary btn-md" onclick="document.getElementById('demo-modal').style.display='flex'">
+            <i data-lucide="external-link" style="width: 16px; height: 16px;"></i>
+            打开模态框
+          </button>
+        </div>
+
+        <!-- Toast 提示 -->
+        <div class="demo-section">
+          <div class="demo-section-title">
+            <i data-lucide="bell" style="width: 24px; height: 24px; color: var(--brand-400);"></i>
+            Toast 提示
+          </div>
+          <div class="demo-row">
+            <button class="btn btn-secondary btn-md" onclick="showToast('success')">
+              <i data-lucide="check-circle" style="width: 16px; height: 16px;"></i>
+              成功提示
+            </button>
+            <button class="btn btn-secondary btn-md" onclick="showToast('error')">
+              <i data-lucide="x-circle" style="width: 16px; height: 16px;"></i>
+              错误提示
+            </button>
+            <button class="btn btn-secondary btn-md" onclick="showToast('warn')">
+              <i data-lucide="alert-triangle" style="width: 16px; height: 16px;"></i>
+              警告提示
+            </button>
+            <button class="btn btn-secondary btn-md" onclick="showToast('info')">
+              <i data-lucide="info" style="width: 16px; height: 16px;"></i>
+              信息提示
+            </button>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <!-- 加载状态 -->
+        <div class="demo-section">
+          <div class="demo-section-title">
+            <i data-lucide="loader-2" style="width: 24px; height: 24px; color: var(--brand-400);"></i>
+            加载状态
+          </div>
+          <div class="demo-row">
+            <div class="demo-block">
+              <div class="demo-block-title">骨架屏</div>
+              <div style="display: flex; gap: 14px; align-items: center;">
+                <div class="skeleton" style="width: 40px; height: 40px; border-radius: 50%;"></div>
+                <div style="flex: 1;">
+                  <div class="skeleton" style="height: 14px; width: 60%; margin-bottom: 8px; border-radius: 4px;"></div>
+                  <div class="skeleton" style="height: 12px; width: 40%; border-radius: 4px;"></div>
+                </div>
+              </div>
+            </div>
+            <div class="demo-block">
+              <div class="demo-block-title">旋转加载</div>
+              <div class="spinner"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <!-- 表格 -->
+        <div class="demo-section">
+          <div class="demo-section-title">
+            <i data-lucide="table" style="width: 24px; height: 24px; color: var(--brand-400);"></i>
+            数据表格
+          </div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>任务</th>
+                  <th>类型</th>
+                  <th>状态</th>
+                  <th>消耗</th>
+                  <th>时间</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td style="font-weight: 600; color: var(--text-primary);">HEX-2024-001</td>
+                  <td><span class="chip chip-brand">换色</span></td>
+                  <td><span class="chip chip-success"><span class="chip-dot"></span>完成</span></td>
+                  <td>¥2.40</td>
+                  <td style="color: var(--text-muted);">2024-03-15 14:32</td>
+                  <td><button class="btn btn-ghost btn-sm">查看</button></td>
+                </tr>
+                <tr>
+                  <td style="font-weight: 600; color: var(--text-primary);">BATCH-2024-008</td>
+                  <td><span class="chip chip-brand">摄影</span></td>
+                  <td><span class="chip chip-warn"><span class="chip-dot"></span>进行中</span></td>
+                  <td>¥8.50</td>
+                  <td style="color: var(--text-muted);">2024-03-15 14:28</td>
+                  <td><button class="btn btn-ghost btn-sm">查看</button></td>
+                </tr>
+                <tr>
+                  <td style="font-weight: 600; color: var(--text-primary);">HEX-2024-002</td>
+                  <td><span class="chip chip-brand">换色</span></td>
+                  <td><span class="chip chip-danger"><span class="chip-dot"></span>失败</span></td>
+                  <td>¥0.80</td>
+                  <td style="color: var(--text-muted);">2024-03-15 14:20</td>
+                  <td><button class="btn btn-ghost btn-sm">重试</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <!-- 设计系统说明 -->
+        <div class="demo-section">
+          <div class="demo-section-title">
+            <i data-lucide="palette" style="width: 24px; height: 24px; color: var(--brand-400);"></i>
+            深色主题设计系统
+          </div>
+          <div class="card">
+            <div class="card-body">
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 24px;">
+                <div>
+                  <h4 style="font-size: 13px; font-weight: 600; margin-bottom: 14px; color: var(--text-secondary);">品牌色</h4>
+                  <div style="display: flex; gap: 10px;">
+                    <div style="width: 40px; height: 40px; background: var(--brand-400); border-radius: var(--radius-md);"></div>
+                    <div style="width: 40px; height: 40px; background: var(--brand-500); border-radius: var(--radius-md);"></div>
+                    <div style="width: 40px; height: 40px; background: var(--brand-600); border-radius: var(--radius-md);"></div>
+                  </div>
+                </div>
+                <div>
+                  <h4 style="font-size: 13px; font-weight: 600; margin-bottom: 14px; color: var(--text-secondary);">语义色</h4>
+                  <div style="display: flex; gap: 10px;">
+                    <div style="width: 40px; height: 40px; background: var(--success); border-radius: var(--radius-md);"></div>
+                    <div style="width: 40px; height: 40px; background: var(--warn); border-radius: var(--radius-md);"></div>
+                    <div style="width: 40px; height: 40px; background: var(--danger); border-radius: var(--radius-md);"></div>
+                  </div>
+                </div>
+                <div>
+                  <h4 style="font-size: 13px; font-weight: 600; margin-bottom: 14px; color: var(--text-secondary);">背景色阶</h4>
+                  <div style="display: flex; gap: 6px;">
+                    <div style="width: 32px; height: 32px; background: var(--bg-primary); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);"></div>
+                    <div style="width: 32px; height: 32px; background: var(--bg-secondary); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);"></div>
+                    <div style="width: 32px; height: 32px; background: var(--bg-tertiary); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);"></div>
+                    <div style="width: 32px; height: 32px; background: var(--bg-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 底部间距 -->
+        <div style="height: 80px;"></div>
+      </div>
+    </main>
+  </div>
+
+  <!-- 演示模态框 -->
+  <div id="demo-modal" class="modal-overlay" style="display: none;" onclick="if(event.target === this) this.style.display='none'">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 class="modal-title">确认操作</h3>
+        <button class="btn btn-ghost btn-icon btn-sm" onclick="document.getElementById('demo-modal').style.display='none'">
+          <i data-lucide="x" style="width: 18px; height: 18px;"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p style="color: var(--text-secondary); line-height: 1.7;">
+          确定要执行此操作吗？此操作不可撤销。
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost btn-md" onclick="document.getElementById('demo-modal').style.display='none'">取消</button>
+        <button class="btn btn-primary btn-md" onclick="document.getElementById('demo-modal').style.display='none'">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast 容器 -->
+  <div id="toast-container" style="position: fixed; bottom: 24px; right: 24px; display: flex; flex-direction: column; gap: 12px; z-index: 9999;"></div>
+
+  <script>
+    // 初始化 Lucide 图标
+    lucide.createIcons();
+
+    function showToast(type) {
+      const container = document.getElementById('toast-container');
+      const messages = {
+        success: { icon: 'check-circle', text: '操作成功完成！' },
+        error: { icon: 'x-circle', text: '操作失败，请重试。' },
+        warn: { icon: 'alert-triangle', text: '请注意，当前状态可能影响结果。' },
+        info: { icon: 'info', text: '这是一条提示信息。' }
+      };
+      const msg = messages[type];
+
+      const toast = document.createElement('div');
+      toast.className = `toast toast-${type}`;
+      toast.innerHTML = `
+        <i data-lucide="${msg.icon}" style="width: 20px; height: 20px; flex-shrink: 0;"></i>
+        <span style="flex: 1; font-weight: 500;">${msg.text}</span>
+        <button onclick="this.parentElement.remove()" style="background: none; border: none; cursor: pointer; opacity: 0.6; padding: 0;">
+          <i data-lucide="x" style="width: 16px; height: 16px;"></i>
+        </button>
+      `;
+
+      container.appendChild(toast);
+      lucide.createIcons();
+
+      setTimeout(() => {
+        toast.style.animation = 'slideInRight 0.2s ease reverse';
+        setTimeout(() => toast.remove(), 200);
+      }, 3000);
+    }
+
+    // 颜色选择交互
+    document.querySelectorAll('.color-swatch').forEach(swatch => {
+      swatch.addEventListener('click', function() {
+        document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
+        this.classList.add('active');
+      });
+    });
+
+    // Tab 切换
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', function() {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        this.classList.add('active');
+      });
+    });
+
+    // 拖拽上传
+    const dropzone = document.querySelector('.dropzone');
+    if (dropzone) {
+      ['dragenter', 'dragover'].forEach(event => {
+        dropzone.addEventListener(event, e => {
+          e.preventDefault();
+          dropzone.classList.add('dragover');
+        });
+      });
+      ['dragleave', 'drop'].forEach(event => {
+        dropzone.addEventListener(event, e => {
+          e.preventDefault();
+          dropzone.classList.remove('dragover');
+        });
+      });
+      dropzone.addEventListener('drop', e => {
+        const files = e.dataTransfer.files;
+        if (files.length) {
+          alert(`已选择 ${files.length} 个文件`);
+        }
+      });
+    }
+  </script>
+</body>
+</html>

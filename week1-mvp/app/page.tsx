@@ -196,7 +196,7 @@ export default async function HomePage() {
             你好，{user.display_name || user.username}
           </h1>
           <p className="mt-1.5 text-[14px] text-gray-500">
-            从下面选一个工作台开始 · 三栏布局（左栏导航 · 中栏操作 · 右栏参数/进度）
+            服装AI生图工具 · 批量生成专业摄影图
           </p>
         </header>
 
@@ -221,7 +221,7 @@ export default async function HomePage() {
         )}
 
         <footer className="mt-16 text-center text-xs text-gray-400">
-          伴娘服团队内部工具 · v0.3 (P3-2)
+          服装AI团队内部工具 · v0.4
         </footer>
       </div>
     </HomeShell>
