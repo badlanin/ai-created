@@ -208,68 +208,72 @@ export function JobResultsGrid({
               {g.items.map((it) => {
                 const isSelected = selected.has(it.id);
                 return (
-                  <Thumbnail
+                  <div
                     key={it.id}
-                    src={it.result_image_url!}
-                    alt={it.label || `#${it.idx + 1}`}
-                    ratio="3/4"
-                    fit="contain"
-                    selected={isSelected}
-                    onClick={() => toggle(it.id)}
-                    checkbox={
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggle(it.id);
-                        }}
-                        className={`w-5 h-5 rounded border-2 flex items-center justify-center text-xs ${
-                          isSelected
-                            ? "bg-brand-600 border-transparent text-white"
-                            : "bg-bg-elevated/90 border-border-strong"
-                        }`}
-                      >
-                        {isSelected ? "✓" : ""}
-                      </button>
-                    }
-                    badge={
-                      it.cost_cny !== null ? (
-                        <ThumbnailBadge tone="gray">
-                          ¥{it.cost_cny.toFixed(2)}
-                        </ThumbnailBadge>
-                      ) : undefined
-                    }
-                    hoverOverlay={
-                      <div className="flex flex-col gap-1.5">
-                        {it.raw_image_path ? (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setAdjustingItem(it);
-                            }}
-                            className="px-3 py-1.5 bg-bg-elevated/95 text-fg-primary text-xs rounded-md shadow hover:bg-bg-secondary flex items-center gap-1"
-                            title="手动调整颜色"
-                          >
-                            <Sliders size={11} strokeWidth={2.2} />
-                            调整
-                          </button>
-                        ) : null}
+                    className="group relative rounded-md overflow-hidden border border-border-subtle bg-bg-card hover:border-border-default transition-colors"
+                  >
+                    <Thumbnail
+                      src={it.result_image_url!}
+                      alt={it.label || `#${it.idx + 1}`}
+                      ratio="3/4"
+                      fit="contain"
+                      selected={isSelected}
+                      onClick={() => toggle(it.id)}
+                      className="rounded-none border-0"
+                      checkbox={
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            downloadSingleImage(
-                              it.result_image_url!,
-                              resolveFilename(it),
-                            );
+                            toggle(it.id);
                           }}
-                          className="px-3 py-1.5 bg-bg-elevated/95 text-fg-primary text-xs rounded-md shadow hover:bg-bg-secondary flex items-center gap-1"
-                          title="下载单张"
+                          className={`w-5 h-5 rounded border-2 flex items-center justify-center text-xs ${
+                            isSelected
+                              ? "bg-brand-600 border-transparent text-white"
+                              : "bg-bg-elevated/90 border-border-strong"
+                          }`}
                         >
-                          <Download size={11} strokeWidth={2.2} />
-                          下载
+                          {isSelected ? "✓" : ""}
                         </button>
-                      </div>
-                    }
-                  />
+                      }
+                      badge={
+                        it.cost_cny !== null ? (
+                          <ThumbnailBadge tone="gray">
+                            ¥{it.cost_cny.toFixed(2)}
+                          </ThumbnailBadge>
+                        ) : undefined
+                      }
+                    />
+                    {/* 持久可见的操作栏 */}
+                    <div className="flex border-t border-border-subtle bg-bg-secondary">
+                      {it.raw_image_path ? (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setAdjustingItem(it);
+                          }}
+                          className="flex-1 px-2 py-2 text-[12px] text-brand-400 hover:bg-bg-hover flex items-center justify-center gap-1.5 border-r border-border-subtle"
+                          title="打开手动校色滑块"
+                        >
+                          <Sliders size={12} strokeWidth={2.2} />
+                          调整颜色
+                        </button>
+                      ) : null}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          downloadSingleImage(
+                            it.result_image_url!,
+                            resolveFilename(it),
+                          );
+                        }}
+                        className="flex-1 px-2 py-2 text-[12px] text-fg-secondary hover:bg-bg-hover hover:text-fg-primary flex items-center justify-center gap-1.5"
+                        title="下载这张图"
+                      >
+                        <Download size={12} strokeWidth={2.2} />
+                        下载
+                      </button>
+                    </div>
+                  </div>
                 );
               })}
             </div>

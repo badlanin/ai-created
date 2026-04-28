@@ -172,8 +172,12 @@ export function RecolorAdjustModal({
   }
 
   // 算"原始 ΔE"（最初打开时的）和"当前 ΔE"（最近一次校正后）
+  // 注意：自动校色已关闭，新生成的 item 默认 initialMeta.before_delta_e = undefined
+  // 用户拖动滑块后才会有数据
   const originalDeltaE = initialMeta.before_delta_e;
   const currentDeltaE = currentMeta.before_delta_e;
+  const hasMetrics =
+    originalDeltaE !== undefined || currentDeltaE !== undefined;
   const targetHex = initialMeta.target_hex || currentMeta.target_hex;
 
   return (
@@ -246,31 +250,37 @@ export function RecolorAdjustModal({
               <div className="text-[10px] uppercase tracking-wider text-fg-tertiary mb-2 font-semibold">
                 色差指标 (CIE76 ΔE)
               </div>
-              <div className="grid grid-cols-2 gap-3 text-[12px]">
-                <div>
-                  <div className="text-fg-tertiary mb-0.5">原始</div>
-                  <div className="font-mono text-fg-primary">
-                    {originalDeltaE !== undefined
-                      ? originalDeltaE.toFixed(2)
-                      : "—"}
+              {hasMetrics ? (
+                <div className="grid grid-cols-2 gap-3 text-[12px]">
+                  {originalDeltaE !== undefined ? (
+                    <div>
+                      <div className="text-fg-tertiary mb-0.5">原始</div>
+                      <div className="font-mono text-fg-primary">
+                        {originalDeltaE.toFixed(2)}
+                      </div>
+                    </div>
+                  ) : null}
+                  <div>
+                    <div className="text-fg-tertiary mb-0.5">当前</div>
+                    <div className="font-mono text-fg-primary flex items-center gap-1.5">
+                      {currentDeltaE !== undefined
+                        ? currentDeltaE.toFixed(2)
+                        : "—"}
+                      {currentDeltaE !== undefined && currentDeltaE < 3 ? (
+                        <span className="chip chip-success text-[9px]">优秀</span>
+                      ) : currentDeltaE !== undefined && currentDeltaE < 6 ? (
+                        <span className="chip chip-brand text-[9px]">良好</span>
+                      ) : currentDeltaE !== undefined ? (
+                        <span className="chip chip-warn text-[9px]">仍偏</span>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
-                <div>
-                  <div className="text-fg-tertiary mb-0.5">当前</div>
-                  <div className="font-mono text-fg-primary flex items-center gap-1.5">
-                    {currentDeltaE !== undefined
-                      ? currentDeltaE.toFixed(2)
-                      : "—"}
-                    {currentDeltaE !== undefined && currentDeltaE < 3 ? (
-                      <span className="chip chip-success text-[9px]">优秀</span>
-                    ) : currentDeltaE !== undefined && currentDeltaE < 6 ? (
-                      <span className="chip chip-brand text-[9px]">良好</span>
-                    ) : currentDeltaE !== undefined ? (
-                      <span className="chip chip-warn text-[9px]">仍偏</span>
-                    ) : null}
-                  </div>
+              ) : (
+                <div className="text-[12px] text-fg-tertiary">
+                  拖动下方滑块开始调整 · 系统会显示当前色差
                 </div>
-              </div>
+              )}
               <div className="mt-2 text-[10px] text-fg-muted leading-relaxed">
                 ΔE &lt; 1 不可分辨 · &lt; 3 几乎一致 · &lt; 6 仔细看可分辨 · &gt; 6 明显
               </div>

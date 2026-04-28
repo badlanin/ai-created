@@ -22,7 +22,6 @@ import { assertWithinBudget, getUserBudgetStatus } from "@/lib/pricing";
 import { createJob } from "@/lib/jobs-db";
 import { startJobWorker, type HandlerContext } from "@/lib/job-runner";
 import { getColorSwatchPng } from "@/lib/color-swatch";
-import { correctImageColor } from "@/lib/color-correct";
 
 export const runtime = "nodejs";
 // 创建任务本身很快（只需把文件落盘 + 插 DB），所以 60s 够了
@@ -452,84 +451,30 @@ async function recolorItemHandler(
     },
   );
 
-  // ─── 后处理色彩校正：解决模型输出色偏差 ───
-  // 升级到 mask-based：只校正接近主色的像素，不动背景 / 肤色。
-  let finalBuffer: Buffer = gen.data;
-  let correctionMeta: {
-    applied: boolean;
-    before_rgb: [number, number, number];
-    before_delta_e: number;
-    multiplier?: [number, number, number];
-    masked_pixel_ratio?: number;
-    strength: number;
-    mask_threshold: number;
+  // ─── 后处理色彩校正：已禁用 ───
+  // 用户实测自动校正会污染背景 / 肤色 / 整体亮度，副作用 > 收益。
+  // 默认直接用模型输出，用户如果觉得颜色不准可以在前端"调整"按钮里手动跑校色。
+  // 校正逻辑保留在 lib/color-correct.ts 给 /api/jobs/items/:id/recorrect 用（手动滑块）。
+  const correctionMeta: {
+    applied: false;
     target_hex: string;
-  } | null = null;
+  } = {
+    applied: false,
+    target_hex: itemMeta.hex,
+  };
 
-  const STRENGTH = 1.0;
-  const MASK_THRESHOLD = 30;
-
-  try {
-    const correction = await correctImageColor(gen.data, itemMeta.hex, {
-      strength: STRENGTH,
-      maskThreshold: MASK_THRESHOLD,
-    });
-    finalBuffer = correction.buffer;
-    correctionMeta = {
-      applied: correction.applied,
-      before_rgb: [
-        Math.round(correction.before.r),
-        Math.round(correction.before.g),
-        Math.round(correction.before.b),
-      ],
-      before_delta_e: Number(correction.beforeDeltaE.toFixed(2)),
-      multiplier: correction.multiplier
-        ? [
-            Number(correction.multiplier.r.toFixed(4)),
-            Number(correction.multiplier.g.toFixed(4)),
-            Number(correction.multiplier.b.toFixed(4)),
-          ]
-        : undefined,
-      masked_pixel_ratio: correction.maskedPixelRatio,
-      strength: STRENGTH,
-      mask_threshold: MASK_THRESHOLD,
-      target_hex: itemMeta.hex,
-    };
-    if (correction.applied) {
-      const m = correction.multiplier!;
-      console.log(
-        `[recolor correct] job=${ctx.job.id} idx=${ctx.item.idx} hex=${itemMeta.hex} ` +
-          `before=rgb(${correctionMeta.before_rgb.join(",")}) ` +
-          `ΔE=${correction.beforeDeltaE.toFixed(2)} ` +
-          `mul=[${m.r.toFixed(3)},${m.g.toFixed(3)},${m.b.toFixed(3)}] ` +
-          `masked=${((correction.maskedPixelRatio ?? 0) * 100).toFixed(1)}%`,
-      );
-    } else {
-      console.log(
-        `[recolor correct] job=${ctx.job.id} idx=${ctx.item.idx} hex=${itemMeta.hex} ` +
-          `ΔE=${correction.beforeDeltaE.toFixed(2)} 已达标，跳过校正`,
-      );
-    }
-  } catch (e) {
-    console.warn(
-      `[recolor correct] 校正失败，用原图: ${
-        e instanceof Error ? e.message : String(e)
-      }`,
-    );
-  }
-
-  // ─── 落盘：raw（模型直出）+ 校正后两份都保存 ───
-  // raw 给手动滑块校色用：用户拖滑块时直接 re-correct 这张原图，速度快
+  // ─── 落盘：raw + result 都用模型直出（同一份内容，两个文件名）───
+  // 两个文件都需要：raw 给手动滑块的"恢复 / 重新校色基准"用，result 给 UI 默认显示
+  // 分两份独立文件是为了：用户在滑块里点"保存"会覆盖 result，但 raw 永远是模型直出，
+  // 后续可以无限次重新校色不丢源
   const rawExt = gen.mimeType.includes("png") ? "png" : "jpg";
   const stamp = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const rawFilename = `recolor_${ctx.userId}_${stamp}_raw.${rawExt}`;
   const correctedFilename = `recolor_${ctx.userId}_${stamp}.${rawExt}`;
   const rawFilePath = path.join(outputsDir, rawFilename);
   const correctedFilePath = path.join(outputsDir, correctedFilename);
-  // 先写 raw（无论校正是否成功都保留，给后续手动调用）
   await fs.writeFile(rawFilePath, gen.data);
-  // 再写校正后的版本（如果校正失败，finalBuffer 就是 gen.data，等于复制一份）
-  await fs.writeFile(correctedFilePath, finalBuffer);
+  await fs.writeFile(correctedFilePath, gen.data);
 
   recordUsage({
     userId: ctx.userId,
