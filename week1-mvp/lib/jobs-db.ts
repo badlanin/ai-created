@@ -48,6 +48,10 @@ export interface JobItemRow {
   label: string | null;
   result_image_path: string | null;
   result_image_url: string | null;
+  /** 模型直出原图（未做色彩校正）相对路径，给手动滑块校色用 */
+  raw_image_path: string | null;
+  /** 校正元信息（JSON 字符串） */
+  correction_meta: string | null;
   input_tokens: number | null;
   output_tokens: number | null;
   cost_cny: number | null;
@@ -199,6 +203,8 @@ export interface UpdateItemPatch {
   status?: ItemStatus;
   result_image_path?: string | null;
   result_image_url?: string | null;
+  raw_image_path?: string | null;
+  correction_meta?: string | null;
   input_tokens?: number | null;
   output_tokens?: number | null;
   cost_cny?: number | null;

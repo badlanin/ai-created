@@ -52,6 +52,10 @@ import { getDb } from "./db";
 export interface ItemResult {
   result_image_path?: string;
   result_image_url?: string;
+  /** 模型直出原图（未做色彩校正），给手动滑块校色用。仅 recolor 任务设置 */
+  raw_image_path?: string | null;
+  /** 校正元信息 JSON 字符串，给手动滑块校色用 */
+  correction_meta?: string | null;
   input_tokens?: number;
   output_tokens?: number;
   cost_cny?: number;
@@ -196,6 +200,8 @@ async function runLoop(
         status: "completed",
         result_image_path: result.result_image_path ?? null,
         result_image_url: result.result_image_url ?? null,
+        raw_image_path: result.raw_image_path ?? null,
+        correction_meta: result.correction_meta ?? null,
         input_tokens: result.input_tokens ?? null,
         output_tokens: result.output_tokens ?? null,
         cost_cny: result.cost_cny ?? null,

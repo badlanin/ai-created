@@ -1,12 +1,14 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { Sliders, Download } from "lucide-react";
 import {
   downloadImagesAsZip,
   downloadSingleImage,
 } from "@/lib/download-zip";
 import type { PolledJobItem } from "@/lib/hooks/use-job-polling";
 import { Thumbnail, ThumbnailBadge } from "./thumbnail";
+import { RecolorAdjustModal } from "./recolor-adjust-modal";
 
 export interface JobResultsGridProps {
   items: PolledJobItem[];
@@ -43,10 +45,34 @@ export function JobResultsGrid({
     done: number;
     total: number;
   } | null>(null);
+  const [adjustingItem, setAdjustingItem] = useState<PolledJobItem | null>(
+    null,
+  );
+  /** 本地覆盖：保存校色后立刻反映新图，不等下次轮询 */
+  const [localOverrides, setLocalOverrides] = useState<
+    Record<number, { result_image_url: string; correction_meta?: string }>
+  >({});
+
+  // 把覆盖应用到 items 上
+  const itemsWithOverrides = useMemo(() => {
+    if (Object.keys(localOverrides).length === 0) return items;
+    return items.map((it) => {
+      const ov = localOverrides[it.id];
+      if (!ov) return it;
+      return {
+        ...it,
+        result_image_url: ov.result_image_url,
+        correction_meta: ov.correction_meta ?? it.correction_meta,
+      };
+    });
+  }, [items, localOverrides]);
 
   const successful = useMemo(
-    () => items.filter((it) => it.status === "completed" && it.result_image_url),
-    [items],
+    () =>
+      itemsWithOverrides.filter(
+        (it) => it.status === "completed" && it.result_image_url,
+      ),
+    [itemsWithOverrides],
   );
 
   /** 按 label 的 " - " 前缀分组（recolor：颜色名 - 原图名） */
@@ -213,18 +239,35 @@ export function JobResultsGrid({
                       ) : undefined
                     }
                     hoverOverlay={
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          downloadSingleImage(
-                            it.result_image_url!,
-                            resolveFilename(it),
-                          );
-                        }}
-                        className="px-3 py-1.5 bg-bg-elevated/90 text-fg-primary text-xs rounded-md shadow hover:bg-bg-secondary"
-                      >
-                        下载单张
-                      </button>
+                      <div className="flex flex-col gap-1.5">
+                        {it.raw_image_path ? (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setAdjustingItem(it);
+                            }}
+                            className="px-3 py-1.5 bg-bg-elevated/95 text-fg-primary text-xs rounded-md shadow hover:bg-bg-secondary flex items-center gap-1"
+                            title="手动调整颜色"
+                          >
+                            <Sliders size={11} strokeWidth={2.2} />
+                            调整
+                          </button>
+                        ) : null}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            downloadSingleImage(
+                              it.result_image_url!,
+                              resolveFilename(it),
+                            );
+                          }}
+                          className="px-3 py-1.5 bg-bg-elevated/95 text-fg-primary text-xs rounded-md shadow hover:bg-bg-secondary flex items-center gap-1"
+                          title="下载单张"
+                        >
+                          <Download size={11} strokeWidth={2.2} />
+                          下载
+                        </button>
+                      </div>
                     }
                   />
                 );
@@ -233,6 +276,24 @@ export function JobResultsGrid({
           </div>
         ))}
       </div>
+
+      {/* 手动校色模态 */}
+      {adjustingItem ? (
+        <RecolorAdjustModal
+          item={adjustingItem}
+          onClose={() => setAdjustingItem(null)}
+          onSaved={(updated) => {
+            setLocalOverrides((prev) => ({
+              ...prev,
+              [adjustingItem.id]: {
+                result_image_url: updated.result_image_url,
+                correction_meta: JSON.stringify(updated.correction_meta),
+              },
+            }));
+            setAdjustingItem(null);
+          }}
+        />
+      ) : null}
     </section>
   );
 }

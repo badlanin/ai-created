@@ -326,6 +326,8 @@ async function recolorItemHandler(
 ): Promise<{
   result_image_path: string;
   result_image_url: string;
+  raw_image_path: string;
+  correction_meta: string | null;
   input_tokens: number | undefined;
   output_tokens: number | undefined;
 }> {
@@ -451,19 +453,55 @@ async function recolorItemHandler(
   );
 
   // ─── 后处理色彩校正：解决模型输出色偏差 ───
-  // 即使有色卡 + 强 prompt，浅色 / 近原色场景模型仍可能漂移。
-  // 这里采样输出图主色 → 算 ΔE → 超阈值就用 sharp 把整图主色拉向目标。
+  // 升级到 mask-based：只校正接近主色的像素，不动背景 / 肤色。
   let finalBuffer: Buffer = gen.data;
+  let correctionMeta: {
+    applied: boolean;
+    before_rgb: [number, number, number];
+    before_delta_e: number;
+    multiplier?: [number, number, number];
+    masked_pixel_ratio?: number;
+    strength: number;
+    mask_threshold: number;
+    target_hex: string;
+  } | null = null;
+
+  const STRENGTH = 1.0;
+  const MASK_THRESHOLD = 30;
+
   try {
-    const correction = await correctImageColor(gen.data, itemMeta.hex);
+    const correction = await correctImageColor(gen.data, itemMeta.hex, {
+      strength: STRENGTH,
+      maskThreshold: MASK_THRESHOLD,
+    });
     finalBuffer = correction.buffer;
+    correctionMeta = {
+      applied: correction.applied,
+      before_rgb: [
+        Math.round(correction.before.r),
+        Math.round(correction.before.g),
+        Math.round(correction.before.b),
+      ],
+      before_delta_e: Number(correction.beforeDeltaE.toFixed(2)),
+      multiplier: correction.multiplier
+        ? [
+            Number(correction.multiplier.r.toFixed(4)),
+            Number(correction.multiplier.g.toFixed(4)),
+            Number(correction.multiplier.b.toFixed(4)),
+          ]
+        : undefined,
+      masked_pixel_ratio: correction.maskedPixelRatio,
+      strength: STRENGTH,
+      mask_threshold: MASK_THRESHOLD,
+    };
     if (correction.applied) {
       const m = correction.multiplier!;
       console.log(
         `[recolor correct] job=${ctx.job.id} idx=${ctx.item.idx} hex=${itemMeta.hex} ` +
-          `before=rgb(${Math.round(correction.before.r)},${Math.round(correction.before.g)},${Math.round(correction.before.b)}) ` +
+          `before=rgb(${correctionMeta.before_rgb.join(",")}) ` +
           `ΔE=${correction.beforeDeltaE.toFixed(2)} ` +
-          `mul=[${m.r.toFixed(3)},${m.g.toFixed(3)},${m.b.toFixed(3)}]`,
+          `mul=[${m.r.toFixed(3)},${m.g.toFixed(3)},${m.b.toFixed(3)}] ` +
+          `masked=${((correction.maskedPixelRatio ?? 0) * 100).toFixed(1)}%`,
       );
     } else {
       console.log(
@@ -479,12 +517,18 @@ async function recolorItemHandler(
     );
   }
 
-  const ext = gen.mimeType.includes("png") ? "png" : "jpg";
-  const filename = `recolor_${ctx.userId}_${Date.now()}_${Math.random()
-    .toString(36)
-    .slice(2, 8)}.${ext}`;
-  const filePath = path.join(outputsDir, filename);
-  await fs.writeFile(filePath, finalBuffer);
+  // ─── 落盘：raw（模型直出）+ 校正后两份都保存 ───
+  // raw 给手动滑块校色用：用户拖滑块时直接 re-correct 这张原图，速度快
+  const rawExt = gen.mimeType.includes("png") ? "png" : "jpg";
+  const stamp = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const rawFilename = `recolor_${ctx.userId}_${stamp}_raw.${rawExt}`;
+  const correctedFilename = `recolor_${ctx.userId}_${stamp}.${rawExt}`;
+  const rawFilePath = path.join(outputsDir, rawFilename);
+  const correctedFilePath = path.join(outputsDir, correctedFilename);
+  // 先写 raw（无论校正是否成功都保留，给后续手动调用）
+  await fs.writeFile(rawFilePath, gen.data);
+  // 再写校正后的版本（如果校正失败，finalBuffer 就是 gen.data，等于复制一份）
+  await fs.writeFile(correctedFilePath, finalBuffer);
 
   recordUsage({
     userId: ctx.userId,
@@ -504,8 +548,10 @@ async function recolorItemHandler(
   });
 
   return {
-    result_image_path: `outputs/${filename}`,
-    result_image_url: `/assets/outputs/${filename}`,
+    result_image_path: `outputs/${correctedFilename}`,
+    result_image_url: `/assets/outputs/${correctedFilename}`,
+    raw_image_path: `outputs/${rawFilename}`,
+    correction_meta: correctionMeta ? JSON.stringify(correctionMeta) : null,
     input_tokens: gen.usageMetadata?.promptTokenCount ?? undefined,
     output_tokens: gen.usageMetadata?.candidatesTokenCount ?? undefined,
   };

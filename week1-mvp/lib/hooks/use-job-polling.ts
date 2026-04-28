@@ -35,6 +35,10 @@ export interface PolledJobItem {
   label: string | null;
   result_image_path: string | null;
   result_image_url: string | null;
+  /** 模型直出原图路径（仅 recolor 任务）*/
+  raw_image_path?: string | null;
+  /** 校正元信息 JSON（仅 recolor 任务）*/
+  correction_meta?: string | null;
   input_tokens: number | null;
   output_tokens: number | null;
   cost_cny: number | null;

@@ -336,6 +336,9 @@ function migrate(db: Database.Database) {
   ensureColumn(db, "colors", "is_popular", "INTEGER NOT NULL DEFAULT 0");
   // 场景分类（婚礼 / 户外 / 影棚 / 街拍 / 室内 等，留空表示未分类）
   ensureColumn(db, "scenes", "category", "TEXT");
+  // 换色任务的"原始模型输出"路径 + 校正元信息（给手动滑块校色用）
+  ensureColumn(db, "render_job_items", "raw_image_path", "TEXT");
+  ensureColumn(db, "render_job_items", "correction_meta", "TEXT");
   // 新增索引
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_models_category ON models(kind, category, sort_order);
