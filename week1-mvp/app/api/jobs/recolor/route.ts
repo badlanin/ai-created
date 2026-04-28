@@ -493,6 +493,7 @@ async function recolorItemHandler(
       masked_pixel_ratio: correction.maskedPixelRatio,
       strength: STRENGTH,
       mask_threshold: MASK_THRESHOLD,
+      target_hex: itemMeta.hex,
     };
     if (correction.applied) {
       const m = correction.multiplier!;
