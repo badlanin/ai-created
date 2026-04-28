@@ -21,6 +21,7 @@ import { recordUsage } from "@/lib/usage";
 import { assertWithinBudget, getUserBudgetStatus } from "@/lib/pricing";
 import { createJob } from "@/lib/jobs-db";
 import { startJobWorker, type HandlerContext } from "@/lib/job-runner";
+import { getColorSwatchPng } from "@/lib/color-swatch";
 
 export const runtime = "nodejs";
 // 创建任务本身很快（只需把文件落盘 + 插 DB），所以 60s 够了
@@ -219,6 +220,13 @@ export async function POST(req: NextRequest) {
     // 同一个 batch 共享一个 random seed，保证多张图的一致性（颜色/光线/光影）
     const batchSeed = Math.floor(Math.random() * 2_147_483_647);
 
+    // 抠原色（来自 garment_attrs.主色调）—— 给 prompt 用作"原色 → 新色"对比
+    // 解决"原色和目标色相近时模型不换色"的问题
+    const originalColorName =
+      garmentAttrs && typeof garmentAttrs["主色调"] === "string"
+        ? (garmentAttrs["主色调"] as string).trim()
+        : null;
+
     const job = createJob({
       user_id: user.id,
       feature: "recolor",
@@ -232,6 +240,7 @@ export async function POST(req: NextRequest) {
         garment_attrs_text: garmentAttrsText,
         material_details_text: materialDetailsText,
         realism_constraints_text: realismConstraintsText,
+        original_color_name: originalColorName,
         material_ids: materials.map((m) => m.id),
         material_names: materials.map((m) => m.name),
         realism_id: realismPreset?.id ?? null,
@@ -327,6 +336,7 @@ async function recolorItemHandler(
     garment_attrs_text?: string;
     material_details_text?: string;
     realism_constraints_text?: string;
+    original_color_name?: string | null;
     input_paths?: string[];
     input_mime_types?: string[];
     item_details?: Array<{
@@ -366,9 +376,32 @@ async function recolorItemHandler(
     buffer: inputBuffers[i],
     mimeType: mimeTypes[i] || "image/jpeg",
   }));
+
+  // ─── 色卡注入：解决 batch 色差 + 输出色偏差 ───
+  // 程序化生成 256×256 纯目标色 PNG，作为最后一张参考图传给模型。
+  // 同 hex 的色卡是字节级一致的（缓存），所以同一 batch 里多张图的色锚点完全相同。
+  let swatchBuf: Buffer;
+  try {
+    swatchBuf = await getColorSwatchPng(itemMeta.hex);
+  } catch (e) {
+    // 色号意外非法时降级：跳过色卡，依然用 prompt 强约束
+    console.warn(
+      `[recolor] 生成色卡失败，降级（仅 prompt 约束）: ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    );
+    swatchBuf = Buffer.alloc(0);
+  }
+  const swatchInput: GenImageInput | null =
+    swatchBuf.length > 0
+      ? { buffer: swatchBuf, mimeType: "image/png" }
+      : null;
+
+  // 输入顺序：[主图] [其他视角图...] [色卡]  —— 色卡放最后，prompt 显式引用"最后一张"
   const reordered: GenImageInput[] = [
     inputs[itemMeta.imgIdx],
     ...inputs.filter((_, i) => i !== itemMeta.imgIdx),
+    ...(swatchInput ? [swatchInput] : []),
   ];
 
   const multiImageHint =
@@ -383,6 +416,8 @@ async function recolorItemHandler(
       realismConstraints: p.realism_constraints_text || undefined,
       userSeed: p.user_seed || undefined,
       qualityLevel: p.quality_level || "2k",
+      originalColorName: p.original_color_name || undefined,
+      hasSwatch: swatchInput !== null,
     }) + multiImageHint;
 
   const imageSize: "1K" | "2K" | "4K" =
@@ -398,7 +433,7 @@ async function recolorItemHandler(
         aspectRatio: p.aspect_ratio ?? undefined,
         imageSize,
         seed: p.batch_seed,           // 整批共享同一 seed → 一致性
-        temperature: 0.15,            // 批次模式低温，减少 AI 自由发挥
+        temperature: 0.05,            // 极低温：最大化确定性，减少颜色漂移
       }),
     {
       onRetry: (e, attempt, delay) => {

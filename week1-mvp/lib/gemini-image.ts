@@ -217,6 +217,34 @@ export interface RecolorPromptOptions {
   userSeed?: string;
   /** 输出清晰度档位：'hd' | '2k' | '4k'。会转成强约束文字进 prompt */
   qualityLevel?: "hd" | "2k" | "4k";
+  /**
+   * 原图的"主色调"（中文）。从 garment_attrs.主色调 抠出来。
+   *
+   * 用途：让模型知道"原色 → 新色"的明确变化路径，避免在两色相近时
+   * 觉得"不需要改"而几乎复刻原图。
+   */
+  originalColorName?: string;
+  /**
+   * 是否在 inputs 里附带了一张目标色色卡（generateColorSwatchPng 生成的纯色 PNG）。
+   * true 时 prompt 会显式引用"最后一张参考图是色卡"。
+   */
+  hasSwatch?: boolean;
+}
+
+/**
+ * HEX → RGB 数值。用于在 prompt 里给模型多重色彩描述。
+ * 输入 "#E8B197" 或 "E8B197" 都行；非法时返回 null。
+ */
+export function hexToRgb(
+  hex: string,
+): { r: number; g: number; b: number } | null {
+  const h = hex.replace(/^#/, "").trim();
+  if (!/^[0-9a-fA-F]{6}$/.test(h)) return null;
+  return {
+    r: parseInt(h.slice(0, 2), 16),
+    g: parseInt(h.slice(2, 4), 16),
+    b: parseInt(h.slice(4, 6), 16),
+  };
 }
 
 /**
@@ -245,11 +273,56 @@ export function buildRecolorPrompt(
   hex: string,
   options: RecolorPromptOptions = {},
 ): string {
+  const rgb = hexToRgb(hex);
+  // 给模型多种色彩表示，减少"理解偏差"导致的色值漂移
+  const colorMultiRepr = rgb
+    ? `「${colorName}」 · HEX ${hex.toUpperCase()} · RGB(${rgb.r}, ${rgb.g}, ${rgb.b})`
+    : `「${colorName}」 · 色号 ${hex}`;
+
+  const original = options.originalColorName?.trim();
+
   const parts: string[] = [
-    `你是一位专业的服装电商修图师。请严格按照以下要求修改这件服装的颜色。`,
+    `你是一位专业的服装电商修图师。请严格按照以下要求执行**完整的颜色替换**（不是微调）。`,
     ``,
-    `【目标 / Target】把这件服装的主色调改为「${colorName}」（对应色号 ${hex}）。`,
+    `【目标颜色 / Target Color · ⚠️ 严格匹配，零偏差】`,
+    `必须把这件服装的主色调精确替换为：`,
+    `  ▸ ${colorMultiRepr}`,
+    `输出图的主色像素值必须严格落在目标色附近（CIE76 ΔE ≤ 5），不允许：`,
+    `  ✗ 朝训练分布"中性化"漂移（保持纯度不要 desaturate）`,
+    `  ✗ 朝原色"折中"（不要保留任何原色倾向）`,
+    `  ✗ 美学化偏移（不要因为"好看"自行调整）`,
   ];
+
+  // ── 原色对比段：解决"原色相近时模型不换色"问题 ──
+  if (original && original !== "未提供") {
+    parts.push(
+      ``,
+      `【⚠️ 关键：必须改变颜色 / Critical: Must Change】`,
+      `输入图中服装的当前主色是「${original}」。`,
+      `你的任务是把它**完全替换**为上面指定的目标色 ${colorMultiRepr.split(" · ")[0]}。`,
+      `**即使原色和目标色看起来相近，也必须执行完整的颜色替换** —— 视觉上必须可清晰识别为"新颜色"。`,
+      `禁止"几乎不变"或"略微调整"的输出 —— 那是失败结果。`,
+    );
+  } else {
+    parts.push(
+      ``,
+      `【⚠️ 关键：必须执行完整颜色替换】`,
+      `不允许输出"看起来差不多"的图。即使原图色调与目标色接近，也必须全面替换为目标色。`,
+    );
+  }
+
+  // ── 色卡引用段（PR 2 需要 hasSwatch）──
+  if (options.hasSwatch) {
+    parts.push(
+      ``,
+      `【色卡参考图 / Color Reference Swatch】`,
+      `**最后一张参考图是目标色色卡**（256×256 纯色块，仅供颜色锚定）。`,
+      `服装主色必须严格匹配色卡所示颜色 —— 这是颜色一致性的硬约束：`,
+      `  ▸ 同一批次的多张图、跨多次调用的输出，主色都必须对齐到这张色卡`,
+      `  ▸ 直接用色卡里的像素值作为目标，不要自行解读 HEX 字符串`,
+      `  ▸ ⚠️ 色卡只用于颜色提取，**不要把色卡的形状/边界/纯色块复制到输出图里**`,
+    );
+  }
 
   if (options.garmentAttrs) {
     parts.push("", "【款式信息 / Garment Info】", options.garmentAttrs);
@@ -271,6 +344,7 @@ export function buildRecolorPrompt(
     `- 改后的颜色要自然地覆盖所有大面积的布料`,
     `- 蕾丝、刺绣等装饰保持与主色协调（比如白色蕾丝不变，同色蕾丝要跟着变）`,
     `- 阴影和高光要符合新颜色在该材质下的光泽特性（缎面有强反光，雪纺无强反光等）`,
+    `- 阴影区域可暗一些，高光区域可亮一些，但**主色平均值必须落在目标 RGB 附近**`,
   );
 
   if (options.realismConstraints) {
@@ -289,7 +363,10 @@ export function buildRecolorPrompt(
     parts.push("", `【补充指令】${options.userSeed.trim()}`);
   }
 
-  parts.push("", `请输出一张修改后的产品图片。`);
+  parts.push(
+    "",
+    `请输出一张修改后的产品图片。再次强调：主色必须严格等于 ${colorMultiRepr.split(" · ")[0]} ${rgb ? `(RGB ${rgb.r}, ${rgb.g}, ${rgb.b})` : ""}。`,
+  );
   return parts.join("\n");
 }
 
