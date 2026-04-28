@@ -22,6 +22,7 @@ import { assertWithinBudget, getUserBudgetStatus } from "@/lib/pricing";
 import { createJob } from "@/lib/jobs-db";
 import { startJobWorker, type HandlerContext } from "@/lib/job-runner";
 import { getColorSwatchPng } from "@/lib/color-swatch";
+import { correctImageColor } from "@/lib/color-correct";
 
 export const runtime = "nodejs";
 // 创建任务本身很快（只需把文件落盘 + 插 DB），所以 60s 够了
@@ -383,10 +384,13 @@ async function recolorItemHandler(
   let swatchBuf: Buffer;
   try {
     swatchBuf = await getColorSwatchPng(itemMeta.hex);
+    console.log(
+      `[recolor swatch] job=${ctx.job.id} idx=${ctx.item.idx} hex=${itemMeta.hex} swatch=${swatchBuf.length}B`,
+    );
   } catch (e) {
     // 色号意外非法时降级：跳过色卡，依然用 prompt 强约束
     console.warn(
-      `[recolor] 生成色卡失败，降级（仅 prompt 约束）: ${
+      `[recolor swatch] 生成色卡失败，降级（仅 prompt 约束）: ${
         e instanceof Error ? e.message : String(e)
       }`,
     );
@@ -446,12 +450,41 @@ async function recolorItemHandler(
     },
   );
 
+  // ─── 后处理色彩校正：解决模型输出色偏差 ───
+  // 即使有色卡 + 强 prompt，浅色 / 近原色场景模型仍可能漂移。
+  // 这里采样输出图主色 → 算 ΔE → 超阈值就用 sharp 把整图主色拉向目标。
+  let finalBuffer: Buffer = gen.data;
+  try {
+    const correction = await correctImageColor(gen.data, itemMeta.hex);
+    finalBuffer = correction.buffer;
+    if (correction.applied) {
+      const m = correction.multiplier!;
+      console.log(
+        `[recolor correct] job=${ctx.job.id} idx=${ctx.item.idx} hex=${itemMeta.hex} ` +
+          `before=rgb(${Math.round(correction.before.r)},${Math.round(correction.before.g)},${Math.round(correction.before.b)}) ` +
+          `ΔE=${correction.beforeDeltaE.toFixed(2)} ` +
+          `mul=[${m.r.toFixed(3)},${m.g.toFixed(3)},${m.b.toFixed(3)}]`,
+      );
+    } else {
+      console.log(
+        `[recolor correct] job=${ctx.job.id} idx=${ctx.item.idx} hex=${itemMeta.hex} ` +
+          `ΔE=${correction.beforeDeltaE.toFixed(2)} 已达标，跳过校正`,
+      );
+    }
+  } catch (e) {
+    console.warn(
+      `[recolor correct] 校正失败，用原图: ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    );
+  }
+
   const ext = gen.mimeType.includes("png") ? "png" : "jpg";
   const filename = `recolor_${ctx.userId}_${Date.now()}_${Math.random()
     .toString(36)
     .slice(2, 8)}.${ext}`;
   const filePath = path.join(outputsDir, filename);
-  await fs.writeFile(filePath, gen.data);
+  await fs.writeFile(filePath, finalBuffer);
 
   recordUsage({
     userId: ctx.userId,
