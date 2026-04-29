@@ -133,10 +133,21 @@ export function TaskTabBar({ feature, tabs, statusOf }: TaskTabBarProps) {
  */
 export function inferTabStatus(args: {
   activeJobId: string | null;
-  jobStatus?: "queued" | "running" | "completed" | "failed" | "canceled" | null;
+  jobStatus?:
+    | "queued"
+    | "running"
+    | "canceling"
+    | "completed"
+    | "failed"
+    | "canceled"
+    | null;
 }): "running" | "completed" | "failed" | "idle" {
   if (!args.activeJobId) return "idle";
-  if (args.jobStatus === "running" || args.jobStatus === "queued")
+  if (
+    args.jobStatus === "running" ||
+    args.jobStatus === "queued" ||
+    args.jobStatus === "canceling"
+  )
     return "running";
   if (args.jobStatus === "completed") return "completed";
   if (args.jobStatus === "failed" || args.jobStatus === "canceled")
