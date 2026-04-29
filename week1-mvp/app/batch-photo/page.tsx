@@ -6,6 +6,7 @@ import { ImageCropper } from "@/app/_components/image-cropper";
 import { AppShell } from "@/app/_components/app-shell";
 import { NotificationStack, useNotifications, notifyHelpers } from "@/app/_components/notification-stack";
 import { TaskViewport } from "@/app/_components/task-viewport";
+import { TaskDock } from "@/app/_components/task-dock";
 import { Thumbnail, ThumbnailBadge } from "@/app/_components/thumbnail";
 import { ResetButton } from "@/app/_components/reset-button";
 import {
@@ -770,6 +771,9 @@ function BatchPhotoTab({
               </p>
             </div>
           </header>
+
+          {/* 任务看板 —— 持久化展示我的最近任务 */}
+          <TaskDock feature="batch_photo" />
 
           <div className="space-y-4">
             {/* Step 1: 产品图上传 */}

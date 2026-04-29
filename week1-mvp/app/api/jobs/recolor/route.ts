@@ -110,6 +110,13 @@ export async function POST(req: NextRequest) {
         ? String(formData.get("user_seed")).trim()
         : "";
 
+    // 用户文件夹上传时抠出的根文件夹名，给下载文件命名用（如 "DRESS-001"）
+    // 服务端只需要存着、原样回传给前端用，不参与生成逻辑
+    const sourceFolder =
+      typeof formData.get("source_folder") === "string"
+        ? sanitizeFolderName(String(formData.get("source_folder")).trim())
+        : null;
+
     const aspectRatioRaw = formData.get("aspect_ratio");
     const ALLOWED_RATIOS = [
       "1:1",
@@ -241,6 +248,7 @@ export async function POST(req: NextRequest) {
         material_details_text: materialDetailsText,
         realism_constraints_text: realismConstraintsText,
         original_color_name: originalColorName,
+        source_folder: sourceFolder, // 客户端文件夹上传时的根名，给下载命名用
         material_ids: materials.map((m) => m.id),
         material_names: materials.map((m) => m.name),
         realism_id: realismPreset?.id ?? null,
@@ -510,4 +518,19 @@ function safeParseParams(s: string | null): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+/**
+ * 文件夹名清洗：去掉文件系统不友好字符 + 限长，安全用作 ZIP/文件名前缀
+ */
+function sanitizeFolderName(name: string): string | null {
+  if (!name) return null;
+  // 去掉路径符号 / 控制符 / 文件系统禁用字符
+  const cleaned = name
+    .replace(/[/\\?%*:|"<> -]/g, "_")
+    .replace(/^\.+/, "")
+    .trim();
+  if (!cleaned) return null;
+  // 限长 80 字符避免 ZIP 文件名过长
+  return cleaned.slice(0, 80);
 }

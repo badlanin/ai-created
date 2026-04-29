@@ -45,6 +45,12 @@ export interface DropzoneProps {
   multiple?: boolean;
   /** 任意文件入口（拖拽 / 选择 / 粘贴）都汇聚到这里 */
   onFiles: (files: File[]) => void;
+  /**
+   * 是否额外渲染"选择文件夹"按钮。开启后用户能选整个文件夹，
+   * 上传时浏览器会递归收集所有图片，并保留 file.webkitRelativePath。
+   * 调用方可以从第一张图的 webkitRelativePath 抠出文件夹名（仅 Chrome / Edge / 新版 FF 支持）。
+   */
+  enableDirectoryPicker?: boolean;
   /** 紧凑模式：用作槽位（小尺寸、children 自渲染）*/
   compact?: boolean;
   /** 是否禁用 */
@@ -62,10 +68,30 @@ export interface DropzoneProps {
   pasteEnabled?: boolean;
 }
 
+/**
+ * 从一组文件里抠出共同的根文件夹名（基于 webkitRelativePath）。
+ * 没有 webkitRelativePath（普通拖拽 / 单图）时返回 null。
+ *
+ * 例：
+ *   files = [{ webkitRelativePath: "DRESS-001/front.jpg" }, ...]
+ *   → "DRESS-001"
+ */
+export function extractFolderName(files: File[]): string | null {
+  for (const f of files) {
+    const rel = (f as File & { webkitRelativePath?: string })
+      .webkitRelativePath;
+    if (rel && rel.includes("/")) {
+      return rel.split("/")[0] || null;
+    }
+  }
+  return null;
+}
+
 export function Dropzone({
   accept = "image/*",
   multiple = false,
   onFiles,
+  enableDirectoryPicker = false,
   compact = false,
   disabled = false,
   icon,
@@ -76,6 +102,7 @@ export function Dropzone({
   pasteEnabled = true,
 }: DropzoneProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const dirInputRef = useRef<HTMLInputElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [hover, setHover] = useState(false);
@@ -84,6 +111,15 @@ export function Dropzone({
     if (disabled) return;
     inputRef.current?.click();
   }, [disabled]);
+
+  const handlePickFolder = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (disabled) return;
+      dirInputRef.current?.click();
+    },
+    [disabled],
+  );
 
   const handleDrop = useCallback(
     (e: DragEvent<HTMLDivElement>) => {
@@ -179,6 +215,25 @@ export function Dropzone({
           e.target.value = ""; // 允许重传同一文件
         }}
       />
+      {enableDirectoryPicker ? (
+        <input
+          ref={dirInputRef}
+          type="file"
+          // @ts-expect-error: webkitdirectory is non-standard but works in Chrome/Edge/FF
+          webkitdirectory=""
+          directory=""
+          multiple
+          disabled={disabled}
+          className="sr-only"
+          onChange={(e) => {
+            const all = Array.from(e.target.files || []);
+            // 文件夹模式可能选到非图片文件，过滤一下
+            const imgs = all.filter((f) => matchAccept(f, accept));
+            if (imgs.length > 0) onFiles(imgs);
+            e.target.value = "";
+          }}
+        />
+      ) : null}
 
       {children ?? (
         <div className="flex flex-col items-center text-center">
@@ -191,6 +246,15 @@ export function Dropzone({
             {title}
           </div>
           <div className="text-[12px] text-fg-tertiary">{description}</div>
+          {enableDirectoryPicker && !disabled ? (
+            <button
+              type="button"
+              onClick={handlePickFolder}
+              className="mt-3 px-3 py-1.5 text-[11px] rounded-md border border-border-default text-fg-secondary hover:border-brand-500 hover:text-brand-400 hover:bg-[var(--brand-50-bg)] transition-colors"
+            >
+              📁 选择整个文件夹
+            </button>
+          ) : null}
         </div>
       )}
 

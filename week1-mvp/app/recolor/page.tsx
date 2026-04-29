@@ -10,12 +10,14 @@ import {
   notifyHelpers,
 } from "@/app/_components/notification-stack";
 import { TaskViewport } from "@/app/_components/task-viewport";
+import { TaskDock } from "@/app/_components/task-dock";
 import { Thumbnail, ThumbnailBadge } from "@/app/_components/thumbnail";
 import { ResetButton } from "@/app/_components/reset-button";
 import {
   CollapsibleSection,
   Dropzone,
   SearchInput,
+  extractFolderName,
 } from "@/app/_components/ui";
 import { useCurrentUser } from "@/lib/hooks/use-current-user";
 import { useJobPolling } from "@/lib/hooks/use-job-polling";
@@ -132,6 +134,11 @@ export default function RecolorPage() {
   const [compressedBlobs, setCompressedBlobs] = useState<Blob[]>([]);
   const [croppedFlags, setCroppedFlags] = useState<boolean[]>([]);
   const [croppingIndex, setCroppingIndex] = useState<number | null>(null);
+  /**
+   * 用户选文件夹上传时抠出的根文件夹名（如 "DRESS-001"）。
+   * 用作下载文件名 / ZIP 名前缀。null = 普通选图模式
+   */
+  const [sourceFolderName, setSourceFolderName] = useState<string | null>(null);
 
   // ─── 解析 ───
   const [analyzing, setAnalyzing] = useState(false);
@@ -380,9 +387,25 @@ export default function RecolorPage() {
       setCompressedBlobs([]);
       setGarmentAttrs(null);
       setSelectedMaterialIds([]);
+      setSourceFolderName(null);
       return;
     }
     const trimmed = picked.slice(0, 50);
+
+    // 文件夹选择模式：抠出根文件夹名作为下载命名前缀
+    // （普通文件 / 拖拽时 webkitRelativePath 是空的，extractFolderName 返回 null）
+    const folder = extractFolderName(trimmed);
+    if (folder) {
+      setSourceFolderName(folder);
+      notifyHelpers.info(
+        push,
+        `从文件夹"${folder}"导入`,
+        `${trimmed.length} 张图。下载时会按此名称命名。`,
+      );
+    } else {
+      setSourceFolderName(null);
+    }
+
     setFiles(trimmed);
     setCompressedBlobs([]);
     setCroppedFlags(new Array(trimmed.length).fill(false));
@@ -577,6 +600,7 @@ export default function RecolorPage() {
       if (realismId) fd.append("realism_id", String(realismId));
       if (garmentAttrs) fd.append("garment_attrs", JSON.stringify(garmentAttrs));
       if (userSeed.trim()) fd.append("user_seed", userSeed.trim());
+      if (sourceFolderName) fd.append("source_folder", sourceFolderName);
 
       const res = await fetch("/api/jobs/recolor", {
         method: "POST",
@@ -618,6 +642,7 @@ export default function RecolorPage() {
     setCustomName("");
     setUserSeed("");
     setColorQuery("");
+    setSourceFolderName(null);
     setActiveJobId(null);
     slotStore.reset();
     notifyHelpers.info(push, "已清空当前任务");
@@ -680,13 +705,41 @@ export default function RecolorPage() {
             resetAll();
             setViewMode("form");
           }}
-          zipPrefix="recolor"
+          zipPrefix={(() => {
+            // 优先用上传时的文件夹名（"DRESS-001_recolor"）；fallback 到通用 "recolor"
+            try {
+              const params = polling.data.job.params
+                ? (JSON.parse(polling.data.job.params) as {
+                    source_folder?: string;
+                  })
+                : null;
+              if (params?.source_folder)
+                return `${params.source_folder}_recolor`;
+            } catch {}
+            return sourceFolderName
+              ? `${sourceFolderName}_recolor`
+              : "recolor";
+          })()}
           makeFilename={(it) => {
+            // 拿任务的 source_folder（轮询数据里的）作为前缀
+            let folderPrefix = "";
+            try {
+              const params = polling.data?.job.params
+                ? (JSON.parse(polling.data.job.params) as {
+                    source_folder?: string;
+                  })
+                : null;
+              folderPrefix = params?.source_folder
+                ? `${params.source_folder}_`
+                : sourceFolderName
+                  ? `${sourceFolderName}_`
+                  : "";
+            } catch {}
             const safe = (it.label || `item_${it.idx + 1}`).replace(
               /[/\\?%*:|"<>]/g,
               "_",
             );
-            return `${safe}.png`;
+            return `${folderPrefix}${safe}.png`;
           }}
         />
       ) : (
@@ -711,6 +764,9 @@ export default function RecolorPage() {
             </div>
           </header>
 
+          {/* 任务看板 —— 持久化展示我的最近任务 */}
+          <TaskDock feature="recolor" />
+
           <div className="space-y-4">
             {/* Step 1: 上传 */}
             <CollapsibleSection
@@ -722,13 +778,24 @@ export default function RecolorPage() {
                 <Dropzone
                   accept="image/*"
                   multiple
+                  enableDirectoryPicker
                   onFiles={onPickFiles}
                   icon={<Upload size={28} strokeWidth={1.6} />}
                   title="拖拽 / 点击 / Ctrl+V 粘贴上传产品图"
-                  description="支持多张同时上传（最多 50 张）"
+                  description="支持多张同时上传（最多 50 张），或选择整个文件夹"
                 />
               ) : (
                 <div className="space-y-3">
+                  {sourceFolderName ? (
+                    <div className="flex items-center gap-2 text-[12px] text-fg-secondary">
+                      <span className="chip chip-brand text-[11px]">
+                        📁 {sourceFolderName}
+                      </span>
+                      <span className="text-fg-tertiary">
+                        下载会用此文件夹名命名
+                      </span>
+                    </div>
+                  ) : null}
                   <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2.5">
                     {files.map((f, i) => (
                       <Thumbnail
@@ -846,82 +913,91 @@ export default function RecolorPage() {
               </CollapsibleSection>
             )}
 
-            {/* Step 3: 材质 */}
-            {(garmentAttrs || selectedMaterials.length > 0) && (
-              <CollapsibleSection
-                title="③ 服装材质"
-                description="自动匹配，可手动增删"
-                defaultOpen
-              >
-                <div className="flex flex-wrap gap-2 items-center">
-                  {selectedMaterials.map((m) => (
-                    <span
-                      key={m.id}
-                      className="inline-flex items-center gap-1.5 chip chip-brand"
-                    >
-                      <span>{m.name}</span>
-                      {m.english_name && (
-                        <span className="text-[10px] text-brand-400/80 font-mono">
-                          {m.english_name}
-                        </span>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => removeMaterial(m.id)}
-                        className="ml-0.5 opacity-60 hover:opacity-100 hover:text-danger"
-                      >
-                        <X size={10} strokeWidth={2.5} />
-                      </button>
-                    </span>
-                  ))}
-                  <div className="relative">
+            {/* Step 3: 材质 —— 始终显示，简单款式不解析也能直接选 */}
+            <CollapsibleSection
+              title="③ 服装材质"
+              description={
+                garmentAttrs
+                  ? "解析自动匹配，可手动增删"
+                  : "可手动选择 · 简单款式无需解析"
+              }
+              badge={
+                selectedMaterials.length > 0
+                  ? selectedMaterials.length
+                  : undefined
+              }
+              defaultOpen
+            >
+              <div className="flex flex-wrap gap-2 items-center">
+                {selectedMaterials.map((m) => (
+                  <span
+                    key={m.id}
+                    className="inline-flex items-center gap-1.5 chip chip-brand"
+                  >
+                    <span>{m.name}</span>
+                    {m.english_name && (
+                      <span className="text-[10px] text-brand-400/80 font-mono">
+                        {m.english_name}
+                      </span>
+                    )}
                     <button
                       type="button"
-                      onClick={() => setShowMaterialPicker((v) => !v)}
-                      className="px-3 py-0.5 h-[22px] rounded-full border border-dashed border-border-default text-[11px] text-fg-tertiary hover:border-brand-500 hover:text-brand-400 inline-flex items-center"
+                      onClick={() => removeMaterial(m.id)}
+                      className="ml-0.5 opacity-60 hover:opacity-100 hover:text-danger"
                     >
-                      + 添加材质
+                      <X size={10} strokeWidth={2.5} />
                     </button>
-                    {showMaterialPicker && (
-                      <div className="absolute top-full mt-1 left-0 z-20 bg-bg-elevated border border-border-default rounded-md shadow-lg p-2 max-h-64 overflow-y-auto w-72 animate-fade-in">
-                        {unselectedMaterials.length === 0 ? (
-                          <div className="text-xs text-fg-tertiary p-2">
-                            所有材质都已添加
-                          </div>
-                        ) : (
-                          unselectedMaterials.map((m) => (
-                            <button
-                              key={m.id}
-                              onClick={() => addMaterial(m.id)}
-                              className="w-full text-left px-2 py-1.5 rounded hover:bg-bg-hover text-fg-primary"
-                            >
-                              <div className="text-sm font-medium">
-                                {m.name}
-                                {m.english_name && (
-                                  <span className="ml-1 text-xs text-fg-tertiary font-mono">
-                                    {m.english_name}
-                                  </span>
-                                )}
-                              </div>
-                              {m.description && (
-                                <div className="text-xs text-fg-tertiary mt-0.5 truncate">
-                                  {m.description}
-                                </div>
+                  </span>
+                ))}
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowMaterialPicker((v) => !v)}
+                    className="px-3 py-0.5 h-[22px] rounded-full border border-dashed border-border-default text-[11px] text-fg-tertiary hover:border-brand-500 hover:text-brand-400 inline-flex items-center"
+                  >
+                    + 添加材质
+                  </button>
+                  {showMaterialPicker && (
+                    <div className="absolute top-full mt-1 left-0 z-20 bg-bg-elevated border border-border-default rounded-md shadow-lg p-2 max-h-64 overflow-y-auto w-72 animate-fade-in">
+                      {unselectedMaterials.length === 0 ? (
+                        <div className="text-xs text-fg-tertiary p-2">
+                          {allMaterials.length === 0
+                            ? "材质库为空，请联系管理员添加"
+                            : "所有材质都已添加"}
+                        </div>
+                      ) : (
+                        unselectedMaterials.map((m) => (
+                          <button
+                            key={m.id}
+                            onClick={() => addMaterial(m.id)}
+                            className="w-full text-left px-2 py-1.5 rounded hover:bg-bg-hover text-fg-primary"
+                          >
+                            <div className="text-sm font-medium">
+                              {m.name}
+                              {m.english_name && (
+                                <span className="ml-1 text-xs text-fg-tertiary font-mono">
+                                  {m.english_name}
+                                </span>
                               )}
-                            </button>
-                          ))
-                        )}
-                      </div>
-                    )}
-                  </div>
+                            </div>
+                            {m.description && (
+                              <div className="text-xs text-fg-tertiary mt-0.5 truncate">
+                                {m.description}
+                              </div>
+                            )}
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
                 </div>
-                {selectedMaterials.length === 0 && (
-                  <p className="mt-2 text-[11px] text-warn">
-                    ⚠ 未匹配到任何材质，AI 可能误判面料
-                  </p>
-                )}
-              </CollapsibleSection>
-            )}
+              </div>
+              {selectedMaterials.length === 0 ? (
+                <p className="mt-2 text-[11px] text-fg-tertiary">
+                  💡 选了材质后，AI 会知道面料的光泽 / 透光 / 纹理特性，换色更自然。简单纯色款（如棉布）可不选。
+                </p>
+              ) : null}
+            </CollapsibleSection>
 
             {/* Step 4: 真实感 */}
             {realisms.length > 0 && (

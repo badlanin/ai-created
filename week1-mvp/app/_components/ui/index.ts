@@ -40,7 +40,11 @@ export { ProgressBar, SegmentedProgressBar } from "./progress";
 // 新增组件（深色主题 UI）
 export { StatusDot, type StatusDotProps, type StatusTone } from "./status-dot";
 export { EmptyState, type EmptyStateProps } from "./empty-state";
-export { Dropzone, type DropzoneProps } from "./dropzone";
+export {
+  Dropzone,
+  extractFolderName,
+  type DropzoneProps,
+} from "./dropzone";
 export {
   CollapsibleSection,
   type CollapsibleSectionProps,
