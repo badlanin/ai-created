@@ -31,7 +31,19 @@ export function defaultShouldRetry(error: unknown): boolean {
     /fetch failed/i.test(msg) ||
     /ECONNRESET/i.test(msg) ||
     /ETIMEDOUT/i.test(msg) ||
-    /socket hang up/i.test(msg)
+    /socket hang up/i.test(msg) ||
+    // Nano Banana / Gemini Image 偶发"返回响应但里面没图像"的 bug
+    // （safety filter 误拦 / 模型给文本不给图 / 空 candidates）
+    // 这是 transient error，retry 一般能过。不重试 = 一次就败
+    /没返回图片/.test(msg) ||
+    /no image/i.test(msg) ||
+    /no candidate/i.test(msg) ||
+    /empty response/i.test(msg) ||
+    // safety filter 触发（Gemini 把模特图当敏感内容拦了）—— retry 几次概率会过
+    // （注：如果是真正违规内容，多次 retry 还是会失败，最终用户看到错误，体验合理）
+    /SAFETY/i.test(msg) ||
+    /blocked/i.test(msg) ||
+    /finishReason.*safety/i.test(msg)
   );
 }
 

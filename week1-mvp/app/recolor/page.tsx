@@ -382,7 +382,7 @@ export default function RecolorPage() {
       setSelectedMaterialIds([]);
       return;
     }
-    const trimmed = picked.slice(0, 5);
+    const trimmed = picked.slice(0, 50);
     setFiles(trimmed);
     setCompressedBlobs([]);
     setCroppedFlags(new Array(trimmed.length).fill(false));
@@ -715,7 +715,7 @@ export default function RecolorPage() {
             {/* Step 1: 上传 */}
             <CollapsibleSection
               title="① 上传产品图"
-              description="最多 5 张同款不同角度 · 拖拽 / 点击 / Ctrl+V 粘贴"
+              description="最多 50 张同款不同角度 · 拖拽 / 点击 / Ctrl+V 粘贴"
               defaultOpen
             >
               {files.length === 0 ? (
@@ -725,7 +725,7 @@ export default function RecolorPage() {
                   onFiles={onPickFiles}
                   icon={<Upload size={28} strokeWidth={1.6} />}
                   title="拖拽 / 点击 / Ctrl+V 粘贴上传产品图"
-                  description="支持多张同时上传（最多 5 张）"
+                  description="支持多张同时上传（最多 50 张）"
                 />
               ) : (
                 <div className="space-y-3">
@@ -785,19 +785,19 @@ export default function RecolorPage() {
                       />
                     ))}
                   </div>
-                  {files.length < 5 && (
+                  {files.length < 50 && (
                     <Dropzone
                       accept="image/*"
                       multiple
                       onFiles={(more) =>
-                        onPickFiles([...files, ...more].slice(0, 5))
+                        onPickFiles([...files, ...more].slice(0, 50))
                       }
                       compact
                       className="aspect-[5/1] flex items-center justify-center"
                     >
                       <div className="absolute inset-0 flex items-center justify-center text-[12px] text-fg-tertiary pointer-events-none gap-2">
                         <Upload size={14} strokeWidth={1.8} />
-                        继续添加（{5 - files.length} 张剩余 · 支持 Ctrl+V）
+                        继续添加（{50 - files.length} 张剩余 · 支持 Ctrl+V）
                       </div>
                     </Dropzone>
                   )}

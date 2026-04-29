@@ -12,9 +12,19 @@ import {
   CollapsibleSection,
   Dropzone,
 } from "@/app/_components/ui";
+import {
+  TaskTabBar,
+  inferTabStatus,
+} from "@/app/_components/task-tab-bar";
 import { useCurrentUser } from "@/lib/hooks/use-current-user";
 import { useJobPolling } from "@/lib/hooks/use-job-polling";
-import { useSlotStore } from "@/lib/stores/task-store";
+import {
+  useSlotStore,
+  useTabs,
+  useEnsureFirstTab,
+  useTaskStore,
+  type TabsApi,
+} from "@/lib/stores/task-store";
 
 /* ─────────── 类型 ─────────── */
 type AiModel = {
@@ -149,9 +159,26 @@ async function resizeImage(file: File, maxSize = 2048): Promise<Blob> {
 
 /* ─────────── 页面主体 ─────────── */
 
-export default function BatchPhotoPage() {
+/**
+ * 单个任务 tab 的内容（form / 任务视窗 / 右栏）
+ *
+ * 每个 tab 是独立的 React 树（在父级 BatchPhotoPage 用 key={tabId} 触发 remount），
+ * 拥有自己的 useState、useEffect、polling、slotStore。
+ *
+ * Slot key 命名约定：`batchPhoto:${tabId}`
+ *   - tab 数据（产品图、模特、场景、姿势、prompt 等）独立持久化
+ *   - 切换 tab 后再切回来，从 slotStore 恢复表单
+ *   - 关闭 tab 调用 store.reset(`batchPhoto:${tabId}`) 清掉
+ */
+function BatchPhotoTab({
+  tabId,
+  tabs,
+}: {
+  tabId: string;
+  tabs: TabsApi;
+}) {
   const user = useCurrentUser();
-  const slotStore = useSlotStore("batchPhoto");
+  const slotStore = useSlotStore(`batchPhoto:${tabId}`);
   const { push } = useNotifications();
 
   // ─── 素材库 ───
@@ -666,6 +693,17 @@ export default function BatchPhotoPage() {
 
   const showTaskViewport = viewMode === "task" && polling.data;
 
+  // tab 状态（给 TabBar 显示 spinner / ✓ / ! 用）
+  const tabStatus = inferTabStatus({
+    activeJobId,
+    jobStatus: polling.data?.job.status ?? null,
+  });
+  // 把"该 tab 状态"广播到 store，让 TaskTabBar 能渲染所有 tab 的状态徽标
+  useEffect(() => {
+    // tabStatus 由 polling 推断，存到该 tab 的 slot meta 里
+    slotStore.set("_tabStatus", tabStatus);
+  }, [tabStatus, slotStore]);
+
   return (
     <AppShell
       leftNav={{ user, activeJobCount }}
@@ -697,6 +735,7 @@ export default function BatchPhotoPage() {
         />
       }
     >
+      <BatchPhotoTabBarWrapper tabs={tabs} />
       {showTaskViewport && polling.data ? (
         <TaskViewport
           job={polling.data.job}
@@ -1094,6 +1133,63 @@ export default function BatchPhotoPage() {
         </div>
       )}
     </AppShell>
+  );
+}
+
+/* ─────────── 多任务 Page（Tab Bar 容器 + 当前 tab 渲染）─────────── */
+
+/**
+ * 默认导出：管理多 tab 的状态，挂载当前激活 tab。
+ *
+ * 渲染策略：
+ *   - 同时只渲染 1 个 tab（active 的那个）
+ *   - 切换 tab 时通过 key={tabId} 触发 React 完整 remount，旧 tab 状态被卸载
+ *   - tab 数据持久化在 slotStore 里，新 tab mount 时自动恢复
+ *
+ * 这意味着：
+ *   - 切换离开的 tab 上的"实时进度轮询"会暂停
+ *   - 切回来时轮询自动恢复（useJobPolling 看 activeJobId 不为空就重启）
+ *   - 整个 Tab 的设计目标是"开多个工作区，按需切换"，不是"5 个 tab 同时盯进度"
+ */
+export default function BatchPhotoPage() {
+  const activeTabId = useEnsureFirstTab("batchPhoto");
+  const tabs = useTabs("batchPhoto");
+
+  if (!activeTabId) {
+    // 第一次渲染时 useEnsureFirstTab 还没 effect，给个 loading
+    return (
+      <div className="p-8 text-fg-tertiary text-sm">正在加载…</div>
+    );
+  }
+
+  return <BatchPhotoTab key={activeTabId} tabId={activeTabId} tabs={tabs} />;
+}
+
+/**
+ * BatchPhotoTab 内嵌的 TabBar wrapper：从 task store 读各 tab 的状态徽标
+ *
+ * 单独抽出来是因为：每个 tab 把自己当前状态写进 `_tabStatus` 字段，
+ * TabBar 这里反过来读所有 tab 的 `_tabStatus`，组合成完整的 tab 栏视图。
+ */
+function BatchPhotoTabBarWrapper({ tabs }: { tabs: TabsApi }) {
+  const store = useTaskStore();
+  return (
+    <div className="px-5 md:px-8 lg:px-10 pt-3">
+      <TaskTabBar
+        feature="batchPhoto"
+        tabs={tabs}
+        statusOf={(tabId) => {
+          const slot = store.snapshot(`batchPhoto:${tabId}`);
+          const ts = slot.data._tabStatus as
+            | "running"
+            | "completed"
+            | "failed"
+            | "idle"
+            | undefined;
+          return ts ?? (slot.activeJobId ? "running" : "idle");
+        }}
+      />
+    </div>
   );
 }
 

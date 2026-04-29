@@ -64,9 +64,9 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
-    if (uploadedFiles.length > 5) {
+    if (uploadedFiles.length > 50) {
       return NextResponse.json(
-        { error: "一次最多上传 5 张图片" },
+        { error: "一次最多上传 50 张图片" },
         { status: 400 },
       );
     }

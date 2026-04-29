@@ -22,7 +22,12 @@ interface ProviderInfo {
 const RECOMMENDED = {
   vertex: { rate: 2, burst: 2, concurrency: 1 },
   gemini_api_tier1: { rate: 10, burst: 10, concurrency: 4 },
+  // Tier 2 单站独享：可以打满（500 RPM 上限的 80%）
   gemini_api_tier2: { rate: 60, burst: 60, concurrency: 8 },
+  // Tier 2 多站共享：3 站共用同一项目时，每站取约 1/3 RPM 留 buffer 防 429
+  gemini_api_tier2_3sites: { rate: 150, burst: 150, concurrency: 12 },
+  // Tier 2 单站激进：单站满速版（仅适用于一个 site 用一个 Google 项目）
+  gemini_api_tier2_aggressive: { rate: 200, burst: 200, concurrency: 16 },
 };
 
 export default function SettingsAdminPage() {
@@ -403,31 +408,54 @@ export default function SettingsAdminPage() {
         )}
 
         {/* 推荐快速填值 */}
-        <div className="mb-4 flex flex-wrap gap-2">
-          <span className="text-xs text-fg-tertiary self-center mr-1">
-            一键应用推荐：
-          </span>
-          <button
-            type="button"
-            onClick={() => applyRecommended("vertex")}
-            className="px-2.5 py-1 text-xs border border-border-default rounded hover:bg-bg-tertiary"
-          >
-            Vertex (2 / 1)
-          </button>
-          <button
-            type="button"
-            onClick={() => applyRecommended("gemini_api_tier1")}
-            className="px-2.5 py-1 text-xs border border-[rgba(59,130,246,0.4)] rounded text-brand-400 hover:bg-[var(--brand-50-bg)]"
-          >
-            Gemini API Tier 1 (10 / 4)
-          </button>
-          <button
-            type="button"
-            onClick={() => applyRecommended("gemini_api_tier2")}
-            className="px-2.5 py-1 text-xs border border-purple-300 rounded text-purple-700 hover:bg-purple-50"
-          >
-            Gemini API Tier 2 (60 / 8)
-          </button>
+        <div className="mb-4">
+          <div className="text-xs text-fg-tertiary mb-2">一键应用推荐：</div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => applyRecommended("vertex")}
+              className="px-2.5 py-1 text-xs border border-border-default rounded hover:bg-bg-tertiary"
+              title="Vertex AI 默认上限是 2 RPM"
+            >
+              Vertex (2 / 1)
+            </button>
+            <button
+              type="button"
+              onClick={() => applyRecommended("gemini_api_tier1")}
+              className="px-2.5 py-1 text-xs border border-[rgba(59,130,246,0.4)] rounded text-brand-400 hover:bg-[var(--brand-50-bg)]"
+              title="Tier 1 默认配额（绑信用卡即解锁）"
+            >
+              Tier 1 (10 / 4)
+            </button>
+            <button
+              type="button"
+              onClick={() => applyRecommended("gemini_api_tier2")}
+              className="px-2.5 py-1 text-xs border border-[rgba(139,92,246,0.4)] rounded text-[#a78bfa] hover:bg-[rgba(139,92,246,0.1)]"
+              title="Tier 2 保守值（单站独享一个项目时用）"
+            >
+              Tier 2 保守 (60 / 8)
+            </button>
+            <button
+              type="button"
+              onClick={() => applyRecommended("gemini_api_tier2_3sites")}
+              className="px-2.5 py-1 text-xs border border-[rgba(245,158,11,0.4)] rounded text-warn hover:bg-[var(--warn-bg)]"
+              title="3 个站共享同一个 Google 项目时推荐：每站 150 RPM × 3 ≤ 500 上限，永不 429"
+            >
+              ⭐ Tier 2 · 3 站共享 (150 / 12)
+            </button>
+            <button
+              type="button"
+              onClick={() => applyRecommended("gemini_api_tier2_aggressive")}
+              className="px-2.5 py-1 text-xs border border-[rgba(239,68,68,0.4)] rounded text-danger hover:bg-[var(--danger-bg)]"
+              title="单站独享 + 满速：占 500 上限的 40%，仍留余量。仅当确认本站独占整个 Google 项目时使用"
+            >
+              Tier 2 · 单站满速 (200 / 16)
+            </button>
+          </div>
+          <p className="mt-2 text-[10px] text-fg-muted leading-relaxed">
+            说明：rate limits 是<strong className="text-fg-secondary"> 按 Google 项目 </strong>
+            算的，不是按 API key。多个站点用同项目的多 key = 共享同一份配额。
+          </p>
         </div>
 
         <form onSubmit={handleSaveRate} className="space-y-3">
