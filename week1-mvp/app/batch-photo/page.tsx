@@ -686,23 +686,23 @@ function BatchPhotoTab({
     slotStore.setActiveJob(null);
   }
 
+  // tab 状态（给 TabBar 显示 spinner / ✓ / ! 用）
+  // ⚠️ 必须在所有早期 return 之前，避免 hook 顺序变化触发
+  // "Rendered more hooks than during the previous render" 错误
+  const tabStatus = inferTabStatus({
+    activeJobId,
+    jobStatus: polling.data?.job.status ?? null,
+  });
+  useEffect(() => {
+    slotStore.set("_tabStatus", tabStatus);
+  }, [tabStatus, slotStore]);
+
   if (!user)
     return <div className="p-8 text-fg-tertiary text-sm">正在加载…</div>;
 
   /* ─────────── 渲染 ─────────── */
 
   const showTaskViewport = viewMode === "task" && polling.data;
-
-  // tab 状态（给 TabBar 显示 spinner / ✓ / ! 用）
-  const tabStatus = inferTabStatus({
-    activeJobId,
-    jobStatus: polling.data?.job.status ?? null,
-  });
-  // 把"该 tab 状态"广播到 store，让 TaskTabBar 能渲染所有 tab 的状态徽标
-  useEffect(() => {
-    // tabStatus 由 polling 推断，存到该 tab 的 slot meta 里
-    slotStore.set("_tabStatus", tabStatus);
-  }, [tabStatus, slotStore]);
 
   return (
     <AppShell
