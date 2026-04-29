@@ -695,8 +695,13 @@ function BatchPhotoTab({
     jobStatus: polling.data?.job.status ?? null,
   });
   useEffect(() => {
+    // ⚠️ slotStore 故意不放进 deps：
+    // slotStore.set 会触发 store 更新 → useSlotStore 返回新 slotStore 引用
+    // → 这个 effect 检测到 deps 变化 → 再次 set → 再次更新 → 无限循环 → 主线程卡死
+    // 我们只需在 tabStatus 真正变化时写一次，不依赖 slotStore 引用稳定
     slotStore.set("_tabStatus", tabStatus);
-  }, [tabStatus, slotStore]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabStatus]);
 
   if (!user)
     return <div className="p-8 text-fg-tertiary text-sm">正在加载…</div>;
