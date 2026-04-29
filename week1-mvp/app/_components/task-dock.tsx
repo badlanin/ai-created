@@ -9,6 +9,7 @@ import {
   ExternalLink,
   RefreshCw,
 } from "lucide-react";
+import { getThumbUrl } from "@/lib/thumb-url";
 
 /**
  * 任务看板（feature 页顶部）
@@ -87,16 +88,39 @@ export function TaskDock({
     void refresh();
   }, [refresh]);
 
-  // 进行中任务定时刷新（没有进行中就不刷）
+  // 进行中任务定时刷新（没有进行中就不刷 / 后台标签页时也不刷，省网络 + 主线程）
   useEffect(() => {
     const hasActive = jobs.some(
       (j) => j.status === "running" || j.status === "canceling",
     );
     if (!hasActive) return;
-    const t = setInterval(() => {
-      void refresh();
-    }, pollIntervalMs);
-    return () => clearInterval(t);
+
+    let t: ReturnType<typeof setInterval> | null = null;
+    function startPolling() {
+      if (t) return;
+      t = setInterval(() => {
+        void refresh();
+      }, pollIntervalMs);
+    }
+    function stopPolling() {
+      if (t) {
+        clearInterval(t);
+        t = null;
+      }
+    }
+
+    // 页面在前台才轮询
+    function handleVisibility() {
+      if (document.hidden) stopPolling();
+      else startPolling();
+    }
+
+    if (!document.hidden) startPolling();
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      stopPolling();
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
   }, [jobs, pollIntervalMs, refresh]);
 
   if (jobs.length === 0 && !loading) {
@@ -168,15 +192,16 @@ function JobPill({ job }: { job: JobBrief }) {
       style={meta.bgStyle}
       title={`点击在新窗口查看详情 · ${meta.tooltip}`}
     >
-      {/* 缩略图 */}
+      {/* 缩略图 —— 用 100px webp 缩略图，避免拉原图（节省 95% 带宽 + 防止主线程 jank）*/}
       <div className="w-12 h-12 bg-bg-tertiary flex items-center justify-center overflow-hidden rounded-l-md flex-shrink-0">
         {job.cover_image_url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={job.cover_image_url}
+            src={getThumbUrl(job.cover_image_url, 100)}
             alt=""
             className="w-full h-full object-contain"
             loading="lazy"
+            decoding="async"
           />
         ) : (
           <Icon
