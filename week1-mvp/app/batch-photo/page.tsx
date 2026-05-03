@@ -577,14 +577,22 @@ function BatchPhotoTab({
     [poses],
   );
 
-  // 🎲 随机首图：从 heroPoses 池里抽一个未选中的
+  // 🎲 随机首图：替换式——清掉之前选中的 hero，抽一个新的
+  // 避免连点几下变成"全选首图"。其它非 hero 姿势保留不动。
   function pickRandomHeroPose() {
     if (heroPoses.length === 0) return;
-    const unselected = heroPoses.filter((p) => !selectedPoseIds.has(p.id));
-    const pool = unselected.length > 0 ? unselected : heroPoses;
-    const picked = pool[Math.floor(Math.random() * pool.length)];
+    const heroIds = new Set(heroPoses.map((p) => p.id));
+    const currentHero = heroPoses.find((p) => selectedPoseIds.has(p.id));
+    // 抽一个跟当前不同的，避免重复抽到同一个；只有 1 个 hero 时只能用它
+    const candidates =
+      heroPoses.length > 1
+        ? heroPoses.filter((p) => p.id !== currentHero?.id)
+        : heroPoses;
+    const picked = candidates[Math.floor(Math.random() * candidates.length)];
     setSelectedPoseIds((prev) => {
-      const next = new Set(prev);
+      // 先去掉所有 hero pose
+      const next = new Set([...prev].filter((id) => !heroIds.has(id)));
+      // 再加上新抽到的
       next.add(picked.id);
       return next;
     });
