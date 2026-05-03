@@ -993,9 +993,7 @@ export default function RecolorPage() {
                 </div>
               </div>
               {selectedMaterials.length === 0 ? (
-                <p className="mt-2 text-[11px] text-fg-tertiary">
-                  💡 选了材质后，AI 会知道面料的光泽 / 透光 / 纹理特性，换色更自然。简单纯色款（如棉布）可不选。
-                </p>
+                <MaterialMissingHint files={files} hasGarmentAttrs={!!garmentAttrs} />
               ) : null}
             </CollapsibleSection>
 
@@ -1499,6 +1497,98 @@ function RightPanel({
 }
 
 /* ─────────── 子组件 ─────────── */
+
+/**
+ * 没选材质时的智能提示
+ *
+ * 设计目标：让用户**在跑出失败任务之前**就意识到风险。
+ * 实测过 "Lime Green velvet → Gold" 这种 case，没选材质导致模型 5 次重试
+ * 后仍然拒绝出图。velvet / satin / lace / chiffon 这类高难度面料尤其需要
+ * 明确告知模型，否则 Nano Banana 容易"做不准就不做"。
+ *
+ * 策略：
+ *   1. 默认显示一个常规黄色提醒
+ *   2. 文件名 / garment_attrs 中检测到 velvet / satin / 蕾丝 / 雪纺 等关键字
+ *      → 升级成醒目红色提醒，告诉用户"几乎一定会失败"
+ */
+function MaterialMissingHint({
+  files,
+  hasGarmentAttrs,
+}: {
+  files: File[];
+  hasGarmentAttrs: boolean;
+}) {
+  // 高风险面料关键字（模型对这些面料没材质指引时几乎必拒）
+  const HIGH_RISK_FABRICS = [
+    { kw: /velvet|天鹅绒|丝绒/i, name: "天鹅绒 / velvet" },
+    { kw: /lace|蕾丝/i, name: "蕾丝 / lace" },
+    { kw: /chiffon|雪纺/i, name: "雪纺 / chiffon" },
+    { kw: /satin|缎面|缎子/i, name: "缎面 / satin" },
+    { kw: /sequin|亮片/i, name: "亮片 / sequin" },
+    { kw: /tulle|网纱/i, name: "网纱 / tulle" },
+    { kw: /silk|真丝/i, name: "真丝 / silk" },
+  ];
+
+  // 从文件名识别面料关键字
+  const detectedFabric = (() => {
+    for (const f of files) {
+      const name = f.name;
+      for (const fab of HIGH_RISK_FABRICS) {
+        if (fab.kw.test(name)) return fab.name;
+      }
+    }
+    return null;
+  })();
+
+  if (detectedFabric) {
+    return (
+      <div
+        className="mt-3 p-3 rounded-md border text-[12px] leading-relaxed"
+        style={{
+          background: "var(--danger-bg)",
+          borderColor: "rgba(239, 68, 68, 0.4)",
+          color: "var(--danger)",
+        }}
+      >
+        <div className="font-semibold mb-1">
+          ⚠️ 检测到这是「{detectedFabric}」面料
+        </div>
+        <div className="opacity-90">
+          这类高难度面料如果不告诉 AI，**模型大概率会拒绝出图**（实测过 velvet
+          连续重试 5 次都失败）。
+          <br />
+          强烈建议<strong> 上方点 "+ 添加材质" </strong>选对应面料，或先点 ② 解析款式自动识别。
+        </div>
+      </div>
+    );
+  }
+
+  // 无 garment_attrs + 无 selected = 缺所有上下文
+  if (!hasGarmentAttrs) {
+    return (
+      <div
+        className="mt-3 p-3 rounded-md border text-[12px] leading-relaxed"
+        style={{
+          background: "var(--warn-bg)",
+          borderColor: "rgba(245, 158, 11, 0.4)",
+          color: "var(--warn)",
+        }}
+      >
+        💡 建议<strong> 先点 ② 解析款式</strong>，或<strong>手动选材质</strong>。
+        AI 知道是棉布 / 缎面 / 蕾丝 等才能正确渲染光泽和纹理；
+        反差色 / 高难度面料没材质指引时模型可能拒绝出图。
+        <span className="opacity-70 ml-1">（简单纯色款如棉布可跳过）</span>
+      </div>
+    );
+  }
+
+  // 已分析但还是没选材质（解析时没匹配到）
+  return (
+    <p className="mt-2 text-[11px] text-fg-tertiary">
+      💡 解析没匹配到材质，可手动选。简单纯色款（如棉布）可跳过。
+    </p>
+  );
+}
 
 function GarmentAttrsEditor({
   attrs,

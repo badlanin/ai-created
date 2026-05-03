@@ -5,6 +5,8 @@ import { requireAdmin } from "@/lib/auth";
 export const runtime = "nodejs";
 type Params = { params: Promise<{ id: string }> };
 
+const EXPR_COLS = "id, name, text, is_default, sort_order, created_at";
+
 export async function PATCH(req: NextRequest, { params }: Params) {
   try {
     await requireAdmin();
@@ -24,38 +26,37 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
     if (typeof body.name === "string") push("name", body.name.trim());
     if (typeof body.text === "string") push("text", body.text.trim());
-    if (typeof body.type === "string") {
-      if (!["full", "half", "closeup"].includes(body.type)) {
-        return NextResponse.json({ error: "type 非法" }, { status: 400 });
-      }
-      push("type", body.type);
-    }
-    if (typeof body.tags === "string")
-      push("tags", body.tags.trim() || null);
-    if (typeof body.notes === "string")
-      push("notes", body.notes.trim() || null);
-    if (typeof body.is_hero === "boolean" || typeof body.is_hero === "number") {
-      push("is_hero", body.is_hero ? 1 : 0);
-    }
     if (typeof body.sort_order === "number")
       push("sort_order", body.sort_order);
 
-    if (updates.length === 0) {
+    const wantDefault =
+      typeof body.is_default === "boolean" || typeof body.is_default === "number";
+
+    if (updates.length === 0 && !wantDefault) {
       return NextResponse.json({ error: "没有要更新的字段" }, { status: 400 });
     }
 
     const db = getDb();
-    const info = db
-      .prepare(`UPDATE poses SET ${updates.join(", ")} WHERE id = ?`)
-      .run(...values, id);
-    if (info.changes === 0) {
-      return NextResponse.json({ error: "姿势不存在" }, { status: 404 });
+
+    // is_default = 全局唯一，设了就清其它
+    if (wantDefault && body.is_default) {
+      db.prepare(`UPDATE expressions SET is_default = 0`).run();
+      push("is_default", 1);
+    } else if (wantDefault && !body.is_default) {
+      push("is_default", 0);
+    }
+
+    if (updates.length > 0) {
+      const info = db
+        .prepare(`UPDATE expressions SET ${updates.join(", ")} WHERE id = ?`)
+        .run(...values, id);
+      if (info.changes === 0) {
+        return NextResponse.json({ error: "表情不存在" }, { status: 404 });
+      }
     }
 
     const row = db
-      .prepare(
-        "SELECT id, name, text, type, tags, notes, is_hero, sort_order, created_at FROM poses WHERE id = ?",
-      )
+      .prepare(`SELECT ${EXPR_COLS} FROM expressions WHERE id = ?`)
       .get(id);
     return NextResponse.json(row);
   } catch (e) {
@@ -76,9 +77,9 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
       return NextResponse.json({ error: "id 不合法" }, { status: 400 });
     }
     const db = getDb();
-    const info = db.prepare("DELETE FROM poses WHERE id = ?").run(id);
+    const info = db.prepare("DELETE FROM expressions WHERE id = ?").run(id);
     if (info.changes === 0) {
-      return NextResponse.json({ error: "姿势不存在" }, { status: 404 });
+      return NextResponse.json({ error: "表情不存在" }, { status: 404 });
     }
     return NextResponse.json({ ok: true });
   } catch (e) {

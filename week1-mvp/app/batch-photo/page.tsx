@@ -82,6 +82,14 @@ type Pose = {
   text: string;
   type: PoseType;
   tags: string | null;
+  is_hero: number;
+};
+
+type Expression = {
+  id: number;
+  name: string;
+  text: string;
+  is_default: number;
 };
 type GarmentAttrs = Record<string, string | string[]>;
 
@@ -189,6 +197,8 @@ function BatchPhotoTab({
   const [photoParams, setPhotoParams] = useState<Photography[]>([]);
   const [realisms, setRealisms] = useState<Realism[]>([]);
   const [poses, setPoses] = useState<Pose[]>([]);
+  const [expressions, setExpressions] = useState<Expression[]>([]);
+  const [expressionId, setExpressionId] = useState<number | null>(null);
   const [aiModels, setAiModels] = useState<AiModel[]>([]);
   const [allMaterials, setAllMaterials] = useState<Material[]>([]);
 
@@ -241,9 +251,10 @@ function BatchPhotoTab({
       load("/api/poses"),
       load("/api/ai-models?category=image_gen"),
       load("/api/materials"),
+      load("/api/expressions"),
     ])
       .then(
-        ([ids, scs, tpls, photo, real, pos, models, mats]: [
+        ([ids, scs, tpls, photo, real, pos, models, mats, exprs]: [
           Identity[],
           Scene[],
           PromptTemplate[],
@@ -252,6 +263,7 @@ function BatchPhotoTab({
           Pose[],
           AiModel[],
           Material[],
+          Expression[],
         ]) => {
           setIdentities(ids);
           setScenes(scs);
@@ -261,6 +273,12 @@ function BatchPhotoTab({
           setPoses(pos);
           setAiModels(models);
           setAllMaterials(mats);
+          setExpressions(exprs);
+          // 默认表情：is_default=1，否则第一个
+          const savedExpr = slotStore.get<number>("expressionId");
+          const defExpr =
+            exprs.find((e) => e.is_default === 1)?.id || exprs[0]?.id;
+          setExpressionId(savedExpr ?? defExpr ?? null);
 
           const savedTpl = slotStore.get<number>("templateId");
           if (savedTpl && tpls.find((t) => t.id === savedTpl)) {
@@ -317,6 +335,7 @@ function BatchPhotoTab({
       templateId,
       photographyId,
       realismId,
+      expressionId,
       modelId,
       aspectRatio,
       qualityLevel,
@@ -332,6 +351,7 @@ function BatchPhotoTab({
     templateId,
     photographyId,
     realismId,
+    expressionId,
     modelId,
     aspectRatio,
     qualityLevel,
@@ -543,9 +563,32 @@ function BatchPhotoTab({
 
   const posesByType = useMemo(() => {
     const map: Record<PoseType, Pose[]> = { full: [], half: [], closeup: [] };
-    for (const p of poses) map[p.type].push(p);
+    for (const p of poses) {
+      // 首图（hero）单独分组（在下面 heroPoses 中），不再混进 full
+      if (p.is_hero === 1) continue;
+      map[p.type].push(p);
+    }
     return map;
   }, [poses]);
+
+  // 首图（hero）专用姿势单独成组
+  const heroPoses = useMemo(
+    () => poses.filter((p) => p.is_hero === 1),
+    [poses],
+  );
+
+  // 🎲 随机首图：从 heroPoses 池里抽一个未选中的
+  function pickRandomHeroPose() {
+    if (heroPoses.length === 0) return;
+    const unselected = heroPoses.filter((p) => !selectedPoseIds.has(p.id));
+    const pool = unselected.length > 0 ? unselected : heroPoses;
+    const picked = pool[Math.floor(Math.random() * pool.length)];
+    setSelectedPoseIds((prev) => {
+      const next = new Set(prev);
+      next.add(picked.id);
+      return next;
+    });
+  }
 
   // 模特按 category 分组（保持稳定排序）
   const identityGroups = useMemo(() => {
@@ -629,6 +672,7 @@ function BatchPhotoTab({
       fd.append("template_id", String(templateId));
       if (photographyId) fd.append("photography_id", String(photographyId));
       if (realismId) fd.append("realism_id", String(realismId));
+      if (expressionId) fd.append("expression_id", String(expressionId));
       fd.append("pose_ids", JSON.stringify(Array.from(selectedPoseIds)));
       if (selectedMaterialIds.length > 0) {
         fd.append("material_ids", JSON.stringify(selectedMaterialIds));
@@ -1035,6 +1079,59 @@ function BatchPhotoTab({
                 <EmptyHint href="/admin/poses" label="去添加姿势" />
               ) : (
                 <div className="space-y-2">
+                  {/* 首图（hero）专用分组 - 单独排在最前 */}
+                  {heroPoses.length > 0 && (
+                    <CollapsibleSection
+                      variant="minimal"
+                      title="🌟 首图"
+                      badge={(() => {
+                        const sel = heroPoses.filter((p) =>
+                          selectedPoseIds.has(p.id),
+                        ).length;
+                        return sel > 0
+                          ? `${sel}/${heroPoses.length}`
+                          : heroPoses.length;
+                      })()}
+                      defaultOpen
+                    >
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        {heroPoses.map((p) => {
+                          const active = selectedPoseIds.has(p.id);
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => togglePose(p.id)}
+                              title={p.text}
+                              className={`px-3 py-1.5 rounded-md border text-[12px] transition-colors ${
+                                active
+                                  ? "border-transparent text-brand-400 font-medium"
+                                  : "border-border-default text-fg-secondary hover:border-border-strong hover:text-fg-primary"
+                              }`}
+                              style={
+                                active
+                                  ? {
+                                      background: "var(--brand-50-bg)",
+                                      borderColor: "rgba(59, 130, 246, 0.4)",
+                                    }
+                                  : undefined
+                              }
+                            >
+                              {p.name}
+                            </button>
+                          );
+                        })}
+                        <button
+                          type="button"
+                          onClick={pickRandomHeroPose}
+                          title="从首图池里随机选一个"
+                          className="px-3 py-1.5 rounded-md border border-amber-300 text-amber-700 text-[12px] hover:bg-amber-50"
+                        >
+                          🎲 随机首图
+                        </button>
+                      </div>
+                    </CollapsibleSection>
+                  )}
                   {(["full", "half", "closeup"] as PoseType[]).map((type) => {
                     const list = posesByType[type];
                     if (list.length === 0) return null;
@@ -1135,6 +1232,21 @@ function BatchPhotoTab({
                   selectedId={realismId}
                   onChange={setRealismId}
                   emptyHint={{ href: "/admin/realism", label: "真实感为空" }}
+                />
+                <ChoiceGroup
+                  label="面部表情"
+                  items={expressions.map((e) => ({
+                    id: e.id,
+                    label: e.name,
+                    desc: e.text,
+                    isDefault: e.is_default === 1,
+                  }))}
+                  selectedId={expressionId}
+                  onChange={setExpressionId}
+                  emptyHint={{
+                    href: "/admin/expressions",
+                    label: "表情库为空",
+                  }}
                 />
               </div>
             </CollapsibleSection>

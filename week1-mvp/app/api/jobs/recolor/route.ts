@@ -440,15 +440,25 @@ async function recolorItemHandler(
         ? "1K"
         : "2K";
 
-  const gen = await retryWithBackoff(
-    () =>
-      generateImage(reordered, prompt, ctx.job.model, {
-        aspectRatio: p.aspect_ratio ?? undefined,
-        imageSize,
-        seed: p.batch_seed,           // 整批共享同一 seed → 一致性
-        temperature: 0.05,            // 极低温：最大化确定性，减少颜色漂移
-      }),
-    {
+  // ─── 主模型 5 次重试 + 兜底切换到 Pro Image ───
+  // 现象：Nano Banana Flash 对某些图 + 颜色组合（如绿色 velvet → Gold）会持续拒绝出图，
+  //       5 次重试全失败。Pro Image 在这些 case 上成功率高得多。
+  // 策略：主模型 5 次都失败时，自动切到 Pro Image 跑 1 次（成本贵 5-10 倍，但只对兜底 case 触发）
+  const PRIMARY_MODEL = ctx.job.model;
+  const FALLBACK_MODEL = "gemini-3-pro-image-preview";
+
+  const callGen = (model: string) =>
+    generateImage(reordered, prompt, model, {
+      aspectRatio: p.aspect_ratio ?? undefined,
+      imageSize,
+      seed: p.batch_seed, // 整批共享同一 seed → 一致性
+      temperature: 0.05, // 极低温：最大化确定性，减少颜色漂移
+    });
+
+  let gen;
+  let usedFallback = false;
+  try {
+    gen = await retryWithBackoff(() => callGen(PRIMARY_MODEL), {
       onRetry: (e, attempt, delay) => {
         console.warn(
           `[recolor retry] job=${ctx.job.id} idx=${ctx.item.idx} color=${itemMeta.colorName} attempt=${attempt} delay=${Math.round(delay)}ms: ${
@@ -456,8 +466,27 @@ async function recolorItemHandler(
           }`,
         );
       },
-    },
-  );
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // 仅对"模型主动拒绝出图"这种确定性失败才切兜底；
+    // 网络 / 配额错误不切（兜底也会一样失败）
+    const isModelRefusal =
+      /没返回图片|no image|no candidate|empty response|SAFETY|blocked/i.test(
+        msg,
+      );
+    if (!isModelRefusal || PRIMARY_MODEL === FALLBACK_MODEL) {
+      throw e;
+    }
+    console.warn(
+      `[recolor fallback] job=${ctx.job.id} idx=${ctx.item.idx} color=${itemMeta.colorName} 主模型 5 次拒了，切到 ${FALLBACK_MODEL} 再试一次`,
+    );
+    gen = await callGen(FALLBACK_MODEL);
+    usedFallback = true;
+    console.log(
+      `[recolor fallback OK] job=${ctx.job.id} idx=${ctx.item.idx} color=${itemMeta.colorName} 兜底成功`,
+    );
+  }
 
   // ─── 后处理色彩校正：已禁用 ───
   // 用户实测自动校正会污染背景 / 肤色 / 整体亮度，副作用 > 收益。
@@ -484,9 +513,11 @@ async function recolorItemHandler(
   await fs.writeFile(rawFilePath, gen.data);
   await fs.writeFile(correctedFilePath, gen.data);
 
+  // 计费用实际跑出图的那个 model（fallback 时是 Pro Image，不是 job 表里的 Flash）
+  const actualModel = usedFallback ? FALLBACK_MODEL : PRIMARY_MODEL;
   recordUsage({
     userId: ctx.userId,
-    model: ctx.job.model,
+    model: actualModel,
     feature: "recolor",
     usageMetadata: gen.usageMetadata,
     success: true,
@@ -498,6 +529,7 @@ async function recolorItemHandler(
       aspect_ratio: p.aspect_ratio,
       quality_level: p.quality_level,
       image_size: imageSize,
+      ...(usedFallback ? { fallback_from: PRIMARY_MODEL } : {}),
     },
   });
 

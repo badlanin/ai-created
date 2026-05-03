@@ -119,18 +119,39 @@ function migrate(db: Database.Database) {
     -- ==========================================
     -- M2: 姿势库（纯文字）
     -- ==========================================
+    -- is_hero=1 表示这是"首图（hero）"专用姿势——参考竞品 Azazie 的灵动正面构图，
+    -- 用于产品列表第一张展示。批量摄影 UI 会单独把它们分一组并提供"🎲 随机首图"按钮。
+    -- 姿势文本只描述身体动作，面部表情走 expressions 表，互不干涉。
     CREATE TABLE IF NOT EXISTS poses (
       id         INTEGER PRIMARY KEY AUTOINCREMENT,
       name       TEXT NOT NULL,               -- 如 "站立正面"
-      text       TEXT NOT NULL,               -- 完整描述，会注入 prompt
+      text       TEXT NOT NULL,               -- 完整描述，会注入 prompt（仅描述身体，不带表情）
       type       TEXT NOT NULL DEFAULT 'full', -- 'full'(全身)|'half'(半身)|'closeup'(特写)
       tags       TEXT,                         -- 逗号分隔
       notes      TEXT,
+      is_hero    INTEGER NOT NULL DEFAULT 0,  -- 1 = 首图（hero）专用
       sort_order INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       created_by INTEGER REFERENCES users(id)
     );
     CREATE INDEX IF NOT EXISTS idx_poses_type ON poses(type, sort_order);
+    CREATE INDEX IF NOT EXISTS idx_poses_hero ON poses(is_hero, sort_order);
+
+    -- ==========================================
+    -- 表情维度（独立于姿势的全局单选）
+    -- ==========================================
+    -- 设计：批量摄影时所有姿势共用同一个表情，注入 prompt 的 {{expression}} 占位符。
+    -- 表情文本只描述脸部，姿势文本只描述身体——分离不冲突。
+    CREATE TABLE IF NOT EXISTS expressions (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      name       TEXT NOT NULL,               -- 如 "温柔微笑"
+      text       TEXT NOT NULL,               -- 仅描述脸（嘴角/眼神/气质），不要带身体动作
+      is_default INTEGER NOT NULL DEFAULT 0,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      created_by INTEGER REFERENCES users(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_expressions_sort ON expressions(sort_order);
 
     -- ==========================================
     -- M2: 摄影参数库（视觉风格预设）
@@ -339,11 +360,14 @@ function migrate(db: Database.Database) {
   // 换色任务的"原始模型输出"路径 + 校正元信息（给手动滑块校色用）
   ensureColumn(db, "render_job_items", "raw_image_path", "TEXT");
   ensureColumn(db, "render_job_items", "correction_meta", "TEXT");
+  // 姿势 hero 标记（首图专用），老库补列
+  ensureColumn(db, "poses", "is_hero", "INTEGER NOT NULL DEFAULT 0");
   // 新增索引
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_models_category ON models(kind, category, sort_order);
     CREATE INDEX IF NOT EXISTS idx_colors_group ON colors(color_group, sort_order);
     CREATE INDEX IF NOT EXISTS idx_scenes_category ON scenes(category, sort_order);
+    CREATE INDEX IF NOT EXISTS idx_poses_hero ON poses(is_hero, sort_order);
   `);
 
   // 启动时恢复：把被进程重启打断的 item 标为 failed
@@ -351,8 +375,16 @@ function migrate(db: Database.Database) {
 
   seedAiModels(db);
   seedPoses(db);
+  // 老库的"首图"姿势补种 + 旧 pose 文本里残留的表情/眼神词清洗
+  // 注意：seedPoses 自带 "if exists return" 的早退，所以下面这两个迁移
+  // 必须独立运行才能照顾到已部署的库
+  migrateInsertHeroPoses(db);
+  migratePoseExpressionsRemoval(db);
+  seedExpressions(db);
   seedPhotographyParams(db);
   seedPromptTemplates(db);
+  // 把 {{expression}} 占位符注入"标准模特穿着图"模板（老库幂等）
+  migratePromptTemplateExpression(db);
   seedRealismPresets(db);
   seedMaterials(db);
   seedModelPrices(db);
@@ -529,19 +561,62 @@ function seedPoses(db: Database.Database) {
     text: string;
     type: "full" | "half" | "closeup";
     tags: string;
+    is_hero?: 0 | 1;
     sort_order: number;
   }> = [
-    // --- 全身 ---
+    // --- 首图（hero）：参考竞品 Azazie 的灵动正面构图，仅描述身体动作 ---
+    {
+      name: "首图 · 自然站姿",
+      text: "模特正对镜头，重心微落在右腿，左腿自然前迈半步形成对立平衡（contrapposto）。左手轻搭在裙摆侧面指尖微弯，右臂自然垂下。微微抬下巴。",
+      type: "full",
+      tags: "首图,正面,灵动",
+      is_hero: 1,
+      sort_order: 1,
+    },
+    {
+      name: "首图 · 一脚前迈轻扶裙",
+      text: "模特正对镜头，左脚向前轻迈半步，重心在后腿。左手轻提裙摆侧面让层次展开，右手自然垂下指尖微弯。头微侧。",
+      type: "full",
+      tags: "首图,正面,扶裙",
+      is_hero: 1,
+      sort_order: 2,
+    },
+    {
+      name: "首图 · 半侧身露肩",
+      text: "模特身体 30 度侧对镜头，重心放在后腿，前腿自然点地。近镜头肩膀微微下沉，远端肩微抬，凸显锁骨颈部线条。头部回正，一手自然下垂，一手轻搭腰部。",
+      type: "full",
+      tags: "首图,侧身,肩颈",
+      is_hero: 1,
+      sort_order: 3,
+    },
+    {
+      name: "首图 · 抚发瞬间",
+      text: "模特正对镜头，重心微落在一腿。一手抬起指尖轻拨耳后头发，营造抓拍的瞬间感，另一手垂在身侧。面部正对镜头。",
+      type: "full",
+      tags: "首图,抓拍,抚发",
+      is_hero: 1,
+      sort_order: 4,
+    },
+    {
+      name: "首图 · 欲走未走",
+      text: "模特正面，身体正直但有\"走来\"的微动态——一脚刚踏地，另一脚趾点地准备前迈，裙摆在脚踝处有轻微飘动感。双手前后自然摆动呈走动节奏。",
+      type: "full",
+      tags: "首图,动态,走来",
+      is_hero: 1,
+      sort_order: 5,
+    },
+
+    // --- 全身（已清洗：去掉内嵌的表情/眼神词，只描述身体）---
     {
       name: "站立正面",
-      text: "模特正对镜头直立，双脚与肩同宽，双手自然下垂，表情自然平静",
+      text: "模特正对镜头直立，双脚与肩同宽，双手自然下垂",
       type: "full",
       tags: "正面,直立,经典",
       sort_order: 10,
     },
     {
       name: "站立 45 度侧身",
-      text: "模特 45 度侧身对镜头，身体微微倾斜，展示服装的侧面轮廓，目光看向镜头",
+      text: "模特 45 度侧身对镜头，身体微微倾斜，展示服装的侧面轮廓",
       type: "full",
       tags: "侧身,轮廓",
       sort_order: 20,
@@ -555,14 +630,14 @@ function seedPoses(db: Database.Database) {
     },
     {
       name: "走动瞬间",
-      text: "模特自然向前走动，一条腿微微抬起向前迈步，长发和裙摆随动作轻轻飘动，表情自然",
+      text: "模特自然向前走动，一条腿微微抬起向前迈步，长发和裙摆随动作轻轻飘动",
       type: "full",
       tags: "动态,走动,飘逸",
       sort_order: 40,
     },
     {
       name: "回眸",
-      text: "模特背对镜头站立，上半身回身，透过肩膀向后看向镜头，嘴角浅笑",
+      text: "模特背对镜头站立，上半身回身，透过肩膀向后看向镜头",
       type: "full",
       tags: "回眸,背影,优雅",
       sort_order: 50,
@@ -581,10 +656,10 @@ function seedPoses(db: Database.Database) {
       tags: "低头,裙摆,仪式感",
       sort_order: 70,
     },
-    // --- 半身 ---
+    // --- 半身（已清洗）---
     {
       name: "胸部以上正面",
-      text: "半身构图，模特正面胸部以上入镜，展示领口、面部和发型，表情温柔",
+      text: "半身构图，模特正面胸部以上入镜，展示领口、面部和发型",
       type: "half",
       tags: "半身,正面,领口",
       sort_order: 110,
@@ -649,13 +724,245 @@ function seedPoses(db: Database.Database) {
   ];
 
   const stmt = db.prepare(
-    `INSERT INTO poses (name, text, type, tags, sort_order)
-     VALUES (@name, @text, @type, @tags, @sort_order)`,
+    `INSERT INTO poses (name, text, type, tags, is_hero, sort_order)
+     VALUES (@name, @text, @type, @tags, @is_hero, @sort_order)`,
   );
   const tx = db.transaction(() => {
-    for (const p of poses) stmt.run(p);
+    for (const p of poses) stmt.run({ is_hero: 0, ...p });
   });
   tx();
+}
+
+/**
+ * 老库补种：5 条 hero 姿势（首图专用）
+ *
+ * seedPoses 自带 "if exists return" 早退，所以已有数据的库不会得到这 5 条新姿势。
+ * 这里按 name 幂等插入，跑多次不会重复。
+ */
+function migrateInsertHeroPoses(db: Database.Database) {
+  const heroes: Array<{
+    name: string;
+    text: string;
+    type: "full";
+    tags: string;
+    sort_order: number;
+  }> = [
+    {
+      name: "首图 · 自然站姿",
+      text: "模特正对镜头，重心微落在右腿，左腿自然前迈半步形成对立平衡（contrapposto）。左手轻搭在裙摆侧面指尖微弯，右臂自然垂下。微微抬下巴。",
+      type: "full",
+      tags: "首图,正面,灵动",
+      sort_order: 1,
+    },
+    {
+      name: "首图 · 一脚前迈轻扶裙",
+      text: "模特正对镜头，左脚向前轻迈半步，重心在后腿。左手轻提裙摆侧面让层次展开，右手自然垂下指尖微弯。头微侧。",
+      type: "full",
+      tags: "首图,正面,扶裙",
+      sort_order: 2,
+    },
+    {
+      name: "首图 · 半侧身露肩",
+      text: "模特身体 30 度侧对镜头，重心放在后腿，前腿自然点地。近镜头肩膀微微下沉，远端肩微抬，凸显锁骨颈部线条。头部回正，一手自然下垂，一手轻搭腰部。",
+      type: "full",
+      tags: "首图,侧身,肩颈",
+      sort_order: 3,
+    },
+    {
+      name: "首图 · 抚发瞬间",
+      text: "模特正对镜头，重心微落在一腿。一手抬起指尖轻拨耳后头发，营造抓拍的瞬间感，另一手垂在身侧。面部正对镜头。",
+      type: "full",
+      tags: "首图,抓拍,抚发",
+      sort_order: 4,
+    },
+    {
+      name: "首图 · 欲走未走",
+      text: '模特正面，身体正直但有"走来"的微动态——一脚刚踏地，另一脚趾点地准备前迈，裙摆在脚踝处有轻微飘动感。双手前后自然摆动呈走动节奏。',
+      type: "full",
+      tags: "首图,动态,走来",
+      sort_order: 5,
+    },
+  ];
+
+  // 按 name 检查存在性，不存在才插入；命中就忽略，不强行覆盖管理员可能的修改
+  const findStmt = db.prepare(`SELECT id FROM poses WHERE name = ?`);
+  const insertStmt = db.prepare(
+    `INSERT INTO poses (name, text, type, tags, is_hero, sort_order)
+     VALUES (@name, @text, @type, @tags, 1, @sort_order)`,
+  );
+  let inserted = 0;
+  const tx = db.transaction(() => {
+    for (const h of heroes) {
+      if (!findStmt.get(h.name)) {
+        insertStmt.run(h);
+        inserted += 1;
+      }
+    }
+  });
+  tx();
+  if (inserted > 0) {
+    console.log(`[db] migrateInsertHeroPoses: 补种 ${inserted} 条 hero 姿势`);
+  }
+}
+
+/**
+ * 老库迁移：把 5 个旧 pose 文本里残留的"表情/眼神"词清洗掉
+ *
+ * 表情现在走 expressions 表全局单选，姿势文本里不应再嵌入表情/眼神描述。
+ * 用 name + 旧片段精确匹配做幂等更新——跑多次没事，已经清洗过的库不会被改回去。
+ */
+function migratePoseExpressionsRemoval(db: Database.Database) {
+  const updates: Array<{
+    name: string;
+    oldFragment: string;
+    newText: string;
+  }> = [
+    {
+      name: "站立正面",
+      oldFragment: "，表情自然平静",
+      newText: "模特正对镜头直立，双脚与肩同宽，双手自然下垂",
+    },
+    {
+      name: "站立 45 度侧身",
+      oldFragment: "，目光看向镜头",
+      newText:
+        "模特 45 度侧身对镜头，身体微微倾斜，展示服装的侧面轮廓",
+    },
+    {
+      name: "走动瞬间",
+      oldFragment: "，表情自然",
+      newText:
+        "模特自然向前走动，一条腿微微抬起向前迈步，长发和裙摆随动作轻轻飘动",
+    },
+    {
+      name: "回眸",
+      oldFragment: "，嘴角浅笑",
+      newText: "模特背对镜头站立，上半身回身，透过肩膀向后看向镜头",
+    },
+    {
+      name: "胸部以上正面",
+      oldFragment: "，表情温柔",
+      newText: "半身构图，模特正面胸部以上入镜，展示领口、面部和发型",
+    },
+  ];
+
+  const stmt = db.prepare(
+    `UPDATE poses SET text = ? WHERE name = ? AND text LIKE ?`,
+  );
+  let changed = 0;
+  const tx = db.transaction(() => {
+    for (const u of updates) {
+      const info = stmt.run(u.newText, u.name, `%${u.oldFragment}%`);
+      changed += info.changes;
+    }
+  });
+  tx();
+  if (changed > 0) {
+    console.log(
+      `[db] migratePoseExpressionsRemoval: 清洗 ${changed} 条 pose 文本`,
+    );
+  }
+}
+
+/**
+ * 种子表情库（6 条预设，温柔微笑为默认）
+ * 仅在 expressions 表为空时插入，不覆盖管理员后续修改
+ */
+function seedExpressions(db: Database.Database) {
+  const exists = db.prepare(`SELECT COUNT(*) AS c FROM expressions`).get() as {
+    c: number;
+  };
+  if (exists.c > 0) return;
+
+  const presets: Array<{
+    name: string;
+    text: string;
+    is_default: 0 | 1;
+    sort_order: number;
+  }> = [
+    {
+      name: "自然平静",
+      text: "嘴角放松微抿，眼神平和直视镜头，无明显笑意，气质沉静",
+      is_default: 0,
+      sort_order: 10,
+    },
+    {
+      name: "温柔微笑",
+      text: "嘴角自然上扬呈柔和弧度，眼角带轻微笑意，整体温柔亲和",
+      is_default: 1,
+      sort_order: 20,
+    },
+    {
+      name: "自信凝视",
+      text: "下巴微抬，眼神坚定锁定镜头，嘴线略紧，传递自信气场",
+      is_default: 0,
+      sort_order: 30,
+    },
+    {
+      name: "灿烂笑容",
+      text: "牙齿轻露，眼睛弯成月牙，眉眼舒展，传递明朗喜悦",
+      is_default: 0,
+      sort_order: 40,
+    },
+    {
+      name: "远眺侧目",
+      text: "目光看向镜头侧前方约 15 度，嘴唇放松微抿，营造故事感和距离感",
+      is_default: 0,
+      sort_order: 50,
+    },
+    {
+      name: "静谧专注",
+      text: "眼睑微垂或半闭，沉浸于自身世界，嘴线放松，传递宁静专注",
+      is_default: 0,
+      sort_order: 60,
+    },
+  ];
+
+  const stmt = db.prepare(
+    `INSERT INTO expressions (name, text, is_default, sort_order)
+     VALUES (@name, @text, @is_default, @sort_order)`,
+  );
+  const tx = db.transaction(() => {
+    for (const e of presets) stmt.run(e);
+  });
+  tx();
+  console.log(`[db] seedExpressions: 写入 ${presets.length} 条表情预设`);
+}
+
+/**
+ * 老库迁移：在"标准模特穿着图"模板里注入 {{expression}} 占位符
+ *
+ * seedPromptTemplates 早退保护已存在的库，所以新增/修改占位符要走这里。
+ * 幂等：只在模板还没有 {{expression}} 时改一次。
+ */
+function migratePromptTemplateExpression(db: Database.Database) {
+  const row = db
+    .prepare(
+      `SELECT id, template FROM prompt_templates WHERE kind = 'on_model' AND name = ?`,
+    )
+    .get("标准模特穿着图") as { id: number; template: string } | undefined;
+  if (!row) return;
+  if (row.template.includes("{{expression}}")) return;
+
+  // 旧模板里 {{pose}} 后紧跟空行 + {{photography_params}}，
+  // 把"面部表情"小节插入这两段中间——只描述脸，跟身体姿势不冲突。
+  const before = "{{pose}}\n\n{{photography_params}}";
+  const after =
+    "{{pose}}\n\n【面部表情 / Expression（适用于所有姿势）】\n{{expression}}\n\n{{photography_params}}";
+  if (!row.template.includes(before)) {
+    console.warn(
+      `[db] migratePromptTemplateExpression: 未找到预期的 {{pose}}/{{photography_params}} 锚点，跳过 (id=${row.id})`,
+    );
+    return;
+  }
+  const updated = row.template.replace(before, after);
+  db.prepare(`UPDATE prompt_templates SET template = ? WHERE id = ?`).run(
+    updated,
+    row.id,
+  );
+  console.log(
+    `[db] migratePromptTemplateExpression: 已为模板 #${row.id} 注入 {{expression}}`,
+  );
 }
 
 /**
@@ -826,6 +1133,9 @@ function seedPromptTemplates(db: Database.Database) {
 让参考图 3 里的这位模特，穿着参考图 1-2 里的服装，在参考图 4 的背景中，按以下姿势拍摄 {{n}} 张图，每张对应一个姿势：
 
 {{pose}}
+
+【面部表情 / Expression（适用于所有姿势）】
+{{expression}}
 
 {{photography_params}}
 
@@ -1266,41 +1576,14 @@ function seedMaterials(db: Database.Database) {
       visual_traits:
         "表面平整、可见规整的经纬线编织纹理、硬挺有结构感、哑光",
       light_behavior: "漫反射为主，无强反光；自然的光影过渡",
-      texture_rules: "经纬线纹理规整清晰，表面平整",
-      dont_confuse_with: "不要画成针织的弹性线圈结构；不要画得有光泽感",
+      texture_rules: "近距离可见经纬纹路；不要画得过于光滑或液态",
+      dont_confuse_with: "不要画成缎面（无强反光）；不要画成针织（无线圈结构）",
       sort_order: 100,
-    },
-    {
-      name: "针织",
-      english_name: "knit",
-      aliases: "针织,knit,knitted,jersey",
-      description: "线圈编织结构的面料，有弹性",
-      visual_traits:
-        "表面可见线圈结构（stitches）、凹凸立体感、有自然弹性、垂顺贴身、温暖感",
-      light_behavior: "漫反射；线圈结构产生细密的规律性光影图案",
-      texture_rules: "可见线圈的凹凸感；表面有肌理颗粒感",
-      dont_confuse_with: "不要画成平滑的梭织（必须有立体线圈）；不要画得像粗糙毛衣",
-      sort_order: 110,
-    },
-    {
-      name: "亮片",
-      english_name: "sequin",
-      aliases: "亮片,sequin,sequined,glitter",
-      description: "缀满亮片的装饰面料",
-      visual_traits:
-        "缀满反光亮片（细碎或整片覆盖）、闪烁感强、每个亮片独立反光、奢华晚礼服感",
-      light_behavior:
-        "每个亮片独立镜面反光；角度不同呈现闪烁变化；在光源下形成大量高光点",
-      texture_rules: "亮片大小应符合实际（不要大到不合比例）；排列可规整或随机",
-      dont_confuse_with:
-        "不要画成连续的光泽面料（必须是离散的亮片）；不要过度夸张失真",
-      sort_order: 120,
     },
   ];
 
   const stmt = db.prepare(
-    `INSERT INTO materials
-       (name, english_name, aliases, description, visual_traits, light_behavior, texture_rules, dont_confuse_with, sort_order)
+    `INSERT INTO materials (name, english_name, aliases, description, visual_traits, light_behavior, texture_rules, dont_confuse_with, sort_order)
      VALUES (@name, @english_name, @aliases, @description, @visual_traits, @light_behavior, @texture_rules, @dont_confuse_with, @sort_order)`,
   );
   const tx = db.transaction(() => {
@@ -1310,8 +1593,7 @@ function seedMaterials(db: Database.Database) {
 }
 
 /**
- * 种子模型单价（Google 标准档位）
- * 数据来源：2026-04 官方 + 用户实测的 token 计数反算
+ * 模型单价种子（首次启动 INSERT OR IGNORE，不覆盖管理员后续在管理页的修改）
  */
 function seedModelPrices(db: Database.Database) {
   const prices: Array<{
@@ -1321,11 +1603,11 @@ function seedModelPrices(db: Database.Database) {
     tier: string;
     notes: string;
   }> = [
-    // 纯文本模型（Vision 解析用）
+    // 文本/视觉模型
     {
       model_id: "gemini-2.5-flash",
-      input_per_1m_usd: 0.15,
-      output_per_1m_usd: 0.6,
+      input_per_1m_usd: 0.3,
+      output_per_1m_usd: 2.5,
       tier: "standard",
       notes: "Gemini 2.5 Flash 视觉解析首选（便宜快）",
     },
@@ -1343,8 +1625,7 @@ function seedModelPrices(db: Database.Database) {
       tier: "standard",
       notes: "Gemini 3 Pro 文本预览版",
     },
-
-    // 图像生成模型（图片输出按 token 计，费率高）
+    // 图像生成
     {
       model_id: "gemini-3-pro-image-preview",
       input_per_1m_usd: 2.0,
@@ -1389,7 +1670,7 @@ function seedModelPrices(db: Database.Database) {
 }
 
 /**
- * 种子全局配置
+ * 全局配置种子（INSERT OR IGNORE，已存在不覆盖）
  */
 function seedSettings(db: Database.Database) {
   const settings: Array<{ key: string; value: string; notes: string }> = [
@@ -1420,7 +1701,7 @@ function seedSettings(db: Database.Database) {
       key: "image_concurrency",
       value: "1",
       notes:
-        "单个 job 内并发执行的 item 数量。Vertex 默认 1（串行，最安全）；Gemini API 推荐 4-5（用满 RPM）。受 RPM 上限节流，并发再大也不会超 RPM。",
+        "单个 job 内并发执行的 item 数量。Vertex 默认 1（串行最稳）；Gemini API 推荐 4-5（用满 RPM）。受 RPM 上限节流，并发再大也不会超 RPM。",
     },
     {
       key: "ai_provider",
@@ -1432,7 +1713,7 @@ function seedSettings(db: Database.Database) {
       key: "gemini_api_key",
       value: "",
       notes:
-        "Gemini API key（仅 ai_provider=gemini_api 时使用）。从 https://aistudio.google.com/app/apikey 创建。注意：填了相当于 secret，请勿泄漏到 git。",
+        "Gemini API key（仅 ai_provider=gemini_api 时使用）。从 https://aistudio.google.com/app/apikey 创建。",
     },
   ];
 
@@ -1474,16 +1755,12 @@ interface SeedSceneEntry {
   file: string;
   name: string;
   tags?: string;
-  /** 场景分类 key，对应 SCENE_CATEGORY_LABELS（wedding / outdoor / studio / street / indoor / garden） */
-  category?: string;
   sort_order: number;
 }
 
 /**
- * 种子色卡（50 个，按色系分组）
- *
- * 数据来源：seed-assets/colors.json（由 预设/色卡.xlsx 编译）
- * 仅在 colors 表为空时执行，不会覆盖管理员后续添加的颜色
+ * 种子色卡（来自 seed-assets/colors.json）
+ * 仅在 colors 表为空时执行
  */
 function seedColors(db: Database.Database) {
   const exists = db.prepare(`SELECT COUNT(*) AS c FROM colors`).get() as {
@@ -1493,7 +1770,6 @@ function seedColors(db: Database.Database) {
 
   let colors: SeedColorEntry[];
   try {
-    // 延迟 import 避免在没有 seed-assets 时影响其他 seed
     const seedAssets = require("./seed-assets") as typeof import("./seed-assets");
     if (!seedAssets.hasSeedAssets()) {
       console.log("[db] seed-assets/ not found, 跳过 seedColors");
@@ -1526,12 +1802,7 @@ function seedColors(db: Database.Database) {
 
 /**
  * 种子模特图（来自 seed-assets/identities/）
- *
- * 步骤：
- *   1. 表为空才跑
- *   2. 读 manifest.json
- *   3. 把每张图从 seed-assets/ 复制到 data/uploads/identities/
- *   4. INSERT 一行 models（kind='identity'）
+ * 仅在 identity 表为空时执行
  */
 function seedIdentitiesFromAssets(db: Database.Database) {
   const exists = db
@@ -1556,7 +1827,6 @@ function seedIdentitiesFromAssets(db: Database.Database) {
     return;
   }
 
-  // 1) 先把图复制好，记下每条对应的 image_path
   const prepared: Array<SeedIdentityEntry & { image_path: string }> = [];
   for (const e of entries) {
     try {
@@ -1567,7 +1837,6 @@ function seedIdentitiesFromAssets(db: Database.Database) {
     }
   }
 
-  // 2) 一次性写库
   const stmt = db.prepare(
     `INSERT INTO models (kind, name, image_path, tags, category, sort_order)
      VALUES ('identity', @name, @image_path, @tags, @category, @sort_order)`,
@@ -1591,6 +1860,7 @@ function seedIdentitiesFromAssets(db: Database.Database) {
 
 /**
  * 种子场景背景图（来自 seed-assets/scenes/）
+ * 仅在 scenes 表为空时执行
  */
 function seedScenesFromAssets(db: Database.Database) {
   const exists = db.prepare(`SELECT COUNT(*) AS c FROM scenes`).get() as {
@@ -1626,8 +1896,8 @@ function seedScenesFromAssets(db: Database.Database) {
   }
 
   const stmt = db.prepare(
-    `INSERT INTO scenes (name, image_path, tags, category, sort_order)
-     VALUES (@name, @image_path, @tags, @category, @sort_order)`,
+    `INSERT INTO scenes (name, image_path, tags, sort_order)
+     VALUES (@name, @image_path, @tags, @sort_order)`,
   );
   const tx = db.transaction(() => {
     for (const p of prepared) {
@@ -1635,7 +1905,6 @@ function seedScenesFromAssets(db: Database.Database) {
         name: p.name,
         image_path: p.image_path,
         tags: p.tags || null,
-        category: p.category || null,
         sort_order: p.sort_order,
       });
     }

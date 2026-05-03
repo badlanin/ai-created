@@ -11,9 +11,13 @@ type PoseRow = {
   type: "full" | "half" | "closeup";
   tags: string | null;
   notes: string | null;
+  is_hero: number;
   sort_order: number;
   created_at: number;
 };
+
+const POSE_COLS =
+  "id, name, text, type, tags, notes, is_hero, sort_order, created_at";
 
 /**
  * GET /api/poses?type=full|half|closeup
@@ -30,13 +34,13 @@ export async function GET(req: NextRequest) {
     if (type && ["full", "half", "closeup"].includes(type)) {
       rows = db
         .prepare(
-          "SELECT id, name, text, type, tags, notes, sort_order, created_at FROM poses WHERE type = ? ORDER BY sort_order ASC, id ASC",
+          `SELECT ${POSE_COLS} FROM poses WHERE type = ? ORDER BY is_hero DESC, sort_order ASC, id ASC`,
         )
         .all(type) as PoseRow[];
     } else {
       rows = db
         .prepare(
-          "SELECT id, name, text, type, tags, notes, sort_order, created_at FROM poses ORDER BY type ASC, sort_order ASC, id ASC",
+          `SELECT ${POSE_COLS} FROM poses ORDER BY is_hero DESC, type ASC, sort_order ASC, id ASC`,
         )
         .all() as PoseRow[];
     }
@@ -64,6 +68,7 @@ export async function POST(req: NextRequest) {
       type?: string;
       tags?: string;
       notes?: string;
+      is_hero?: boolean | number;
       sort_order?: number;
     };
 
@@ -84,11 +89,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const isHero = body.is_hero ? 1 : 0;
+
     const db = getDb();
     const result = db
       .prepare(
-        `INSERT INTO poses (name, text, type, tags, notes, sort_order, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO poses (name, text, type, tags, notes, is_hero, sort_order, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         name,
@@ -96,14 +103,13 @@ export async function POST(req: NextRequest) {
         type,
         body.tags?.trim() || null,
         body.notes?.trim() || null,
+        isHero,
         body.sort_order ?? 0,
         user.id,
       );
 
     const row = db
-      .prepare(
-        "SELECT id, name, text, type, tags, notes, sort_order, created_at FROM poses WHERE id = ?",
-      )
+      .prepare(`SELECT ${POSE_COLS} FROM poses WHERE id = ?`)
       .get(result.lastInsertRowid) as PoseRow;
 
     return NextResponse.json(row, { status: 201 });

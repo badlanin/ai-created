@@ -10,6 +10,7 @@ type Pose = {
   type: PoseType;
   tags: string | null;
   notes: string | null;
+  is_hero: number;
   sort_order: number;
 };
 
@@ -29,6 +30,7 @@ export default function PosesAdminPage() {
     text: "",
     type: "full" as PoseType,
     tags: "",
+    is_hero: false,
     sort_order: 0,
   });
   const [submitting, setSubmitting] = useState(false);
@@ -74,6 +76,7 @@ export default function PosesAdminPage() {
         text: "",
         type: form.type,
         tags: "",
+        is_hero: false,
         sort_order: 0,
       });
       setShowForm(false);
@@ -198,6 +201,19 @@ export default function PosesAdminPage() {
                 className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
               />
             </div>
+            <div className="col-span-2 flex items-center gap-2 text-sm text-fg-secondary">
+              <input
+                id="form-is-hero"
+                type="checkbox"
+                checked={form.is_hero}
+                onChange={(e) =>
+                  setForm({ ...form, is_hero: e.target.checked })
+                }
+              />
+              <label htmlFor="form-is-hero" className="cursor-pointer">
+                标记为「首图（hero）」专用姿势 —— 在批量摄影选姿势时单独分组并支持"🎲 随机首图"
+              </label>
+            </div>
             <div className="col-span-2">
               <button
                 type="submit"
@@ -260,6 +276,7 @@ function PoseRow({
     name: pose.name,
     text: pose.text,
     tags: pose.tags || "",
+    is_hero: pose.is_hero === 1,
   });
 
   if (editing) {
@@ -282,10 +299,25 @@ function PoseRow({
           value={draft.tags}
           onChange={(e) => setDraft({ ...draft, tags: e.target.value })}
         />
+        <label className="flex items-center gap-2 mb-2 text-xs text-fg-secondary">
+          <input
+            type="checkbox"
+            checked={draft.is_hero}
+            onChange={(e) =>
+              setDraft({ ...draft, is_hero: e.target.checked })
+            }
+          />
+          标记为「首图（hero）」
+        </label>
         <div className="flex gap-2">
           <button
             onClick={() => {
-              onUpdate(pose.id, draft);
+              onUpdate(pose.id, {
+                name: draft.name,
+                text: draft.text,
+                tags: draft.tags,
+                is_hero: draft.is_hero ? 1 : 0,
+              } as Partial<Pose>);
               setEditing(false);
             }}
             className="px-3 py-1 bg-brand-600 text-white text-xs rounded"
@@ -307,7 +339,14 @@ function PoseRow({
     <li className="px-6 py-3">
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium text-fg-primary">{pose.name}</div>
+          <div className="text-sm font-medium text-fg-primary flex items-center gap-1.5">
+            <span>{pose.name}</span>
+            {pose.is_hero === 1 && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-200 font-normal">
+                🌟 首图
+              </span>
+            )}
+          </div>
           <div className="text-xs text-fg-secondary mt-1 leading-relaxed">
             {pose.text}
           </div>

@@ -73,6 +73,7 @@ export function LeftNav({
       "/admin/models",
       "/admin/scenes",
       "/admin/poses",
+      "/admin/expressions",
       "/admin/photography",
       "/admin/prompts",
       "/admin/ai-models",
@@ -281,6 +282,7 @@ export function LeftNav({
               <SubItem href="/admin/models" label="模特" active={isActive("/admin/models")} />
               <SubItem href="/admin/scenes" label="场景" active={isActive("/admin/scenes")} />
               <SubItem href="/admin/poses" label="姿势" active={isActive("/admin/poses")} />
+              <SubItem href="/admin/expressions" label="表情" active={isActive("/admin/expressions")} />
               <SubItem href="/admin/photography" label="摄影" active={isActive("/admin/photography")} />
               <SubItem href="/admin/prompts" label="Prompt" active={isActive("/admin/prompts")} />
               <SubItem href="/admin/ai-models" label="AI 模型" active={isActive("/admin/ai-models")} />

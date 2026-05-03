@@ -82,6 +82,12 @@ export async function POST(req: NextRequest) {
         ? Number(realismIdRaw)
         : null;
 
+    const expressionIdRaw = formData.get("expression_id");
+    const expressionId =
+      typeof expressionIdRaw === "string" && expressionIdRaw.trim()
+        ? Number(expressionIdRaw)
+        : null;
+
     const poseIdsRaw = formData.get("pose_ids");
     let poseIds: number[] = [];
     try {
@@ -199,6 +205,23 @@ export async function POST(req: NextRequest) {
 
     const realism = getRealismPreset(realismId);
 
+    // 表情：用户指定 → 该 ID；未指定 → 默认表情（is_default=1）；都没有 → null
+    const expression = (() => {
+      if (expressionId) {
+        const r = db
+          .prepare(`SELECT id, name, text FROM expressions WHERE id = ?`)
+          .get(expressionId) as
+          | { id: number; name: string; text: string }
+          | undefined;
+        if (r) return r;
+      }
+      return db
+        .prepare(
+          `SELECT id, name, text FROM expressions WHERE is_default = 1 ORDER BY sort_order ASC LIMIT 1`,
+        )
+        .get() as { id: number; name: string; text: string } | undefined;
+    })();
+
     const placeholders = poseIds.map(() => "?").join(",");
     const poses = db
       .prepare(
@@ -253,6 +276,9 @@ export async function POST(req: NextRequest) {
         realism_id: realism?.id ?? null,
         realism_name: realism?.name ?? null,
         realism_constraints_text: formatRealismConstraints(realism),
+        expression_id: expression?.id ?? null,
+        expression_name: expression?.name ?? null,
+        expression_text: expression?.text ?? "",
         garment_attrs_text: formatGarmentAttrs(garmentAttrs),
         shoe_spec: shoeSpec,
         material_details_text: formatMaterialDetails(materials),
@@ -351,6 +377,9 @@ async function batchPhotoItemHandler(
     template: { id: number; name: string; template: string };
     photography_params_text?: string;
     realism_constraints_text?: string;
+    expression_id?: number | null;
+    expression_name?: string | null;
+    expression_text?: string;
     garment_attrs_text?: string;
     shoe_spec?: string;
     material_details_text?: string;
@@ -421,6 +450,9 @@ async function batchPhotoItemHandler(
     garment_attrs: p.garment_attrs_text || "",
     material_details: p.material_details_text || "",
     pose: `${pose.name}：${pose.text}`,
+    // 表情维度（独立于姿势的全局描述，仅描述脸 / 眼神 / 嘴 / 视线 / 情绪）
+    // 没值 → 走"自然"兜底；模板里没 {{expression}} 占位符的话此变量被忽略
+    expression: p.expression_text || "嘴角放松微抿，眼神平和，气质沉静自然",
     photography_params: p.photography_params_text || "",
     realism_constraints: p.realism_constraints_text || "",
     user_seed: p.user_seed ? `【用户补充指令】${p.user_seed}` : "",
