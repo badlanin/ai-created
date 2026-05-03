@@ -132,7 +132,10 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   if gcloud compute ssh "$instance" \
        --project="$project" \
        --zone="$zone" \
-       --command="$REMOTE_CMD"; then
+       --strict-host-key-checking=no \
+       --quiet \
+       --command="$REMOTE_CMD" \
+       < /dev/null; then
     OK=$((OK+1))
     echo "  ✅ $instance 完成"
   else
