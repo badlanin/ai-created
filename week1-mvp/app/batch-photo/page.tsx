@@ -739,6 +739,42 @@ function BatchPhotoTab({
     slotStore.setActiveJob(null);
   }
 
+  // 极致模式：4 个参数同时锁到 Editorial 组合（model=Pro, quality=4K,
+  // realism=Editorial · 极致皮肤, photography=Editorial · 中片幅）
+  // 状态从当前 4 个 state 派生，不存独立 state——避免和用户手动改值不同步
+  const editorialRealismPreset = realisms.find(
+    (r) => r.name === "Editorial · 极致皮肤",
+  );
+  const editorialPhotoPreset = photoParams.find(
+    (p) => p.name === "Editorial · 中片幅",
+  );
+  const EDITORIAL_MODEL_ID = "gemini-3-pro-image-preview";
+  const isEditorialMode =
+    realismId !== null &&
+    editorialRealismPreset?.id === realismId &&
+    photographyId !== null &&
+    editorialPhotoPreset?.id === photographyId &&
+    modelId === EDITORIAL_MODEL_ID &&
+    qualityLevel === "4k";
+  const editorialAvailable = Boolean(
+    editorialRealismPreset &&
+      editorialPhotoPreset &&
+      aiModels.find((m) => m.model_id === EDITORIAL_MODEL_ID),
+  );
+  function applyEditorialMode() {
+    if (editorialRealismPreset) setRealismId(editorialRealismPreset.id);
+    if (editorialPhotoPreset) setPhotographyId(editorialPhotoPreset.id);
+    if (aiModels.find((m) => m.model_id === EDITORIAL_MODEL_ID)) {
+      setModelId(EDITORIAL_MODEL_ID);
+    }
+    setQualityLevel("4k");
+    notifyHelpers.info(
+      push,
+      "极致模式已开启",
+      "Pro 模型 + 4K + Editorial 真实感/摄影。成本约 5x 普通模式。",
+    );
+  }
+
   // tab 状态（给 TabBar 显示 spinner / ✓ / ! 用）
   // ⚠️ 必须在所有早期 return 之前，避免 hook 顺序变化触发
   // "Rendered more hooks than during the previous render" 错误
@@ -790,6 +826,9 @@ function BatchPhotoTab({
           onSwitchView={() =>
             setViewMode((m) => (m === "task" ? "form" : "task"))
           }
+          editorialAvailable={editorialAvailable}
+          isEditorialMode={isEditorialMode}
+          onApplyEditorialMode={applyEditorialMode}
         />
       }
     >
@@ -1514,6 +1553,9 @@ function RightPanel({
   hasActiveTask,
   viewMode,
   onSwitchView,
+  editorialAvailable,
+  isEditorialMode,
+  onApplyEditorialMode,
 }: {
   aiModels: AiModel[];
   modelId: string;
@@ -1536,6 +1578,9 @@ function RightPanel({
   hasActiveTask: boolean;
   viewMode: "form" | "task";
   onSwitchView: () => void;
+  editorialAvailable: boolean;
+  isEditorialMode: boolean;
+  onApplyEditorialMode: () => void;
 }) {
   return (
     <div className="p-4 space-y-3 text-sm">
@@ -1580,6 +1625,44 @@ function RightPanel({
           轮询失败：{pollError}
         </div>
       ) : null}
+
+      {/* 极致模式快速开关：一键设 Pro+4K + Editorial 真实感 / 摄影 */}
+      {editorialAvailable && (
+        <button
+          type="button"
+          onClick={onApplyEditorialMode}
+          disabled={isEditorialMode}
+          className="w-full text-left rounded-md border p-3 transition-colors disabled:cursor-default"
+          style={{
+            background: isEditorialMode
+              ? "var(--success-bg)"
+              : "var(--brand-50-bg)",
+            borderColor: isEditorialMode
+              ? "rgba(34, 197, 94, 0.4)"
+              : "rgba(168, 85, 247, 0.35)",
+          }}
+          title={
+            isEditorialMode
+              ? "已在极致模式：Pro 模型 + 4K + Editorial 真实感/摄影"
+              : "一键切到 Pro 模型 + 4K + Editorial 真实感和摄影预设"
+          }
+        >
+          <div
+            className="flex items-center gap-1.5 text-[12px] font-medium"
+            style={{
+              color: isEditorialMode ? "var(--success)" : "var(--brand-400)",
+            }}
+          >
+            <Sparkles size={12} strokeWidth={2.4} />
+            {isEditorialMode ? "✓ 极致模式 已开启" : "✨ 极致模式（一键切换）"}
+          </div>
+          <div className="text-[10px] text-fg-tertiary mt-1 leading-snug">
+            {isEditorialMode
+              ? "Pro 模型 · 4K · Editorial 真实感/摄影 — 任意一项被改回普通值即退出"
+              : "Pro 模型 · 4K · Editorial 真实感/摄影 — 出图细节↑↑↑ 成本约普通模式 5×"}
+          </div>
+        </button>
+      )}
 
       {/* 参数 */}
       <div className="card p-4 space-y-3">

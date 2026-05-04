@@ -385,7 +385,13 @@ function migrate(db: Database.Database) {
   seedPromptTemplates(db);
   // 把 {{expression}} 占位符注入"标准模特穿着图"模板（老库幂等）
   migratePromptTemplateExpression(db);
+  // 把 {{realism_constraints}} + {{material_details}} 注入"标准模特穿着图"模板
+  // （老库的模板从来没引用过这俩占位符——选预设也没用，必须迁移）
+  migrateTemplateRealismFront(db);
   seedRealismPresets(db);
+  // Editorial 真实感 + 摄影预设：老库幂等补种（按 name 去重）
+  migrateInsertEditorialRealism(db);
+  migrateInsertEditorialPhotography(db);
   seedMaterials(db);
   seedModelPrices(db);
   seedSettings(db);
@@ -966,6 +972,166 @@ function migratePromptTemplateExpression(db: Database.Database) {
 }
 
 /**
+ * 老库幂等补种：Editorial · 极致皮肤（真实感）
+ *
+ * 比"硬核纪实"更具体——逐项约束毛孔密度、雀斑颗粒、虹膜纤维、油光分布等。
+ * 双语关键词：英文技术词（sub-surface scattering / vellus hair / iris crypts）
+ * 对图像模型的语义把握比中文细很多。
+ *
+ * 按 name 幂等：已经存在就跳过，不会覆盖管理员后续修改。
+ */
+function migrateInsertEditorialRealism(db: Database.Database) {
+  const NAME = "Editorial · 极致皮肤";
+  const existing = db
+    .prepare(`SELECT id FROM realism_presets WHERE name = ?`)
+    .get(NAME);
+  if (existing) return;
+
+  const constraints_text = `【真实感约束 / Editorial Hyperreal Skin】
+
+Required (mandatory, do not soften):
+- Skin: render at pore-level resolution. Each cheek shows 200+ visible pores
+  when zoomed. Sebum sheen is NON-uniform — bright micro-highlights on nose
+  tip, philtrum, chin; matte zones on outer cheeks. Sub-surface scattering
+  visible in thin areas (earlobe, nostril edge).
+- Imperfections REQUIRED, do not remove: 3-7 small moles or beauty marks
+  scattered on visible skin (face, neck, arms, legs); micro asymmetry between
+  left/right features; faint redness around nose base; light vellus hair
+  (peach fuzz) on cheek edges catching backlight.
+- Eyes: visible iris fiber pattern (crypts + Fuchs furrows), faint vessels
+  in sclera, individually rendered eyelashes (NOT clumps), tiny moisture
+  meniscus at lower lid.
+- Lips: vertical lip lines visible, slight color variation between upper
+  and lower lip, micro-cracks at corners.
+- Hair: rendered as individual strands at edges (flyaways visible against
+  background), not painted clumps. Light passes through outer strands
+  creating subtle rim glow.
+- Fabric: weave / fiber texture visible at 100% crop. Covered buttons show
+  same fabric grain as the garment, not plastic. Pleats keep crisp edges.
+
+Forbidden (will look fake if violated):
+- Skin smoothing, beauty filter, "porcelain skin", any airbrushed surface
+- AI / 3D render aesthetic, Unreal Engine glossiness, plasticky subsurface
+- Symmetric features, perfect teeth, perfect skin tone uniformity
+- Clumped or "painted" hair, anime-style highlights
+- Over-saturation of lip / cheek color
+- Generic "model face" — must look like a specific real person
+
+Reference: shot on Phase One IQ4 150MP medium format, 80mm lens at f/5.6,
+ISO 100, RAW, minimal retouching as if for Vogue editorial close-up.
+The viewer should feel they could count individual pores at 100% zoom.`;
+
+  db.prepare(
+    `INSERT INTO realism_presets (name, description, constraints_text, is_default, sort_order)
+     VALUES (?, ?, ?, 0, ?)`,
+  ).run(
+    NAME,
+    "Editorial 级 · 极端真实，毛孔/雀斑/纤维像素级 · 配 Pro+4K 食用",
+    constraints_text,
+    60,
+  );
+  console.log(`[db] migrateInsertEditorialRealism: 已补种 "${NAME}"`);
+}
+
+/**
+ * 老库幂等补种：Editorial · 中片幅（摄影参数）
+ *
+ * 锁定中片幅相机 + 80mm + f/4.5 + 大柔光箱前侧光的组合，
+ * 模拟 Zara/COS/The Row 的 product imagery 视觉。
+ */
+function migrateInsertEditorialPhotography(db: Database.Database) {
+  const NAME = "Editorial · 中片幅";
+  const existing = db
+    .prepare(`SELECT id FROM photography_params WHERE name = ?`)
+    .get(NAME);
+  if (existing) return;
+
+  const params_text = `【摄影参数 / Editorial Medium Format】
+- Camera: Phase One IQ4 150MP / Hasselblad H6D-100c (medium format aesthetic)
+- Lens: 80mm f/2.8 prime (≈ 50mm full-frame equivalent)
+- Aperture: f/4.5 (subject pin-sharp, gentle background separation)
+- Light: large softbox 1.5m diameter, frontal-right at 30° azimuth, 15°
+  elevation; white V-flat fill on opposite side; no rim / hair light
+- Background: 18% neutral gray seamless paper, evenly lit, no gradient
+- Color: low saturation, neutral white balance 5500K, slight warm shadow tint
+- Composition: subject centered or rule-of-thirds, generous negative space
+- Film simulation: Kodak Portra 400 mid-tones, slight teal-orange separation
+- Post-processing: minimal — global contrast curve only, no skin retouching,
+  no frequency separation, no dodge & burn
+- Reference look: Zara / COS / The Row product imagery; Vogue editorial
+  close-ups`;
+
+  db.prepare(
+    `INSERT INTO photography_params (name, description, params_text, is_default, sort_order)
+     VALUES (?, ?, ?, 0, ?)`,
+  ).run(
+    NAME,
+    "中片幅相机 + 大柔光 · 极致皮肤 / 面料质感",
+    params_text,
+    70,
+  );
+  console.log(`[db] migrateInsertEditorialPhotography: 已补种 "${NAME}"`);
+}
+
+/**
+ * 老库迁移：把"标准模特穿着图"模板的真实感 + 面料质感前置
+ *
+ * v3 模板把 {{realism_constraints}} 提到模板开头第一段，
+ * 把 {{material_details}} 放在【任务】之前。
+ *
+ * 旧库已有模板里这两个占位符**完全没有**——这意味着用户选了 realism
+ * 预设但实际从未注入 prompt（材质同理）。这是个静默 bug，本迁移修复它。
+ *
+ * 幂等：只在模板还没有 {{realism_constraints}} 时改一次。
+ */
+function migrateTemplateRealismFront(db: Database.Database) {
+  const row = db
+    .prepare(
+      `SELECT id, template FROM prompt_templates WHERE kind = 'on_model' AND name = ?`,
+    )
+    .get("标准模特穿着图") as { id: number; template: string } | undefined;
+  if (!row) return;
+  if (row.template.includes("{{realism_constraints}}")) return;
+
+  // 第一处替换：把第一句替换为带极致真实感声明 + realism 注入
+  const oldOpening =
+    "你是一位专业的服装电商摄影师。请根据我提供的参考图和指令，生成 {{n}} 张高质量的服装模特摄影图。";
+  const newOpening =
+    "你是一位专业的服装电商摄影师。本次任务的最高优先级是【极致真实感】，所有约束在【极致真实感】之下。\n\n{{realism_constraints}}";
+
+  if (!row.template.includes(oldOpening)) {
+    console.warn(
+      `[db] migrateTemplateRealismFront: 未找到预期的开篇锚点，跳过 (id=${row.id})。可能模板已被管理员手工改过。`,
+    );
+    return;
+  }
+
+  // 第二处替换：在【任务】小节前插入【面料质感】块
+  const oldTaskAnchor = "【任务】\n让参考图 3 里的这位模特";
+  const newTaskAnchor =
+    "【面料质感 ⚠️ 像素级遵守】\n{{material_details}}\n\n【任务】\n让参考图 3 里的这位模特";
+
+  if (!row.template.includes(oldTaskAnchor)) {
+    console.warn(
+      `[db] migrateTemplateRealismFront: 未找到【任务】锚点，跳过 (id=${row.id})。`,
+    );
+    return;
+  }
+
+  const updated = row.template
+    .replace(oldOpening, newOpening)
+    .replace(oldTaskAnchor, newTaskAnchor);
+
+  db.prepare(`UPDATE prompt_templates SET template = ? WHERE id = ?`).run(
+    updated,
+    row.id,
+  );
+  console.log(
+    `[db] migrateTemplateRealismFront: 已为模板 #${row.id} 前置 realism + 注入 material_details`,
+  );
+}
+
+/**
  * 种子摄影参数库（6 套常用预设）
  */
 function seedPhotographyParams(db: Database.Database) {
@@ -1108,8 +1274,10 @@ function seedPromptTemplates(db: Database.Database) {
       kind: "on_model",
       sort_order: 10,
       notes:
-        "最通用的模板，适合日常商品图批量生成。v2 强化：参考图职责分解 + 背景污染禁令",
-      template: `你是一位专业的服装电商摄影师。请根据我提供的参考图和指令，生成 {{n}} 张高质量的服装模特摄影图。
+        "最通用的模板，适合日常商品图批量生成。v3 强化：真实感 + 面料质感前置，并接入 expression 维度",
+      template: `你是一位专业的服装电商摄影师。本次任务的最高优先级是【极致真实感】，所有约束在【极致真实感】之下。
+
+{{realism_constraints}}
 
 【参考图职责分解 ⚠️ 严格遵守】
 
@@ -1128,6 +1296,9 @@ function seedPromptTemplates(db: Database.Database) {
 
 【款式信息】
 {{garment_attrs}}
+
+【面料质感 ⚠️ 像素级遵守】
+{{material_details}}
 
 【任务】
 让参考图 3 里的这位模特，穿着参考图 1-2 里的服装，在参考图 4 的背景中，按以下姿势拍摄 {{n}} 张图，每张对应一个姿势：
