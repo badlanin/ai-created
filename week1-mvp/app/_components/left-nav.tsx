@@ -71,6 +71,7 @@ export function LeftNav({
       "/admin/materials",
       "/admin/realism",
       "/admin/models",
+      "/admin/identity-generator",
       "/admin/scenes",
       "/admin/poses",
       "/admin/expressions",
@@ -280,6 +281,7 @@ export function LeftNav({
               <SubItem href="/admin/materials" label="材质" active={isActive("/admin/materials")} />
               <SubItem href="/admin/realism" label="真实感" active={isActive("/admin/realism")} />
               <SubItem href="/admin/models" label="模特" active={isActive("/admin/models")} />
+              <SubItem href="/admin/identity-generator" label="形象生成器" active={isActive("/admin/identity-generator")} />
               <SubItem href="/admin/scenes" label="场景" active={isActive("/admin/scenes")} />
               <SubItem href="/admin/poses" label="姿势" active={isActive("/admin/poses")} />
               <SubItem href="/admin/expressions" label="表情" active={isActive("/admin/expressions")} />
