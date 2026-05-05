@@ -124,6 +124,157 @@ NOT like a Photoshop composite, but like a real shoot.
 `;
 }
 
-// 占位：子功能 2 / 3 后续添加
-// export function buildPosterPrompt(...) { ... }
-// export function buildSocialSnapPrompt(...) { ... }
+// ─────────────────────────────────────────────────────────
+// 子功能 3：社媒图（phone snap 风格）
+// ─────────────────────────────────────────────────────────
+
+/** 社媒风格预设 —— 不同氛围对应不同 phone-snap 风格修饰 */
+export type SocialVibe = "casual" | "party" | "street" | "lifestyle";
+
+const VIBE_HINTS: Record<SocialVibe, string> = {
+  casual:
+    "casual everyday hang-out moment, slight laugh / candid expression, NOT posed",
+  party:
+    "party / celebration vibe, motion energy, drink in hand or moving / dancing, joyful spontaneous",
+  street:
+    "street walking / city vibe, looking off-camera or mid-stride, urban casual",
+  lifestyle:
+    "lifestyle vlog moment, mid-activity (eating / sightseeing / chatting), unstaged",
+};
+
+const VIBE_LABELS: Record<SocialVibe, string> = {
+  casual: "日常 Casual",
+  party: "派对 Party",
+  street: "街拍 Street",
+  lifestyle: "Lifestyle 生活",
+};
+
+export const SOCIAL_VIBE_OPTIONS = (
+  Object.keys(VIBE_LABELS) as SocialVibe[]
+).map((v) => ({ value: v, label: VIBE_LABELS[v] }));
+
+export function isValidSocialVibe(v: unknown): v is SocialVibe {
+  return typeof v === "string" && v in VIBE_LABELS;
+}
+
+/**
+ * 拼装社媒图（phone snap）prompt。
+ *
+ * 输入图片顺序约定（API 端按这个顺序 push 进 inputs 数组）：
+ *   IMAGE 1     = 产品图（衣服）
+ *   IMAGE 2..N  = identity 图（1-3 个模特）
+ *   IMAGE N+1   = scene plate
+ *
+ * 关键设计：phone-snap 风格让 AI 的"完美"倾向变成弱点 —
+ * 故意"拍坏"= 真实感 = 社媒爆款的特质。
+ *
+ * @param identityCount - 几张 identity 图（1-3）
+ * @param vibe - 风格氛围
+ * @param sceneName - scene plate 中文名（注入语义）
+ */
+export function buildSocialSnapPrompt(
+  identityCount: number,
+  vibe: SocialVibe,
+  sceneName?: string,
+): string {
+  const n = Math.max(1, Math.min(3, identityCount));
+  const identityIndexRange =
+    n === 1 ? "IMAGE 2" : n === 2 ? "IMAGES 2-3" : "IMAGES 2-4";
+  const sceneImageIndex = n === 1 ? "IMAGE 3" : n === 2 ? "IMAGE 4" : "IMAGE 5";
+  const sceneHint = sceneName
+    ? ` (scene name for context: "${sceneName}")`
+    : "";
+  const peopleNoun = n === 1 ? "the model" : `the ${n} models`;
+  const vibeHint = VIBE_HINTS[vibe];
+
+  return `You will receive ${n + 2} images and generate ONE photograph.
+
+▸ IMAGE 1     — Product / clothing reference (the garment to be worn)
+▸ ${identityIndexRange}  — ${n} model identity reference${n > 1 ? "s" : ""} (face / body / skin)
+▸ ${sceneImageIndex}     — Scene background plate${sceneHint}
+
+══════════════════════════════════════════════════════════
+🚨 TASK — Generate a SOCIAL-MEDIA PHONE-SNAP photograph
+══════════════════════════════════════════════════════════
+
+Place ${peopleNoun} (from ${identityIndexRange}, wearing the garment from IMAGE 1)
+into the scene from ${sceneImageIndex}. Render as if shot CASUALLY ON A PHONE
+in a candid moment — NOT a professional photo shoot.
+
+Vibe: ${vibeHint}
+
+══════════════════════════════════════════════════════════
+📱 PHONE-SNAP AESTHETIC (deliberately imperfect — imperfection IS the point)
+══════════════════════════════════════════════════════════
+
+Camera: as if shot on iPhone 13 / 14 / 15 main camera or Samsung Galaxy.
+
+Required imperfections (ALL must be present, this is what makes it real):
+- Slight motion blur somewhere (subject's hand, hair flying, edge of frame)
+- Mild auto-exposure imbalance (one bright window or light source slightly
+  blown out, or a shadow area slightly crushed)
+- Casual amateur framing: subject NOT perfectly centered. Maybe head close
+  to top edge, or one subject partially cropped at edge of frame, or
+  composition feels "snapped quickly without thinking"
+- Flash-like or harsh-light moments OK (e.g., direct phone-flash on face
+  if it suits the vibe / late-night feel)
+- Slight subject sharpness drop — NOT studio-perfect focus
+- Minor lens distortion at edges typical of phone wide-angle (~24mm equiv.)
+- Hint of digital noise / grain in shadow areas
+- Optional: slight finger-shadow / phone-grip vignette in one corner
+
+Color and processing:
+- iPhone-like warm-leaning auto-white-balance (slightly warmer than
+  professional WB)
+- Mid-saturation, NOT pro-color-graded
+- Slight contrast boost typical of phone JPEG processing
+- NO editorial film look. NO Portra. NO professional retouch.
+
+❌ FORBIDDEN — these break the "real phone snap" feel:
+- Studio-perfect lighting / soft beauty light on subject
+- Editorial film grain, Kodak Portra look
+- Magazine retouching (skin smoothing, color grading)
+- Professional composition (rule of thirds perfectly applied)
+- Symmetric framing
+- Overly polished / Vogue-editorial feel
+- Concept art / painted look / 3D render aesthetic
+
+══════════════════════════════════════════════════════════
+✅ MUST PRESERVE
+══════════════════════════════════════════════════════════
+
+- Garment from IMAGE 1: color, fabric, fit, cut, all visible details
+- Each model's face / hair / body type from their identity image
+${
+  n > 1
+    ? "- Each model wears the same garment from IMAGE 1 (matched style)\n"
+    : ""
+}- Scene from ${sceneImageIndex}: location, lighting direction, atmosphere
+
+══════════════════════════════════════════════════════════
+🧍 PEOPLE COMPOSITION
+══════════════════════════════════════════════════════════
+
+${
+  n === 1
+    ? `Single model placed in the scene's natural ground / floor area.
+Slightly off-center is fine and encouraged.`
+    : `Place all ${n} models in the scene with natural spatial relationship:
+- They can overlap, lean toward each other, share a casual moment
+- DO NOT line them up like a formal group photo
+- DO NOT position them perfectly evenly spaced
+- One can be slightly out-of-focus or partially cropped at edge — that's
+  what real phone snaps look like
+- Heights and gestures should vary naturally`
+}
+
+═══════════════════════════════════════════════════════
+OUTPUT
+═══════════════════════════════════════════════════════
+
+Output ONE photograph. The result should look like it was just snapped
+and uploaded directly to Instagram / TikTok / 小红书 — fresh, alive,
+slightly imperfect, NOT a retouched professional shoot.
+`;
+}
+

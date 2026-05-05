@@ -322,7 +322,12 @@ export function LeftNav({
                 label="背景换图"
                 active={isActive("/admin/scene-tools/background-swap")}
               />
-              {/* 子功能 2 / 3 后续上线 */}
+              <SubItem
+                href="/admin/scene-tools/social-snap"
+                label="社媒图"
+                active={isActive("/admin/scene-tools/social-snap")}
+              />
+              {/* 子功能 2 氛围海报后续上线 */}
             </Collapsible>
 
             <SectionHeader className="mt-5">系统</SectionHeader>
