@@ -4,7 +4,23 @@ import { getDb } from "@/lib/db";
 
 export const runtime = "nodejs";
 
-type FeatureFilter = "all" | "recolor" | "batch_photo";
+type FeatureFilter =
+  | "all"
+  | "recolor"
+  | "batch_photo"
+  | "background_swap"
+  | "poster"
+  | "social_snap"
+  | "identity_gen";
+
+const ALLOWED_FEATURES: ReadonlyArray<Exclude<FeatureFilter, "all">> = [
+  "recolor",
+  "batch_photo",
+  "background_swap",
+  "poster",
+  "social_snap",
+  "identity_gen",
+];
 type StatusFilter = "all" | "active" | "completed" | "failed" | "canceled";
 
 /**
@@ -19,7 +35,13 @@ export async function GET(req: NextRequest) {
   const user = await requireUser();
   const url = new URL(req.url);
   const status = (url.searchParams.get("status") || "all") as StatusFilter;
-  const feature = (url.searchParams.get("feature") || "all") as FeatureFilter;
+  const featureRaw = url.searchParams.get("feature") || "all";
+  const feature: FeatureFilter =
+    featureRaw === "all"
+      ? "all"
+      : ALLOWED_FEATURES.includes(featureRaw as Exclude<FeatureFilter, "all">)
+        ? (featureRaw as FeatureFilter)
+        : "all";
   const scope = url.searchParams.get("scope") || "me";
   const showAll = scope === "all" && user.role === "admin";
   const page = Math.max(1, Number(url.searchParams.get("page") || "1"));

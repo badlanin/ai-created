@@ -20,7 +20,13 @@ export type ItemStatus =
   | "failed"
   | "canceled";
 
-export type JobFeature = "recolor" | "batch_photo";
+export type JobFeature =
+  | "recolor"
+  | "batch_photo"
+  | "identity_gen"
+  | "background_swap"
+  | "poster"
+  | "social_snap";
 
 export interface JobRow {
   id: string;
@@ -98,6 +104,87 @@ export function createJob(args: {
        VALUES (?, ?, 'queued', ?)`,
     );
     args.items.forEach((it, i) => insertItem.run(jobId, i, it.label));
+  });
+  tx();
+
+  return getJobRequired(jobId);
+}
+
+/**
+ * 单次出图工具（identity-generator / background-swap / poster / social-snap）
+ * 用这个 helper 写一条立即 status='completed' 的 1-item job，
+ * 让产物能在 /history 页面里被翻到。
+ *
+ * 跟 createJob 不同：
+ *   - 不走 worker / 异步队列
+ *   - 创建瞬间已经"完成"
+ *   - 直接附带产物的 image_path / image_url
+ */
+export function recordSingleShotJob(args: {
+  user_id: number;
+  feature: JobFeature;
+  model: string;
+  /** 缩略图展示用的标签，比如 "背景换图：常春藤古堡" */
+  label: string;
+  /** 相对 DATA_DIR 的路径，如 "outputs/swap_xxx.png" */
+  result_image_path: string;
+  /** 浏览器可访问 URL，如 "/assets/outputs/swap_xxx.png" */
+  result_image_url: string;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  cost_cny?: number;
+  params?: Record<string, unknown>;
+}): JobRow {
+  const db = getDb();
+  const jobId = randomUUID();
+  const now = Math.floor(Date.now() / 1000);
+  const params =
+    args.params === undefined ? null : JSON.stringify(args.params);
+
+  const tx = db.transaction(() => {
+    db.prepare(
+      `INSERT INTO render_jobs
+         (id, user_id, feature, model, status,
+          total_count, completed_count, failed_count, canceled_count,
+          total_cost_cny, params,
+          created_at, started_at, finished_at)
+       VALUES (?, ?, ?, ?, 'completed',
+               1, 1, 0, 0,
+               ?, ?,
+               ?, ?, ?)`,
+    ).run(
+      jobId,
+      args.user_id,
+      args.feature,
+      args.model,
+      args.cost_cny ?? 0,
+      params,
+      now,
+      now,
+      now,
+    );
+
+    db.prepare(
+      `INSERT INTO render_job_items
+         (job_id, idx, status, label,
+          result_image_path, result_image_url,
+          input_tokens, output_tokens, cost_cny,
+          started_at, finished_at)
+       VALUES (?, 0, 'completed', ?,
+               ?, ?,
+               ?, ?, ?,
+               ?, ?)`,
+    ).run(
+      jobId,
+      args.label,
+      args.result_image_path,
+      args.result_image_url,
+      args.prompt_tokens ?? null,
+      args.completion_tokens ?? null,
+      args.cost_cny ?? null,
+      now,
+      now,
+    );
   });
   tx();
 

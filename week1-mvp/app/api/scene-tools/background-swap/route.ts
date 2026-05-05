@@ -6,7 +6,8 @@ import { DATA_DIR_PATH, getDb } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
 import { generateImage, type GenImageInput } from "@/lib/gemini-image";
 import { recordUsage } from "@/lib/usage";
-import { assertWithinBudget } from "@/lib/pricing";
+import { assertWithinBudget, calcCost } from "@/lib/pricing";
+import { recordSingleShotJob } from "@/lib/jobs-db";
 import { buildBackgroundSwapPrompt } from "@/lib/scene-tools-prompt";
 
 export const runtime = "nodejs";
@@ -161,13 +162,35 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    // ─── 写入 history（render_jobs，立即 completed 的 1-item 伪 job）───
+    const promptTokens = gen.usageMetadata?.promptTokenCount ?? 0;
+    const completionTokens = gen.usageMetadata?.candidatesTokenCount ?? 0;
+    const costInfo = calcCost(SWAP_MODEL, promptTokens, completionTokens);
+    const resultUrl = `/assets/${OUTPUT_DIR_REL}/${filename}`;
+    recordSingleShotJob({
+      user_id: user.id,
+      feature: "background_swap",
+      model: SWAP_MODEL,
+      label: `背景换图 · ${scene.name}`,
+      result_image_path: `${OUTPUT_DIR_REL}/${filename}`,
+      result_image_url: resultUrl,
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      cost_cny: costInfo.cost_cny,
+      params: {
+        scene_id: scene.id,
+        scene_name: scene.name,
+        aspect_ratio: aspectRatio,
+      },
+    });
+
     return NextResponse.json({
       result_id: outId,
-      result_image_url: `/assets/${OUTPUT_DIR_REL}/${filename}`,
+      result_image_url: resultUrl,
       mime_type: gen.mimeType,
       tokens: {
-        prompt: gen.usageMetadata?.promptTokenCount ?? 0,
-        completion: gen.usageMetadata?.candidatesTokenCount ?? 0,
+        prompt: promptTokens,
+        completion: completionTokens,
       },
       scene: {
         id: scene.id,

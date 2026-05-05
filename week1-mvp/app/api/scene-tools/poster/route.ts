@@ -9,42 +9,48 @@ import { recordUsage } from "@/lib/usage";
 import { assertWithinBudget, calcCost } from "@/lib/pricing";
 import { recordSingleShotJob } from "@/lib/jobs-db";
 import {
-  buildSocialSnapPrompt,
-  isValidSocialVibe,
-  type SocialVibe,
+  buildPosterPrompt,
+  isValidPosterComposition,
+  type PosterComposition,
 } from "@/lib/scene-tools-prompt";
 
 export const runtime = "nodejs";
 export const maxDuration = 600;
 
-// 社媒图：Pro 模型保证多人合成质量；2K 够用（社媒不需要 4K）
-const SNAP_MODEL = "gemini-3-pro-image-preview";
-const SNAP_SIZE = "2K" as const;
-// 温度稍高 —— "imperfection 就是真实感"，让模型自由发挥构图
-const SNAP_TEMP = 0.5;
+// 海报：Pro Image + 4K（要 hero/banner 用，必须高分辨率）
+const POSTER_MODEL = "gemini-3-pro-image-preview";
+const POSTER_SIZE = "4K" as const;
+// 温度低 —— 海报多人合成最大难点是 control，给模型自由发挥会失控
+const POSTER_TEMP = 0.3;
 
 const OUTPUT_DIR_REL = "outputs";
 
-// scene plate 同时接受 single 或 poster（社媒可在任何场景里拍）
+// scene plate 接受 single 或 poster 双库（虽然倾向 poster，但 single 也能强行用）
 const ALLOWED_USAGE = new Set(["single", "poster"]);
 
-const ALLOWED_RATIOS = ["9:16", "1:1", "4:5", "16:9", "3:4"];
+// poster 比例：偏横屏 / 正方 KV 用，竖屏少见
+const ALLOWED_RATIOS = [
+  "16:9",
+  "9:16",
+  "1:1",
+  "4:3",
+  "3:2",
+  "21:9",
+  "3:4",
+  "2:3",
+];
+
+const MAX_SOURCES = 5;
 
 /**
- * POST /api/scene-tools/social-snap
+ * POST /api/scene-tools/poster
  *
  * formData:
- *   - source_image0..2: File（1-3 张已有的成片，每张含 1 位模特+服装）
- *   - scene_id: number（任意 usage 都行）
- *   - aspect_ratio: '9:16' | '1:1' | '4:5' | '16:9' | '3:4'
- *   - vibe: 'casual' | 'party' | 'street' | 'lifestyle'
- *
- * 流程：
- *   1. 收集 1-3 张原片
- *   2. 加载 scene plate
- *   3. 拼装 prompt（按原片数适配）
- *   4. 调 Gemini Pro 多图合成（原片 + scene plate）
- *   5. 输出落盘 → 记账 → 返 result_url
+ *   - source_image0..4: File（1-5 张已有的成片）
+ *   - scene_id: number
+ *   - aspect_ratio: '16:9' | '9:16' | '1:1' | '4:3' | '3:2' | '21:9' | etc
+ *   - composition: 'static' | 'gathering'
+ *   - user_hint: string（可选，构图额外指令）
  */
 export async function POST(req: NextRequest) {
   try {
@@ -53,7 +59,7 @@ export async function POST(req: NextRequest) {
 
     const formData = await req.formData();
 
-    // ─── 收集原片（1-3 张） ───
+    // ─── 收集原片（1-5 张） ───
     const sourceFiles: File[] = [];
     for (const [key, value] of formData.entries()) {
       if (/^source_image\d+$/.test(key) && value instanceof File) {
@@ -62,13 +68,13 @@ export async function POST(req: NextRequest) {
     }
     if (sourceFiles.length === 0) {
       return NextResponse.json(
-        { error: "请上传至少 1 张原片（source_image0..N）" },
+        { error: "请上传至少 1 张原片" },
         { status: 400 },
       );
     }
-    if (sourceFiles.length > 3) {
+    if (sourceFiles.length > MAX_SOURCES) {
       return NextResponse.json(
-        { error: "最多 3 张原片" },
+        { error: `最多 ${MAX_SOURCES} 张原片` },
         { status: 400 },
       );
     }
@@ -93,14 +99,19 @@ export async function POST(req: NextRequest) {
       typeof aspectRatioRaw === "string" &&
       ALLOWED_RATIOS.includes(aspectRatioRaw)
         ? aspectRatioRaw
-        : "9:16"; // 默认竖屏 stories
+        : "16:9"; // 默认横屏 KV
 
-    // ─── vibe ───
-    const vibeRaw = formData.get("vibe");
-    if (!isValidSocialVibe(vibeRaw)) {
-      return NextResponse.json({ error: "vibe 非法" }, { status: 400 });
+    // ─── composition ───
+    const compositionRaw = formData.get("composition");
+    if (!isValidPosterComposition(compositionRaw)) {
+      return NextResponse.json({ error: "composition 非法" }, { status: 400 });
     }
-    const vibe: SocialVibe = vibeRaw;
+    const composition: PosterComposition = compositionRaw;
+
+    // ─── user_hint ───
+    const userHintRaw = formData.get("user_hint");
+    const userHint =
+      typeof userHintRaw === "string" ? userHintRaw.trim() : "";
 
     // ─── 加载 scene ───
     const db = getDb();
@@ -145,13 +156,18 @@ export async function POST(req: NextRequest) {
       { buffer: sceneBuf, mimeType: sceneMime },
     ];
 
-    const prompt = buildSocialSnapPrompt(sourceFiles.length, vibe, scene.name);
+    const prompt = buildPosterPrompt(
+      sourceFiles.length,
+      composition,
+      scene.name,
+      userHint || undefined,
+    );
 
     // ─── 调 Gemini ───
-    const gen = await generateImage(inputs, prompt, SNAP_MODEL, {
+    const gen = await generateImage(inputs, prompt, POSTER_MODEL, {
       aspectRatio,
-      imageSize: SNAP_SIZE,
-      temperature: SNAP_TEMP,
+      imageSize: POSTER_SIZE,
+      temperature: POSTER_TEMP,
     });
 
     // ─── 落盘 ───
@@ -159,7 +175,7 @@ export async function POST(req: NextRequest) {
     await fs.mkdir(outputsDir, { recursive: true });
 
     const ext = gen.mimeType.includes("png") ? "png" : "jpg";
-    const outId = `snap_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
+    const outId = `poster_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
     const filename = `${outId}.${ext}`;
     const absPath = path.join(outputsDir, filename);
     await fs.writeFile(absPath, gen.data);
@@ -167,17 +183,18 @@ export async function POST(req: NextRequest) {
     // ─── 记账 ───
     recordUsage({
       userId: user.id,
-      model: SNAP_MODEL,
+      model: POSTER_MODEL,
       feature: "other",
       usageMetadata: gen.usageMetadata,
       success: true,
       notes: {
-        kind: "scene-tools-social-snap",
+        kind: "scene-tools-poster",
         source_count: sourceFiles.length,
         scene_id: scene.id,
         scene_name: scene.name,
-        vibe,
+        composition,
         aspect_ratio: aspectRatio,
+        user_hint: userHint || null,
         out_id: outId,
       },
     });
@@ -185,13 +202,13 @@ export async function POST(req: NextRequest) {
     // ─── 写 history ───
     const promptTokens = gen.usageMetadata?.promptTokenCount ?? 0;
     const completionTokens = gen.usageMetadata?.candidatesTokenCount ?? 0;
-    const costInfo = calcCost(SNAP_MODEL, promptTokens, completionTokens);
+    const costInfo = calcCost(POSTER_MODEL, promptTokens, completionTokens);
     const resultUrl = `/assets/${OUTPUT_DIR_REL}/${filename}`;
     recordSingleShotJob({
       user_id: user.id,
-      feature: "social_snap",
-      model: SNAP_MODEL,
-      label: `社媒图 · ${scene.name}（${sourceFiles.length} 人 · ${vibe}）`,
+      feature: "poster",
+      model: POSTER_MODEL,
+      label: `氛围海报 · ${scene.name}（${sourceFiles.length} 人 · ${composition}）`,
       result_image_path: `${OUTPUT_DIR_REL}/${filename}`,
       result_image_url: resultUrl,
       prompt_tokens: promptTokens,
@@ -201,8 +218,9 @@ export async function POST(req: NextRequest) {
         source_count: sourceFiles.length,
         scene_id: scene.id,
         scene_name: scene.name,
-        vibe,
+        composition,
         aspect_ratio: aspectRatio,
+        user_hint: userHint || null,
       },
     });
 
@@ -213,12 +231,13 @@ export async function POST(req: NextRequest) {
       tokens: { prompt: promptTokens, completion: completionTokens },
       scene: { id: scene.id, name: scene.name },
       source_count: sourceFiles.length,
-      vibe,
+      composition,
+      aspect_ratio: aspectRatio,
     });
   } catch (e) {
     const status = (e as { status?: number }).status || 500;
     const msg = e instanceof Error ? e.message : String(e);
-    console.error("[/api/scene-tools/social-snap] 失败:", msg);
+    console.error("[/api/scene-tools/poster] 失败:", msg);
     return NextResponse.json({ error: msg }, { status });
   }
 }

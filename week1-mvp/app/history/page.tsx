@@ -41,12 +41,29 @@ type Me = {
   display_name: string | null;
 };
 
+type Feature =
+  | "recolor"
+  | "batch_photo"
+  | "background_swap"
+  | "poster"
+  | "social_snap"
+  | "identity_gen";
+
+const FEATURE_LABELS: Record<Feature, string> = {
+  recolor: "换色",
+  batch_photo: "批量摄影",
+  background_swap: "背景换图",
+  poster: "氛围海报",
+  social_snap: "社媒图",
+  identity_gen: "形象生成",
+};
+
 type JobRow = {
   id: string;
   user_id: number;
   username: string | null;
   display_name: string | null;
-  feature: "recolor" | "batch_photo";
+  feature: Feature;
   model: string;
   status: "running" | "canceling" | "canceled" | "completed" | "failed";
   total_count: number;
@@ -71,7 +88,16 @@ type Stats = {
 };
 
 type StatusTab = "all" | "active" | "completed" | "failed";
-type FeatureTab = "all" | "recolor" | "batch_photo";
+type FeatureTab = "all" | Feature;
+
+const FEATURE_TAB_OPTIONS: Array<{ value: FeatureTab; label: string }> = [
+  { value: "all", label: "全部工具" },
+  { value: "batch_photo", label: "批量摄影" },
+  { value: "recolor", label: "换色" },
+  { value: "background_swap", label: "背景换图" },
+  { value: "poster", label: "氛围海报" },
+  { value: "social_snap", label: "社媒图" },
+];
 
 function formatTime(unix: number): string {
   const d = new Date(unix * 1000);
@@ -114,13 +140,31 @@ function formatConfig(job: JobRow): string {
       chips.push(`${colors.length} 色: ${colors.map((c) => c.name).join(" / ")}`);
     }
     if (typeof p.image_count === "number") chips.push(`${p.image_count} 图`);
-  } else {
+  } else if (job.feature === "batch_photo") {
     if (p.identity_name) chips.push(`模特: ${p.identity_name as string}`);
     if (p.scene_name) chips.push(`场景: ${p.scene_name as string}`);
     if (Array.isArray(p.pose_names)) {
       const pns = p.pose_names as string[];
       if (pns.length) chips.push(`${pns.length} 姿势`);
     }
+  } else if (job.feature === "background_swap") {
+    if (p.scene_name) chips.push(`场景: ${p.scene_name as string}`);
+    if (p.aspect_ratio) chips.push(String(p.aspect_ratio));
+  } else if (job.feature === "poster") {
+    if (p.scene_name) chips.push(`场景: ${p.scene_name as string}`);
+    if (typeof p.source_count === "number")
+      chips.push(`${p.source_count} 人`);
+    if (p.composition) chips.push(String(p.composition));
+    if (p.aspect_ratio) chips.push(String(p.aspect_ratio));
+  } else if (job.feature === "social_snap") {
+    if (p.scene_name) chips.push(`场景: ${p.scene_name as string}`);
+    if (typeof p.source_count === "number")
+      chips.push(`${p.source_count} 人`);
+    if (p.vibe) chips.push(String(p.vibe));
+    if (p.aspect_ratio) chips.push(String(p.aspect_ratio));
+  } else if (job.feature === "identity_gen") {
+    if (p.ethnicity) chips.push(String(p.ethnicity));
+    if (p.body_shape) chips.push(String(p.body_shape));
   }
   if (p.quality_level) chips.push(String(p.quality_level).toUpperCase());
   if (p.realism_name) chips.push(`${p.realism_name}`);
@@ -357,9 +401,11 @@ export default function HistoryPage() {
               setPage(1);
             }}
           >
-            <option value="all">全部功能</option>
-            <option value="recolor">换色</option>
-            <option value="batch_photo">批量摄影</option>
+            {FEATURE_TAB_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
           </Select>
           {me?.role === "admin" ? (
             <Select
@@ -495,13 +541,31 @@ function JobCard({
   onToggleSelect: () => void;
   onOpenDetail: () => void;
 }) {
-  const featureIcon =
-    job.feature === "recolor" ? (
-      <Palette size={14} strokeWidth={2} className="text-brand-400" />
-    ) : (
-      <Camera size={14} strokeWidth={2} className="text-pink-600" />
-    );
-  const featureLabel = job.feature === "recolor" ? "换色" : "批量摄影";
+  const featureIcon = (() => {
+    switch (job.feature) {
+      case "recolor":
+        return <Palette size={14} strokeWidth={2} className="text-brand-400" />;
+      case "batch_photo":
+        return <Camera size={14} strokeWidth={2} className="text-pink-600" />;
+      case "background_swap":
+        return <Eye size={14} strokeWidth={2} className="text-emerald-500" />;
+      case "poster":
+        return (
+          <Users size={14} strokeWidth={2} className="text-purple-500" />
+        );
+      case "social_snap":
+        return (
+          <Camera size={14} strokeWidth={2} className="text-orange-500" />
+        );
+      case "identity_gen":
+        return (
+          <Users size={14} strokeWidth={2} className="text-amber-500" />
+        );
+      default:
+        return <Clock size={14} strokeWidth={2} className="text-fg-tertiary" />;
+    }
+  })();
+  const featureLabel = FEATURE_LABELS[job.feature] || job.feature;
 
   const statusConfig: Record<
     JobRow["status"],
