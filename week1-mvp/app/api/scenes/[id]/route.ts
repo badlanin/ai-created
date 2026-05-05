@@ -38,6 +38,13 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       const valid = c === "" ? null : c in SCENE_CATEGORY_LABELS ? c : null;
       push("category", valid);
     }
+    // usage：'single' / 'poster'，其他值忽略
+    if (typeof body.usage === "string") {
+      const u = body.usage.trim();
+      if (u === "single" || u === "poster") {
+        push("usage", u);
+      }
+    }
 
     if (updates.length === 0) {
       return NextResponse.json({ error: "没有要更新的字段" }, { status: 400 });

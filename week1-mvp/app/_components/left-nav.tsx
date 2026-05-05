@@ -104,6 +104,25 @@ export function LeftNav({
     if (adminExpanded) setAdminOpen(true);
   }, [adminExpanded]);
 
+  // 场景工具组（admin 专属，新功能区块）
+  const sceneToolsPaths = useMemo(
+    () => [
+      "/admin/scene-tools/background-swap",
+      "/admin/scene-tools/poster",
+      "/admin/scene-tools/social-snap",
+    ],
+    [],
+  );
+  const sceneToolsExpanded = useMemo(
+    () => sceneToolsPaths.some((p) => isActive(p)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pathname],
+  );
+  const [sceneToolsOpen, setSceneToolsOpen] = useState(sceneToolsExpanded);
+  useEffect(() => {
+    if (sceneToolsExpanded) setSceneToolsOpen(true);
+  }, [sceneToolsExpanded]);
+
   const displayName = user.display_name || user.username;
 
   // ===== 折叠态 =====
@@ -288,6 +307,22 @@ export function LeftNav({
               <SubItem href="/admin/photography" label="摄影" active={isActive("/admin/photography")} />
               <SubItem href="/admin/prompts" label="Prompt" active={isActive("/admin/prompts")} />
               <SubItem href="/admin/ai-models" label="AI 模型" active={isActive("/admin/ai-models")} />
+            </Collapsible>
+
+            <SectionHeader className="mt-5">场景工具</SectionHeader>
+            <Collapsible
+              label="生成场景图"
+              Icon={Sparkles}
+              open={sceneToolsOpen}
+              onToggle={() => setSceneToolsOpen((v) => !v)}
+              hasActive={sceneToolsExpanded}
+            >
+              <SubItem
+                href="/admin/scene-tools/background-swap"
+                label="背景换图"
+                active={isActive("/admin/scene-tools/background-swap")}
+              />
+              {/* 子功能 2 / 3 后续上线 */}
             </Collapsible>
 
             <SectionHeader className="mt-5">系统</SectionHeader>

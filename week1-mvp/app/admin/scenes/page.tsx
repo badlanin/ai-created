@@ -22,7 +22,13 @@ type Scene = {
   notes: string | null;
   category: string | null;
   category_label: string | null;
+  usage: "single" | "poster";
   sort_order: number;
+};
+
+const USAGE_LABELS: Record<"single" | "poster", string> = {
+  single: "主图",
+  poster: "海报",
 };
 
 export default function ScenesAdminPage() {
@@ -33,6 +39,7 @@ export default function ScenesAdminPage() {
   const [file, setFile] = useState<File | null>(null);
   const [name, setName] = useState("");
   const [category, setCategory] = useState<string>(""); // 空 = 未分类
+  const [usage, setUsage] = useState<"single" | "poster">("single");
   const [tags, setTags] = useState("");
   const [notes, setNotes] = useState("");
   const [sortOrder, setSortOrder] = useState(0);
@@ -69,6 +76,7 @@ export default function ScenesAdminPage() {
       fd.append("image", file);
       fd.append("name", name.trim());
       if (category) fd.append("category", category);
+      fd.append("usage", usage);
       if (tags.trim()) fd.append("tags", tags.trim());
       if (notes.trim()) fd.append("notes", notes.trim());
       fd.append("sort_order", String(sortOrder));
@@ -78,6 +86,7 @@ export default function ScenesAdminPage() {
       setFile(null);
       setName("");
       setCategory("");
+      setUsage("single");
       setTags("");
       setNotes("");
       setSortOrder(0);
@@ -261,6 +270,21 @@ export default function ScenesAdminPage() {
             </div>
             <div>
               <label className="block text-[12px] text-fg-secondary mb-1.5">
+                场景库
+              </label>
+              <select
+                value={usage}
+                onChange={(e) =>
+                  setUsage(e.target.value as "single" | "poster")
+                }
+                className="input select"
+              >
+                <option value="single">主图场景库（批量摄影 / 背景换图用）</option>
+                <option value="poster">海报大场景库（多人氛围 / 社媒用）</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[12px] text-fg-secondary mb-1.5">
                 标签（逗号分隔）
               </label>
               <input
@@ -435,11 +459,25 @@ function SceneCard({
             <div className="text-[13px] font-medium text-fg-primary truncate">
               {item.name}
             </div>
-            {item.category_label && (
-              <span className="chip chip-brand text-[10px] shrink-0">
-                {item.category_label}
+            <div className="flex gap-1 shrink-0">
+              <span
+                className={`chip text-[10px] ${
+                  item.usage === "poster" ? "chip-warn" : "chip-success"
+                }`}
+                title={
+                  item.usage === "poster"
+                    ? "海报大场景库（不会出现在批量摄影里）"
+                    : "主图场景库（批量摄影/背景换图用）"
+                }
+              >
+                {USAGE_LABELS[item.usage]}
               </span>
-            )}
+              {item.category_label && (
+                <span className="chip chip-brand text-[10px]">
+                  {item.category_label}
+                </span>
+              )}
+            </div>
           </div>
           {item.tags && (
             <div className="flex flex-wrap gap-1 mt-1.5">
@@ -461,6 +499,17 @@ function SceneCard({
               className="text-[12px] text-fg-secondary hover:text-fg-primary"
             >
               编辑
+            </button>
+            <button
+              onClick={() =>
+                onPatch(item.id, {
+                  usage: item.usage === "single" ? "poster" : "single",
+                })
+              }
+              className="text-[12px] text-fg-secondary hover:text-fg-primary"
+              title="切换主图/海报库"
+            >
+              切换 → {item.usage === "single" ? "海报" : "主图"}
             </button>
             <button
               onClick={() => onDelete(item.id)}

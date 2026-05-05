@@ -17,6 +17,7 @@ type SceneRow = {
   tags: string | null;
   notes: string | null;
   category: string | null;
+  usage: "single" | "poster";
   sort_order: number;
   created_at: number;
 };
@@ -32,21 +33,36 @@ function decorateScene(r: SceneRow) {
 }
 
 /**
- * GET /api/scenes
+ * GET /api/scenes?usage=single|poster
  *
- * 返回所有场景，附 image_url + category_label。
- * （前端按 category_label 分组展示）
+ * 返回场景列表，附 image_url + category_label。
+ * 不传 usage 参数 = 全部返回（admin 后台用）；
+ * 传 usage=single = 只返主图场景库（批量摄影 + 背景换图用）；
+ * 传 usage=poster = 只返海报大场景库（氛围海报用）。
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     await requireUser();
     const db = getDb();
-    const rows = db
-      .prepare(
-        `SELECT id, name, image_path, tags, notes, category, sort_order, created_at
-         FROM scenes ORDER BY sort_order ASC, id ASC`,
-      )
-      .all() as SceneRow[];
+    const url = new URL(req.url);
+    const usage = url.searchParams.get("usage");
+
+    let rows: SceneRow[];
+    if (usage === "single" || usage === "poster") {
+      rows = db
+        .prepare(
+          `SELECT id, name, image_path, tags, notes, category, usage, sort_order, created_at
+           FROM scenes WHERE usage = ? ORDER BY sort_order ASC, id ASC`,
+        )
+        .all(usage) as SceneRow[];
+    } else {
+      rows = db
+        .prepare(
+          `SELECT id, name, image_path, tags, notes, category, usage, sort_order, created_at
+           FROM scenes ORDER BY sort_order ASC, id ASC`,
+        )
+        .all() as SceneRow[];
+    }
     return NextResponse.json(rows.map(decorateScene));
   } catch (e) {
     const status = (e as { status?: number }).status || 500;
@@ -92,13 +108,18 @@ export async function POST(req: NextRequest) {
     const category =
       rawCategory in SCENE_CATEGORY_LABELS ? rawCategory : null;
 
+    // 验证 usage：'single' / 'poster'，缺省 'single'
+    const rawUsage = (formData.get("usage") as string | null)?.trim() || "";
+    const usage: "single" | "poster" =
+      rawUsage === "poster" ? "poster" : "single";
+
     const saved = await saveUploadFile(image, "scenes");
 
     const db = getDb();
     const result = db
       .prepare(
-        `INSERT INTO scenes (name, image_path, tags, notes, category, sort_order, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO scenes (name, image_path, tags, notes, category, usage, sort_order, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         name,
@@ -106,13 +127,14 @@ export async function POST(req: NextRequest) {
         (formData.get("tags") as string | null)?.trim() || null,
         (formData.get("notes") as string | null)?.trim() || null,
         category,
+        usage,
         Number(formData.get("sort_order")) || 0,
         user.id,
       );
 
     const row = db
       .prepare(
-        `SELECT id, name, image_path, tags, notes, category, sort_order, created_at
+        `SELECT id, name, image_path, tags, notes, category, usage, sort_order, created_at
          FROM scenes WHERE id = ?`,
       )
       .get(result.lastInsertRowid) as SceneRow;

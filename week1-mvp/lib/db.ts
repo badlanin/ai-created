@@ -362,12 +362,21 @@ function migrate(db: Database.Database) {
   ensureColumn(db, "render_job_items", "correction_meta", "TEXT");
   // 姿势 hero 标记（首图专用），老库补列
   ensureColumn(db, "poses", "is_hero", "INTEGER NOT NULL DEFAULT 0");
+  // 场景库分流：'single' = 主图场景库（批量摄影/背景换图用），
+  //            'poster' = 海报大场景库（多人氛围海报、社媒图等专用）
+  ensureColumn(
+    db,
+    "scenes",
+    "usage",
+    "TEXT NOT NULL DEFAULT 'single'",
+  );
   // 新增索引
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_models_category ON models(kind, category, sort_order);
     CREATE INDEX IF NOT EXISTS idx_colors_group ON colors(color_group, sort_order);
     CREATE INDEX IF NOT EXISTS idx_scenes_category ON scenes(category, sort_order);
     CREATE INDEX IF NOT EXISTS idx_poses_hero ON poses(is_hero, sort_order);
+    CREATE INDEX IF NOT EXISTS idx_scenes_usage ON scenes(usage, sort_order);
   `);
 
   // 启动时恢复：把被进程重启打断的 item 标为 failed
@@ -399,6 +408,8 @@ function migrate(db: Database.Database) {
   seedColors(db);
   seedIdentitiesFromAssets(db);
   seedScenesFromAssets(db);
+  // 老库的"v2 新场景"补种（manifest 含 27 张新场景，按 name 幂等）
+  migrateInsertNewScenes(db);
 }
 
 /**
@@ -1926,6 +1937,10 @@ interface SeedSceneEntry {
   file: string;
   name: string;
   tags?: string;
+  /** 场景分类 key（wedding / outdoor / studio / street / indoor / garden）*/
+  category?: string;
+  /** 场景库分流：'single' = 主图场景库；'poster' = 海报大场景库。默认 single */
+  usage?: "single" | "poster";
   sort_order: number;
 }
 
@@ -2067,8 +2082,8 @@ function seedScenesFromAssets(db: Database.Database) {
   }
 
   const stmt = db.prepare(
-    `INSERT INTO scenes (name, image_path, tags, sort_order)
-     VALUES (@name, @image_path, @tags, @sort_order)`,
+    `INSERT INTO scenes (name, image_path, tags, category, usage, sort_order)
+     VALUES (@name, @image_path, @tags, @category, @usage, @sort_order)`,
   );
   const tx = db.transaction(() => {
     for (const p of prepared) {
@@ -2076,10 +2091,89 @@ function seedScenesFromAssets(db: Database.Database) {
         name: p.name,
         image_path: p.image_path,
         tags: p.tags || null,
+        category: p.category || null,
+        usage: p.usage || "single",
         sort_order: p.sort_order,
       });
     }
   });
   tx();
   console.log(`[db] seedScenesFromAssets: 写入 ${prepared.length} 张场景图`);
+}
+
+/**
+ * 老库幂等迁移：把 manifest.json 里"按 name 不在 DB 的"场景补种进来。
+ *
+ * seedScenesFromAssets 自带"表非空就早退"保护 → 已部署的库（有 3 张老 scenes）
+ * 不会得到后续追加的 27 张新场景。这里逐条按 name 检查，不存在则补。
+ *
+ * 同时会按 manifest 写入 usage / category（即使老 row 已经存在也会
+ * 在 row 缺 usage 时回填）。
+ *
+ * 单次跑由 settings 表里的 'migrated_scenes_v2' 标记守护，
+ * 重复部署不会再次插入——这样 admin 删除场景后下次 deploy 不会反复回填。
+ */
+function migrateInsertNewScenes(db: Database.Database) {
+  const FLAG = "migrated_scenes_v2";
+  const flag = db
+    .prepare(`SELECT value FROM settings WHERE key = ?`)
+    .get(FLAG) as { value: string } | undefined;
+  if (flag?.value === "done") return;
+
+  let entries: SeedSceneEntry[];
+  let copySeedAsset: typeof import("./seed-assets").copySeedAsset;
+  try {
+    const seedAssets = require("./seed-assets") as typeof import("./seed-assets");
+    if (!seedAssets.hasSeedAssets()) {
+      console.log("[db] seed-assets/ not found, 跳过 migrateInsertNewScenes");
+      return;
+    }
+    entries = seedAssets.readManifest<SeedSceneEntry[]>(
+      "scenes/manifest.json",
+    );
+    copySeedAsset = seedAssets.copySeedAsset;
+  } catch (err) {
+    console.warn("[db] migrateInsertNewScenes 读取 manifest 失败:", err);
+    return;
+  }
+
+  const findByName = db.prepare(`SELECT id FROM scenes WHERE name = ?`);
+  const insertStmt = db.prepare(
+    `INSERT INTO scenes (name, image_path, tags, category, usage, sort_order)
+     VALUES (@name, @image_path, @tags, @category, @usage, @sort_order)`,
+  );
+
+  let inserted = 0;
+  const tx = db.transaction(() => {
+    for (const e of entries) {
+      if (findByName.get(e.name)) continue; // 同名已存在 → 跳过
+      try {
+        const { relPath } = copySeedAsset(e.file, "scenes");
+        insertStmt.run({
+          name: e.name,
+          image_path: relPath,
+          tags: e.tags || null,
+          category: e.category || null,
+          usage: e.usage || "single",
+          sort_order: e.sort_order,
+        });
+        inserted += 1;
+      } catch (err) {
+        console.warn(`[db] migrateInsertNewScenes 复制失败 (${e.file}):`, err);
+      }
+    }
+    // 标记已跑，下次部署不再扫
+    db.prepare(
+      `INSERT OR REPLACE INTO settings (key, value, notes) VALUES (?, 'done', ?)`,
+    ).run(
+      FLAG,
+      "scenes 库 v2 已补种完成（27 张新 scene plate 单/海报双库）",
+    );
+  });
+  tx();
+  if (inserted > 0) {
+    console.log(
+      `[db] migrateInsertNewScenes: 老库补种 ${inserted} 张新场景（已标记 ${FLAG}=done）`,
+    );
+  }
 }

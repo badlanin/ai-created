@@ -244,7 +244,7 @@ function BatchPhotoTab({
 
     Promise.all([
       load("/api/identities"),
-      load("/api/scenes"),
+      load("/api/scenes?usage=single"),
       load("/api/prompts?kind=on_model"),
       load("/api/photography"),
       load("/api/realism"),
