@@ -2114,7 +2114,10 @@ function seedScenesFromAssets(db: Database.Database) {
  * 重复部署不会再次插入——这样 admin 删除场景后下次 deploy 不会反复回填。
  */
 function migrateInsertNewScenes(db: Database.Database) {
-  const FLAG = "migrated_scenes_v2";
+  // 每次给 manifest 加新场景时把版本号 bump 一下，让已部署的 VM 再跑一次补种。
+  // v2 = 初次架构落地（3 张老 scene + 占位）；
+  // v3 = 加入 25 张实景图（10 单人主图 + 15 海报大场景，2026-05-05）
+  const FLAG = "migrated_scenes_v3";
   const flag = db
     .prepare(`SELECT value FROM settings WHERE key = ?`)
     .get(FLAG) as { value: string } | undefined;
@@ -2167,7 +2170,7 @@ function migrateInsertNewScenes(db: Database.Database) {
       `INSERT OR REPLACE INTO settings (key, value, notes) VALUES (?, 'done', ?)`,
     ).run(
       FLAG,
-      "scenes 库 v2 已补种完成（27 张新 scene plate 单/海报双库）",
+      "scenes 库 v3 已补种（25 张实景图：10 单人主图 + 15 海报大场景）",
     );
   });
   tx();
