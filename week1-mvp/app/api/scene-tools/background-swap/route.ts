@@ -8,7 +8,11 @@ import { generateImage, type GenImageInput } from "@/lib/gemini-image";
 import { recordUsage } from "@/lib/usage";
 import { assertWithinBudget, calcCost } from "@/lib/pricing";
 import { recordSingleShotJob } from "@/lib/jobs-db";
-import { buildBackgroundSwapPrompt } from "@/lib/scene-tools-prompt";
+import {
+  buildBackgroundSwapPrompt,
+  isValidBackgroundSwapMode,
+  type BackgroundSwapMode,
+} from "@/lib/scene-tools-prompt";
 
 export const runtime = "nodejs";
 export const maxDuration = 600;
@@ -16,8 +20,13 @@ export const maxDuration = 600;
 // 强制 Pro 模型 + 4K：背景换图必须用最强档（细节保留 + 光线匹配是难点）
 const SWAP_MODEL = "gemini-3-pro-image-preview";
 const SWAP_SIZE = "4K" as const;
-// 温度低，最大化"保留原图人物"的确定性
-const SWAP_TEMP = 0.2;
+// 不同 mode 用不同温度：
+// - composition：稍高（0.4）让模型按场景重新布光 / 微调姿势
+// - edit：低（0.2）锁定原图人物状态
+const TEMP_BY_MODE: Record<BackgroundSwapMode, number> = {
+  composition: 0.4,
+  edit: 0.2,
+};
 
 const OUTPUT_DIR_REL = "outputs";
 
@@ -27,12 +36,16 @@ const OUTPUT_DIR_REL = "outputs";
  * formData:
  *   - source_image: File (the original batch-photo result, the model + clothing)
  *   - scene_id: number (scene plate id from scenes table, must be usage='single')
- *   - aspect_ratio: '3:4' | '4:3' | '1:1' | etc (optional; defaults to source's nominal)
+ *   - aspect_ratio: '3:4' | '4:3' | '1:1' | etc (optional; defaults '3:4')
+ *   - mode: 'composition' | 'edit' (optional; default 'composition')
+ *       composition = 把人物当 identity+服装参考，在新场景里重新拍一张（重置光线/姿势/取景）
+ *       edit = 在原片基础上仅替换背景（保留原姿势/原光线，几何对齐）
+ *   - user_hint: string (optional, ≤200 chars) — 给模型的额外提示，例如"侧身倚墙""略低头微笑"
  *
  * 流程：
- *   1. 校验 source_image + scene_id（scene 必须 usage='single'）
- *   2. 读 scene plate 文件 → 拼装 prompt
- *   3. 调 Gemini Pro Image edit（双图输入：原片 + scene plate）
+ *   1. 校验 source_image + scene_id（scene 必须 usage='single'）+ mode + user_hint
+ *   2. 读 scene plate 文件 → 拼装 prompt（按 mode 选 composition / edit）
+ *   3. 调 Gemini Pro Image（双图输入：原片 + scene plate）
  *   4. 输出保存到 DATA_DIR/outputs/swap_<id>.png
  *   5. 记账
  *   6. 返回 result_image_url
@@ -83,6 +96,29 @@ export async function POST(req: NextRequest) {
         ? aspectRatioRaw
         : "3:4";
 
+    // ─── mode（composition 默认 / edit 兜底）───
+    const modeRaw = formData.get("mode");
+    const mode: BackgroundSwapMode =
+      typeof modeRaw === "string" && isValidBackgroundSwapMode(modeRaw)
+        ? modeRaw
+        : "composition";
+
+    // ─── user_hint（可选，≤200 字）───
+    const userHintRaw = formData.get("user_hint");
+    let userHint: string | undefined;
+    if (typeof userHintRaw === "string") {
+      const trimmed = userHintRaw.trim();
+      if (trimmed.length > 0) {
+        if (trimmed.length > 200) {
+          return NextResponse.json(
+            { error: "user_hint 太长（限 200 字）" },
+            { status: 400 },
+          );
+        }
+        userHint = trimmed;
+      }
+    }
+
     // ─── 读 scene plate ───
     const db = getDb();
     const scene = db
@@ -128,13 +164,13 @@ export async function POST(req: NextRequest) {
       { buffer: sceneBuf, mimeType: sceneMime }, // IMAGE 2 = scene plate
     ];
 
-    const prompt = buildBackgroundSwapPrompt(scene.name);
+    const prompt = buildBackgroundSwapPrompt(scene.name, mode, userHint);
 
     // ─── 调 Gemini Pro Image ───
     const gen = await generateImage(inputs, prompt, SWAP_MODEL, {
       aspectRatio,
       imageSize: SWAP_SIZE,
-      temperature: SWAP_TEMP,
+      temperature: TEMP_BY_MODE[mode],
     });
 
     // ─── 落盘 ───
@@ -158,6 +194,8 @@ export async function POST(req: NextRequest) {
         kind: "scene-tools-background-swap",
         scene_id: scene.id,
         scene_name: scene.name,
+        mode,
+        user_hint: userHint || null,
         out_id: outId,
       },
     });
@@ -171,7 +209,7 @@ export async function POST(req: NextRequest) {
       user_id: user.id,
       feature: "background_swap",
       model: SWAP_MODEL,
-      label: `背景换图 · ${scene.name}`,
+      label: `背景换图 · ${scene.name}${mode === "composition" ? "（合成）" : "（编辑）"}`,
       result_image_path: `${OUTPUT_DIR_REL}/${filename}`,
       result_image_url: resultUrl,
       prompt_tokens: promptTokens,
@@ -181,6 +219,8 @@ export async function POST(req: NextRequest) {
         scene_id: scene.id,
         scene_name: scene.name,
         aspect_ratio: aspectRatio,
+        mode,
+        user_hint: userHint || null,
       },
     });
 
@@ -196,6 +236,8 @@ export async function POST(req: NextRequest) {
         id: scene.id,
         name: scene.name,
       },
+      mode,
+      user_hint: userHint || null,
     });
   } catch (e) {
     const status = (e as { status?: number }).status || 500;

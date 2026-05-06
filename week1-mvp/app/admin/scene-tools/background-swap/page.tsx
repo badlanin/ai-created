@@ -10,6 +10,10 @@ import {
   X,
 } from "lucide-react";
 import { Thumbnail, ThumbnailBadge } from "@/app/_components/thumbnail";
+import {
+  BG_SWAP_MODE_OPTIONS,
+  type BackgroundSwapMode,
+} from "@/lib/scene-tools-prompt";
 
 /* ─────────────────────────────────────────────────────────
  *  类型
@@ -31,6 +35,8 @@ type SwapResult = {
   mime_type: string;
   tokens: { prompt: number; completion: number };
   scene: { id: number; name: string };
+  mode?: BackgroundSwapMode;
+  user_hint?: string | null;
 };
 
 const ASPECT_RATIOS = [
@@ -55,6 +61,8 @@ export default function BackgroundSwapPage() {
   const [sourceUrl, setSourceUrl] = useState<string | null>(null);
   const [selectedSceneId, setSelectedSceneId] = useState<number | null>(null);
   const [aspectRatio, setAspectRatio] = useState("3:4");
+  const [mode, setMode] = useState<BackgroundSwapMode>("composition");
+  const [userHint, setUserHint] = useState("");
 
   // 状态
   const [submitting, setSubmitting] = useState(false);
@@ -114,6 +122,9 @@ export default function BackgroundSwapPage() {
       fd.append("source_image", sourceFile);
       fd.append("scene_id", String(selectedSceneId));
       fd.append("aspect_ratio", aspectRatio);
+      fd.append("mode", mode);
+      const trimmedHint = userHint.trim();
+      if (trimmedHint) fd.append("user_hint", trimmedHint);
 
       const res = await fetch("/api/scene-tools/background-swap", {
         method: "POST",
@@ -150,7 +161,7 @@ export default function BackgroundSwapPage() {
         </h1>
         <p className="mt-1 text-sm text-fg-tertiary">
           上传一张已有的产品成片 → 选一张主图场景库的氛围图 → AI
-          会保留人物 / 服装 / 姿势，把背景替换为新场景，并匹配新场景的光线方向。
+          会以原片的人物/服装为参考，在新场景里重新拍一张：保留模特身份与服装细节，重新打光，并允许姿势自然适应新场景。
         </p>
         <p className="mt-1 text-[11px] text-fg-muted">
           单次成本约 ¥1.7（Pro 模型 + 4K）。30-90 秒出图。
@@ -270,6 +281,30 @@ export default function BackgroundSwapPage() {
           <div className="space-y-3 mb-4">
             <div>
               <label className="block text-[11px] text-fg-tertiary mb-1">
+                生成模式
+              </label>
+              <select
+                value={mode}
+                onChange={(e) =>
+                  setMode(e.target.value as BackgroundSwapMode)
+                }
+                className="input select text-sm h-9"
+              >
+                {BG_SWAP_MODE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+              <div className="text-[10px] text-fg-muted mt-1 leading-snug">
+                {mode === "composition"
+                  ? "推荐：人物在新场景中重新打光、姿势可微调，整合更自然。"
+                  : "兜底：原图所有元素锁死，仅替换背景；快但易出生硬合成感。"}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-fg-tertiary mb-1">
                 输出比例
               </label>
               <select
@@ -285,6 +320,23 @@ export default function BackgroundSwapPage() {
               </select>
               <div className="text-[10px] text-fg-muted mt-1">
                 建议跟原片比例一致，否则会被裁切
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-fg-tertiary mb-1">
+                额外提示（可选）
+              </label>
+              <textarea
+                value={userHint}
+                onChange={(e) => setUserHint(e.target.value.slice(0, 200))}
+                placeholder="例如：侧身倚墙、略低头微笑、半身近景"
+                rows={2}
+                className="input text-sm w-full resize-none"
+              />
+              <div className="text-[10px] text-fg-muted mt-1 flex justify-between">
+                <span>给模型一些方向提示（姿势 / 取景 / 表情）</span>
+                <span>{userHint.length}/200</span>
               </div>
             </div>
 
@@ -320,8 +372,10 @@ export default function BackgroundSwapPage() {
                 />
               </div>
               <div className="text-[11px] text-fg-muted">
-                场景：{result.scene.name} · tokens {result.tokens.prompt}/
-                {result.tokens.completion} · ¥{estCostCny}
+                场景：{result.scene.name} ·{" "}
+                {result.mode === "edit" ? "硬换" : "重新合成"} · tokens{" "}
+                {result.tokens.prompt}/{result.tokens.completion} · ¥
+                {estCostCny}
               </div>
               <div className="flex gap-2">
                 <a

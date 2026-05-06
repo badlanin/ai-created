@@ -23,39 +23,51 @@ type Scene = {
   category_label: string | null;
 };
 
-type SnapResult = {
+type PosterResult = {
   result_id: string;
   result_image_url: string;
   tokens: { prompt: number; completion: number };
   scene: { id: number; name: string };
   source_count: number;
-  vibe: string;
+  composition: string;
+  aspect_ratio: string;
 };
 
-type Vibe = "casual" | "party" | "street" | "lifestyle";
+type Composition = "static" | "gathering";
 
-const VIBE_OPTIONS: Array<{ value: Vibe; label: string }> = [
-  { value: "casual", label: "日常 Casual" },
-  { value: "party", label: "派对 Party" },
-  { value: "street", label: "街拍 Street" },
-  { value: "lifestyle", label: "Lifestyle 生活" },
+const COMPOSITION_OPTIONS: Array<{
+  value: Composition;
+  label: string;
+  desc: string;
+}> = [
+  {
+    value: "static",
+    label: "分区站位",
+    desc: "每人占一区，无重叠 · 最稳",
+  },
+  {
+    value: "gathering",
+    label: "松散群组",
+    desc: "可对视、轻接触 · 中等难度",
+  },
 ];
 
 const ASPECT_RATIOS = [
-  { value: "9:16", label: "9:16 竖（Stories / Reels）" },
-  { value: "4:5", label: "4:5 竖（Feed）" },
-  { value: "1:1", label: "1:1 方（Feed）" },
-  { value: "16:9", label: "16:9 横（横屏 Stories）" },
-  { value: "3:4", label: "3:4 标准竖" },
+  { value: "16:9", label: "16:9 横（PC Hero）" },
+  { value: "9:16", label: "9:16 竖（手机 Hero / 海报）" },
+  { value: "1:1", label: "1:1 方（社媒 KV）" },
+  { value: "21:9", label: "21:9 超宽 banner" },
+  { value: "4:3", label: "4:3 横" },
+  { value: "3:2", label: "3:2 横" },
 ];
 
-const MAX_SOURCES = 3;
+const MAX_SOURCES = 5;
 
 /* ─────────────────────────────────────────────────────────
  *  页面主体
  * ───────────────────────────────────────────────────────── */
 
-export default function SocialSnapPage() {
+export default function PosterPage() {
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [loadingScenes, setLoadingScenes] = useState(true);
 
@@ -63,15 +75,16 @@ export default function SocialSnapPage() {
   const [sourceFiles, setSourceFiles] = useState<File[]>([]);
   const [sourceUrls, setSourceUrls] = useState<string[]>([]);
   const [selectedSceneId, setSelectedSceneId] = useState<number | null>(null);
-  const [aspectRatio, setAspectRatio] = useState<string>("9:16");
-  const [vibe, setVibe] = useState<Vibe>("casual");
+  const [aspectRatio, setAspectRatio] = useState<string>("16:9");
+  const [composition, setComposition] = useState<Composition>("static");
+  const [userHint, setUserHint] = useState("");
 
   // 状态
   const [submitting, setSubmitting] = useState(false);
-  const [result, setResult] = useState<SnapResult | null>(null);
+  const [result, setResult] = useState<PosterResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // 加载 scenes（all usage —— 社媒可在任何场景）
+  // 加载 scenes（all usage —— 海报场景倾向 poster 库但 single 也能强行用）
   useEffect(() => {
     fetch("/api/scenes")
       .then((r) => (r.ok ? r.json() : []))
@@ -80,13 +93,11 @@ export default function SocialSnapPage() {
       .finally(() => setLoadingScenes(false));
   }, []);
 
-  // 维护 sourceUrls 与 sourceFiles 同步（local preview blob URLs）
+  // 维护 sourceUrls
   useEffect(() => {
     const urls = sourceFiles.map((f) => URL.createObjectURL(f));
     setSourceUrls(urls);
-    return () => {
-      urls.forEach((u) => URL.revokeObjectURL(u));
-    };
+    return () => urls.forEach((u) => URL.revokeObjectURL(u));
   }, [sourceFiles]);
 
   function onPickSources(files: FileList | null) {
@@ -100,11 +111,7 @@ export default function SocialSnapPage() {
       setError("请上传图片格式（PNG / JPG / WebP）");
       return;
     }
-    // 累加但不超过 MAX_SOURCES
-    setSourceFiles((prev) => {
-      const merged = [...prev, ...valid].slice(0, MAX_SOURCES);
-      return merged;
-    });
+    setSourceFiles((prev) => [...prev, ...valid].slice(0, MAX_SOURCES));
     setError(null);
     setResult(null);
   }
@@ -135,9 +142,10 @@ export default function SocialSnapPage() {
       });
       fd.append("scene_id", String(selectedSceneId));
       fd.append("aspect_ratio", aspectRatio);
-      fd.append("vibe", vibe);
+      fd.append("composition", composition);
+      if (userHint.trim()) fd.append("user_hint", userHint.trim());
 
-      const res = await fetch("/api/scene-tools/social-snap", {
+      const res = await fetch("/api/scene-tools/poster", {
         method: "POST",
         body: fd,
       });
@@ -145,7 +153,7 @@ export default function SocialSnapPage() {
         const body = (await res.json()) as { error?: string };
         throw new Error(body.error || res.statusText);
       }
-      const data = (await res.json()) as SnapResult;
+      const data = (await res.json()) as PosterResult;
       setResult(data);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -154,7 +162,7 @@ export default function SocialSnapPage() {
     }
   }
 
-  // 估算成本：Pro 2K ~ ¥0.9
+  // 估算成本：Pro 4K ~ ¥1.7
   const estCostCny =
     result &&
     (
@@ -168,14 +176,14 @@ export default function SocialSnapPage() {
       <header className="mb-6">
         <h1 className="text-2xl font-bold text-fg-primary flex items-center gap-2">
           <Sparkles size={20} className="text-brand-400" strokeWidth={2.2} />
-          社媒图（Phone Snap）
+          氛围海报（KV / Banner）
         </h1>
         <p className="mt-1 text-sm text-fg-tertiary">
-          上传 1-3 张已有的产品成片 → 选 1 张场景 → AI 把这些人合成到新场景里
-          + 故意"拍坏"的手机随手拍效果。适合发小红书、Ins、抖音的日常推广图。
+          上传 1-5 张已有的产品成片 → 选 1 张场景（推荐海报库的 16:9 大场景）→
+          AI 把这些人合成到一张 editorial 大片里。适合网站 hero、横幅 KV、营销海报。
         </p>
         <p className="mt-1 text-[11px] text-fg-muted">
-          Pro 模型 + 2K ≈ ¥0.9/张。多人合成是 AI 弱项，第一版可能要试几次。
+          Pro 模型 + 4K ≈ ¥1.7/张。多人合成是 AI 弱项 —— 第一版可能要试 2-3 次挑最好的。
         </p>
       </header>
 
@@ -186,16 +194,15 @@ export default function SocialSnapPage() {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* 左：原片上传槽 */}
+        {/* 左：原片上传 */}
         <section className="bg-bg-secondary rounded-lg border border-border-subtle p-5">
           <h2 className="text-sm font-semibold text-fg-primary mb-3">
             ① 上传原片
             <span className="ml-2 text-[11px] text-fg-tertiary font-normal">
-              {sourceFiles.length}/{MAX_SOURCES} · 每张含 1 位模特 + 服装
+              {sourceFiles.length}/{MAX_SOURCES} · 每张 1 位模特 + 服装
             </span>
           </h2>
 
-          {/* 已上传的原片网格 */}
           {sourceFiles.length > 0 && (
             <div className="grid grid-cols-3 gap-2 mb-3">
               {sourceUrls.map((url, i) => (
@@ -227,7 +234,6 @@ export default function SocialSnapPage() {
             </div>
           )}
 
-          {/* 上传/继续添加按钮 */}
           {sourceFiles.length < MAX_SOURCES && (
             <label className="block">
               <input
@@ -245,7 +251,7 @@ export default function SocialSnapPage() {
                 />
                 <div className="text-[12px] text-fg-primary">
                   {sourceFiles.length === 0
-                    ? "点击上传 1-3 张原片"
+                    ? "点击上传 1-5 张原片"
                     : `继续添加（还可加 ${MAX_SOURCES - sourceFiles.length} 张）`}
                 </div>
                 <div className="text-[10px] text-fg-muted mt-1">
@@ -256,8 +262,8 @@ export default function SocialSnapPage() {
           )}
 
           <div className="text-[10px] text-fg-muted mt-3 leading-relaxed">
-            💡 推荐用之前 <a href="/batch-photo" className="text-brand-400 hover:underline">批量摄影</a> 出过的成片。
-            每张图里的人物 + 服装会被保留，背景被新场景替换，多人会合成到一张图里。
+            💡 推荐用之前 <a href="/batch-photo" className="text-brand-400 hover:underline">批量摄影</a> 出过的多 SKU 成片。
+            每张图里的模特+服装会被保留，多人合成到海报里。
           </div>
         </section>
 
@@ -266,7 +272,7 @@ export default function SocialSnapPage() {
           <h2 className="text-sm font-semibold text-fg-primary mb-3">
             ② 选场景
             <span className="ml-2 text-[11px] text-fg-tertiary font-normal">
-              主图库 + 海报库都能用
+              推荐选海报库（叙事完整）
             </span>
           </h2>
           {loadingScenes ? (
@@ -322,25 +328,41 @@ export default function SocialSnapPage() {
         {/* 右：参数 + 提交 + 结果 */}
         <section className="bg-bg-secondary rounded-lg border border-border-subtle p-5">
           <h2 className="text-sm font-semibold text-fg-primary mb-3">
-            ③ 风格 + 生成
+            ③ 构图 + 生成
           </h2>
 
           <div className="space-y-3 mb-4">
             <div>
               <label className="block text-[11px] text-fg-tertiary mb-1">
-                氛围
+                构图模式
               </label>
-              <select
-                value={vibe}
-                onChange={(e) => setVibe(e.target.value as Vibe)}
-                className="input select text-sm h-9"
-              >
-                {VIBE_OPTIONS.map((v) => (
-                  <option key={v.value} value={v.value}>
-                    {v.label}
-                  </option>
+              <div className="space-y-1.5">
+                {COMPOSITION_OPTIONS.map((c) => (
+                  <button
+                    key={c.value}
+                    type="button"
+                    onClick={() => setComposition(c.value)}
+                    className={`w-full text-left p-2 rounded-md border text-[12px] transition-colors ${
+                      composition === c.value
+                        ? "border-transparent text-brand-400"
+                        : "border-border-default text-fg-secondary hover:border-border-strong"
+                    }`}
+                    style={
+                      composition === c.value
+                        ? {
+                            background: "var(--brand-50-bg)",
+                            borderColor: "rgba(59, 130, 246, 0.4)",
+                          }
+                        : undefined
+                    }
+                  >
+                    <div className="font-medium">{c.label}</div>
+                    <div className="text-fg-tertiary mt-0.5 text-[11px]">
+                      {c.desc}
+                    </div>
+                  </button>
                 ))}
-              </select>
+              </div>
             </div>
 
             <div>
@@ -358,6 +380,19 @@ export default function SocialSnapPage() {
                   </option>
                 ))}
               </select>
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-fg-tertiary mb-1">
+                创意指令（可选）
+              </label>
+              <textarea
+                value={userHint}
+                onChange={(e) => setUserHint(e.target.value)}
+                rows={2}
+                placeholder="如：模特们在长桌前举杯、其中一位转身回望"
+                className="input text-[12px] resize-none"
+              />
             </div>
 
             <button
@@ -388,19 +423,19 @@ export default function SocialSnapPage() {
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={result.result_image_url}
-                  alt="社媒图结果"
+                  alt="海报结果"
                   className="w-full h-auto"
                   style={{ maxHeight: 480, objectFit: "contain" }}
                 />
               </div>
               <div className="text-[11px] text-fg-muted leading-relaxed">
                 {result.source_count} 张原片 · {result.scene.name} ·{" "}
-                {result.vibe} · ¥{estCostCny}
+                {result.composition} · {result.aspect_ratio} · ¥{estCostCny}
               </div>
               <div className="flex gap-2">
                 <a
                   href={result.result_image_url}
-                  download={`social_snap_${result.result_id}.png`}
+                  download={`poster_${result.result_id}.png`}
                   className="btn btn-primary btn-sm flex-1"
                 >
                   <Download size={12} strokeWidth={2.2} />
