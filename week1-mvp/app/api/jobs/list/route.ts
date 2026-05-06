@@ -11,7 +11,8 @@ type FeatureFilter =
   | "background_swap"
   | "poster"
   | "social_snap"
-  | "identity_gen";
+  | "identity_gen"
+  | "replicate";
 
 const ALLOWED_FEATURES: ReadonlyArray<Exclude<FeatureFilter, "all">> = [
   "recolor",
@@ -20,6 +21,7 @@ const ALLOWED_FEATURES: ReadonlyArray<Exclude<FeatureFilter, "all">> = [
   "poster",
   "social_snap",
   "identity_gen",
+  "replicate",
 ];
 type StatusFilter = "all" | "active" | "completed" | "failed" | "canceled";
 

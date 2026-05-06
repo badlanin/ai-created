@@ -21,6 +21,7 @@ import { assertWithinBudget, getUserBudgetStatus } from "@/lib/pricing";
 import { createJob } from "@/lib/jobs-db";
 import { startJobWorker, type HandlerContext } from "@/lib/job-runner";
 import { pickShoeSpec } from "@/lib/shoe-spec";
+import { FRAMING_TIGHT_SINGLE } from "@/lib/scene-tools-prompt";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -61,12 +62,9 @@ export async function POST(req: NextRequest) {
     }
 
     const identityId = Number(formData.get("identity_id"));
-    const sceneId = Number(formData.get("scene_id"));
     const templateId = Number(formData.get("template_id"));
     if (!Number.isFinite(identityId))
       return NextResponse.json({ error: "请选择模特" }, { status: 400 });
-    if (!Number.isFinite(sceneId))
-      return NextResponse.json({ error: "请选择场景" }, { status: 400 });
     if (!Number.isFinite(templateId))
       return NextResponse.json({ error: "请选择 Prompt 模板" }, { status: 400 });
 
@@ -107,6 +105,49 @@ export async function POST(req: NextRequest) {
         { error: "一次最多 10 个姿势" },
         { status: 400 },
       );
+    }
+
+    // ─── 纯色背景（必填，默认浅米）───
+    const solidColorHexRaw = formData.get("solid_color_hex");
+    const solidColorHex = (() => {
+      const v = typeof solidColorHexRaw === "string" ? solidColorHexRaw.trim() : "";
+      return /^#[0-9A-Fa-f]{6}$/.test(v) ? v.toUpperCase() : "#F5F1EA";
+    })();
+    const solidColorNameRaw = formData.get("solid_color_name");
+    const solidColorName =
+      typeof solidColorNameRaw === "string" && solidColorNameRaw.trim()
+        ? solidColorNameRaw.trim().slice(0, 20)
+        : "浅米色";
+
+    // ─── 额外场景配姿势（可选 ≤2）───
+    const extraPairsRaw = formData.get("extra_scene_pose_pairs");
+    let extraPairs: Array<{ scene_id: number; pose_id: number }> = [];
+    try {
+      const parsed = JSON.parse(String(extraPairsRaw || "[]"));
+      if (Array.isArray(parsed)) {
+        extraPairs = parsed
+          .filter(
+            (p): p is { scene_id: number; pose_id: number } =>
+              typeof p === "object" &&
+              p !== null &&
+              Number.isFinite((p as { scene_id?: unknown }).scene_id) &&
+              Number.isFinite((p as { pose_id?: unknown }).pose_id),
+          )
+          .map((p) => ({
+            scene_id: Number(p.scene_id),
+            pose_id: Number(p.pose_id),
+          }));
+      }
+    } catch {}
+    if (extraPairs.length > 2) extraPairs = extraPairs.slice(0, 2);
+    // 每张场景配的姿势必须来自已选姿势池
+    for (const pair of extraPairs) {
+      if (!poseIds.includes(pair.pose_id)) {
+        return NextResponse.json(
+          { error: "额外场景配的姿势必须先勾选到姿势池里" },
+          { status: 400 },
+        );
+      }
     }
 
     const materialIdsRaw = formData.get("material_ids");
@@ -172,13 +213,37 @@ export async function POST(req: NextRequest) {
     if (!identity)
       return NextResponse.json({ error: "模特不存在" }, { status: 404 });
 
-    const scene = db
-      .prepare(`SELECT id, name, image_path FROM scenes WHERE id = ?`)
-      .get(sceneId) as
-      | { id: number; name: string; image_path: string }
-      | undefined;
-    if (!scene)
-      return NextResponse.json({ error: "场景不存在" }, { status: 404 });
+    // 加载额外场景（如果有）；必须 usage='single'
+    type ExtraScene = { id: number; name: string; image_path: string };
+    const extraScenes: Map<number, ExtraScene> = new Map();
+    if (extraPairs.length > 0) {
+      const sceneIdSet = [...new Set(extraPairs.map((p) => p.scene_id))];
+      const ph = sceneIdSet.map(() => "?").join(",");
+      const rows = db
+        .prepare(
+          `SELECT id, name, image_path, usage FROM scenes WHERE id IN (${ph})`,
+        )
+        .all(...sceneIdSet) as Array<ExtraScene & { usage: string }>;
+      if (rows.length !== sceneIdSet.length) {
+        return NextResponse.json(
+          { error: "部分额外场景不存在" },
+          { status: 404 },
+        );
+      }
+      for (const r of rows) {
+        if (r.usage !== "single") {
+          return NextResponse.json(
+            { error: `场景"${r.name}"不属于主图场景库` },
+            { status: 400 },
+          );
+        }
+        extraScenes.set(r.id, {
+          id: r.id,
+          name: r.name,
+          image_path: r.image_path,
+        });
+      }
+    }
 
     const template = db
       .prepare(
@@ -244,12 +309,46 @@ export async function POST(req: NextRequest) {
     // 款式 / 跟高 / 材质固定。每张图 prompt 里注入同一份 → 大幅提升鞋的一致性
     const shoeSpec = pickShoeSpec(garmentAttrs);
 
-    // ─── 创建 job（items = 一个 pose 一个）───
+    // ─── 解析 extra_pairs → 含场景 + 姿势完整信息 ───
+    type ExtraPairResolved = {
+      scene_id: number;
+      scene_name: string;
+      scene_image_path: string;
+      pose_id: number;
+      pose_name: string;
+      pose_text: string;
+      pose_type: string;
+    };
+    const resolvedExtraPairs: ExtraPairResolved[] = extraPairs.map((pair) => {
+      const s = extraScenes.get(pair.scene_id)!;
+      const pose = poses.find((po) => po.id === pair.pose_id);
+      if (!pose) throw new Error(`pose ${pair.pose_id} 丢失`);
+      return {
+        scene_id: s.id,
+        scene_name: s.name,
+        scene_image_path: s.image_path,
+        pose_id: pose.id,
+        pose_name: pose.name,
+        pose_text: pose.text,
+        pose_type: pose.type,
+      };
+    });
+
+    // ─── items = N 张纯色姿势 + M (≤2) 张场景配姿势 ───
+    const solidItems = poses.map((p) => ({
+      label: `${p.name} · ${solidColorName}`,
+    }));
+    const extraItems = resolvedExtraPairs.map((pair) => ({
+      label: `${pair.scene_name} · ${pair.pose_name}`,
+    }));
+    const allItems = [...solidItems, ...extraItems];
+
+    // ─── 创建 job ───
     const job = createJob({
       user_id: user.id,
       feature: "batch_photo",
       model,
-      items: poses.map((p) => ({ label: p.name })),
+      items: allItems,
       params: {
         aspect_ratio: aspectRatio ?? null,
         quality_level: qualityLevel,
@@ -260,11 +359,12 @@ export async function POST(req: NextRequest) {
           name: identity.name,
           image_path: identity.image_path,
         },
-        scene: {
-          id: scene.id,
-          name: scene.name,
-          image_path: scene.image_path,
-        },
+        // 纯色背景配置（idx < solid_pose_count 的 item 走纯色，无 scene image）
+        solid_pose_count: poses.length,
+        solid_color_hex: solidColorHex,
+        solid_color_name: solidColorName,
+        // idx >= solid_pose_count 的 item 用 extra_pairs[idx - solid_pose_count]
+        extra_pairs: resolvedExtraPairs,
         template: {
           id: template.id,
           name: template.name,
@@ -356,7 +456,27 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/* ─────────── worker 处理单条 item（单个姿势） ─────────── */
+/* ─────────── worker 处理单条 item ─────────── */
+
+/** 纯色背景指令（替代 FRAMING_TIGHT_SINGLE，仅用于纯色 item） */
+function buildSolidBgInstruction(colorName: string, hex: string): string {
+  return `══════════════════════════════════════════════════════════
+🎨 BACKGROUND — Pure solid color (NO scene image is provided)
+══════════════════════════════════════════════════════════
+
+The background MUST be a CLEAN SEAMLESS SOLID COLOR studio backdrop:
+- Color: ${colorName} (HEX ${hex})
+- NO texture, NO gradient falloff to edges, NO darker corners
+- NO architectural elements, NO furniture, NO props of any kind
+- Pure flat single-color seamless studio sweep behind the model
+
+Lighting: soft frontal studio key light + gentle fill, even illumination
+on the model. No harsh shadows. Subject is centered with realistic body
+proportion. Full-body or 3/4-body framing depending on pose.
+
+Output should look like a clean e-commerce product-on-model photograph
+shot in a studio with this exact backdrop color.`;
+}
 
 async function batchPhotoItemHandler(
   ctx: HandlerContext,
@@ -373,7 +493,18 @@ async function batchPhotoItemHandler(
     user_seed?: string;
     batch_seed?: number;
     identity: { id: number; name: string; image_path: string };
-    scene: { id: number; name: string; image_path: string };
+    solid_pose_count: number;
+    solid_color_hex: string;
+    solid_color_name: string;
+    extra_pairs: Array<{
+      scene_id: number;
+      scene_name: string;
+      scene_image_path: string;
+      pose_id: number;
+      pose_name: string;
+      pose_text: string;
+      pose_type: string;
+    }>;
     template: { id: number; name: string; template: string };
     photography_params_text?: string;
     realism_constraints_text?: string;
@@ -388,8 +519,35 @@ async function batchPhotoItemHandler(
     product_mime_types: string[];
   };
 
-  const pose = p.poses[ctx.item.idx];
-  if (!pose) throw new Error(`pose[${ctx.item.idx}] 丢失`);
+  // ── 分支：纯色 vs 场景 ──
+  const idx = ctx.item.idx;
+  const isSolid = idx < p.solid_pose_count;
+  let pose: { id: number; name: string; text: string; type: string };
+  let sceneNameForPrompt: string;
+  let sceneImagePath: string | null;
+  let framingBlock: string;
+
+  if (isSolid) {
+    const po = p.poses[idx];
+    if (!po) throw new Error(`solid pose[${idx}] 丢失`);
+    pose = po;
+    sceneNameForPrompt = `纯色背景（${p.solid_color_name}，${p.solid_color_hex}）`;
+    sceneImagePath = null;
+    framingBlock = buildSolidBgInstruction(p.solid_color_name, p.solid_color_hex);
+  } else {
+    const extraIdx = idx - p.solid_pose_count;
+    const pair = p.extra_pairs[extraIdx];
+    if (!pair) throw new Error(`extra_pair[${extraIdx}] 丢失`);
+    pose = {
+      id: pair.pose_id,
+      name: pair.pose_name,
+      text: pair.pose_text,
+      type: pair.pose_type,
+    };
+    sceneNameForPrompt = pair.scene_name;
+    sceneImagePath = pair.scene_image_path;
+    framingBlock = FRAMING_TIGHT_SINGLE;
+  }
 
   // 预算兜底
   const status = getUserBudgetStatus(ctx.userId);
@@ -399,27 +557,27 @@ async function batchPhotoItemHandler(
     );
   }
 
-  // 读模特图 + 场景图 + 产品图
+  // 读模特图 + (可选)场景图 + 产品图
   const identityAbs = path.join(DATA_DIR_PATH, p.identity.image_path);
-  const sceneAbs = path.join(DATA_DIR_PATH, p.scene.image_path);
-
-  const [identityBuf, sceneBuf] = await Promise.all([
-    fs.readFile(identityAbs),
-    fs.readFile(sceneAbs),
-  ]);
-
+  const identityBuf = await fs.readFile(identityAbs);
   const identityInput: GenImageInput = {
     buffer: identityBuf,
     mimeType: "image/png",
   };
-  const sceneInput: GenImageInput = {
-    buffer: sceneBuf,
-    mimeType: sceneAbs.toLowerCase().endsWith(".png")
-      ? "image/png"
-      : sceneAbs.toLowerCase().endsWith(".webp")
-        ? "image/webp"
-        : "image/jpeg",
-  };
+
+  let sceneInput: GenImageInput | null = null;
+  if (sceneImagePath) {
+    const sceneAbs = path.join(DATA_DIR_PATH, sceneImagePath);
+    const sceneBuf = await fs.readFile(sceneAbs);
+    sceneInput = {
+      buffer: sceneBuf,
+      mimeType: sceneAbs.toLowerCase().endsWith(".png")
+        ? "image/png"
+        : sceneAbs.toLowerCase().endsWith(".webp")
+          ? "image/webp"
+          : "image/jpeg",
+    };
+  }
 
   const productInputs: GenImageInput[] = [];
   for (let i = 0; i < p.product_paths.length; i++) {
@@ -451,13 +609,12 @@ async function batchPhotoItemHandler(
     material_details: p.material_details_text || "",
     pose: `${pose.name}：${pose.text}`,
     // 表情维度（独立于姿势的全局描述，仅描述脸 / 眼神 / 嘴 / 视线 / 情绪）
-    // 没值 → 走"自然"兜底；模板里没 {{expression}} 占位符的话此变量被忽略
     expression: p.expression_text || "嘴角放松微抿，眼神平和，气质沉静自然",
     photography_params: p.photography_params_text || "",
     realism_constraints: p.realism_constraints_text || "",
     user_seed: p.user_seed ? `【用户补充指令】${p.user_seed}` : "",
     identity_name: p.identity.name,
-    scene_name: p.scene.name,
+    scene_name: sceneNameForPrompt,
     // 整批锁定的鞋型描述（在 job 创建时由 pickShoeSpec 决定，所有 item 共用）
     shoe_spec: p.shoe_spec || "",
   };
@@ -465,9 +622,12 @@ async function batchPhotoItemHandler(
     /\{\{(\w+)\}\}/g,
     (_m, key: string) => promptVars[key] ?? "",
   );
-  const finalPrompt = `${filledTemplate}\n\n${qualityHintText}`;
+  const finalPrompt = `${filledTemplate}\n\n${qualityHintText}\n\n${framingBlock}`;
 
-  const parts: GenImageInput[] = [...productInputs, identityInput, sceneInput];
+  // 注意：纯色 item 不传 scene image
+  const parts: GenImageInput[] = sceneInput
+    ? [...productInputs, identityInput, sceneInput]
+    : [...productInputs, identityInput];
 
   const imageSize: "1K" | "2K" | "4K" =
     qualityLevel === "4k" ? "4K" : qualityLevel === "hd" ? "1K" : "2K";
@@ -508,7 +668,9 @@ async function batchPhotoItemHandler(
       job_id: ctx.job.id,
       pose: pose.name,
       identity: p.identity.name,
-      scene: p.scene.name,
+      kind: isSolid ? "solid" : "scene",
+      scene: isSolid ? null : sceneNameForPrompt,
+      solid_color_hex: isSolid ? p.solid_color_hex : null,
       aspect_ratio: p.aspect_ratio,
       quality_level: qualityLevel,
       image_size: imageSize,

@@ -16,6 +16,7 @@ import {
   Search,
   Users,
   Loader2,
+  Sparkles,
 } from "lucide-react";
 import {
   Button,
@@ -47,7 +48,8 @@ type Feature =
   | "background_swap"
   | "poster"
   | "social_snap"
-  | "identity_gen";
+  | "identity_gen"
+  | "replicate";
 
 const FEATURE_LABELS: Record<Feature, string> = {
   recolor: "换色",
@@ -56,6 +58,7 @@ const FEATURE_LABELS: Record<Feature, string> = {
   poster: "氛围海报",
   social_snap: "社媒图",
   identity_gen: "形象生成",
+  replicate: "仿图",
 };
 
 type JobRow = {
@@ -97,6 +100,7 @@ const FEATURE_TAB_OPTIONS: Array<{ value: FeatureTab; label: string }> = [
   { value: "background_swap", label: "背景换图" },
   { value: "poster", label: "氛围海报" },
   { value: "social_snap", label: "社媒图" },
+  { value: "replicate", label: "仿图" },
 ];
 
 function formatTime(unix: number): string {
@@ -165,6 +169,9 @@ function formatConfig(job: JobRow): string {
   } else if (job.feature === "identity_gen") {
     if (p.ethnicity) chips.push(String(p.ethnicity));
     if (p.body_shape) chips.push(String(p.body_shape));
+  } else if (job.feature === "replicate") {
+    if (typeof p.count === "number") chips.push(`${p.count} 人`);
+    if (p.aspect_ratio) chips.push(String(p.aspect_ratio));
   }
   if (p.quality_level) chips.push(String(p.quality_level).toUpperCase());
   if (p.realism_name) chips.push(`${p.realism_name}`);
@@ -560,6 +567,10 @@ function JobCard({
       case "identity_gen":
         return (
           <Users size={14} strokeWidth={2} className="text-amber-500" />
+        );
+      case "replicate":
+        return (
+          <Sparkles size={14} strokeWidth={2} className="text-cyan-500" />
         );
       default:
         return <Clock size={14} strokeWidth={2} className="text-fg-tertiary" />;

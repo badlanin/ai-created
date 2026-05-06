@@ -2116,8 +2116,9 @@ function seedScenesFromAssets(db: Database.Database) {
 function migrateInsertNewScenes(db: Database.Database) {
   // 每次给 manifest 加新场景时把版本号 bump 一下，让已部署的 VM 再跑一次补种。
   // v2 = 初次架构落地（3 张老 scene + 占位）；
-  // v3 = 加入 25 张实景图（10 单人主图 + 15 海报大场景，2026-05-05）
-  const FLAG = "migrated_scenes_v3";
+  // v3 = 加入 25 张实景图（10 单人主图 + 15 海报大场景，2026-05-05）；
+  // v4 = 删除 3 张"通用浅色背景"（纯色背景改用色值器，不再走 scenes 表）
+  const FLAG = "migrated_scenes_v4";
   const flag = db
     .prepare(`SELECT value FROM settings WHERE key = ?`)
     .get(FLAG) as { value: string } | undefined;
@@ -2147,7 +2148,20 @@ function migrateInsertNewScenes(db: Database.Database) {
   );
 
   let inserted = 0;
+  let deleted = 0;
   const tx = db.transaction(() => {
+    // v4 清理：删 3 张"通用浅色背景"（纯色背景改用色值器，不再走 scenes 表）
+    const OBSOLETE_NAMES = [
+      "通用浅色背景 1",
+      "通用浅色背景 2",
+      "通用浅色背景 3",
+    ];
+    const deleteStmt = db.prepare(`DELETE FROM scenes WHERE name = ?`);
+    for (const name of OBSOLETE_NAMES) {
+      const r = deleteStmt.run(name);
+      if (r.changes > 0) deleted += r.changes;
+    }
+
     for (const e of entries) {
       if (findByName.get(e.name)) continue; // 同名已存在 → 跳过
       try {
@@ -2170,13 +2184,13 @@ function migrateInsertNewScenes(db: Database.Database) {
       `INSERT OR REPLACE INTO settings (key, value, notes) VALUES (?, 'done', ?)`,
     ).run(
       FLAG,
-      "scenes 库 v3 已补种（25 张实景图：10 单人主图 + 15 海报大场景）",
+      "scenes 库 v4 已收敛（删 3 张通用浅色 + 保持 25 张实景图）",
     );
   });
   tx();
-  if (inserted > 0) {
+  if (inserted > 0 || deleted > 0) {
     console.log(
-      `[db] migrateInsertNewScenes: 老库补种 ${inserted} 张新场景（已标记 ${FLAG}=done）`,
+      `[db] migrateInsertNewScenes: 补种 ${inserted} 张 / 清理 ${deleted} 张（已标记 ${FLAG}=done）`,
     );
   }
 }

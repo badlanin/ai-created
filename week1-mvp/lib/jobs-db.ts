@@ -26,7 +26,8 @@ export type JobFeature =
   | "identity_gen"
   | "background_swap"
   | "poster"
-  | "social_snap";
+  | "social_snap"
+  | "replicate";
 
 export interface JobRow {
   id: string;

@@ -6,22 +6,264 @@
  */
 
 // ─────────────────────────────────────────────────────────
+// 共享 FRAMING 段（关键反"硬塞全景"指令）
+//
+// 现有 scene plate 库里的 plate 大多是宽幅广角（整条柱廊 / 整片花园 /
+// 整栋庄园），Gemini 默认会按 plate 全画幅 1:1 渲染，导致：
+//   - 模特被强行塞到走廊正中央
+//   - 模特和柱子 / 窗户 / 拱门的真实比例失调（模特看起来像玩偶）
+//   - 出图焦段错（明明是产品图却像建筑摄影）
+//
+// 修法：在 prompt 里**反复**告诉模型：scene plate 是"氛围参考"
+// 不是"必须复刻的画幅"，要心智裁切一个紧凑的局部。
+// ─────────────────────────────────────────────────────────
+
+/** 单人紧凑构图（背景换图主用，85mm 长焦感 + 浅景深）。export 给 batch-photo 复用。 */
+export const FRAMING_TIGHT_SINGLE = `══════════════════════════════════════════════════════════
+🎯 FRAMING & SCALE — the scene plate is ATMOSPHERE REFERENCE, not a canvas to fill
+══════════════════════════════════════════════════════════
+
+CRITICAL: the scene plate (IMAGE 2) is a reference for atmosphere, light,
+materials, palette — NOT a canvas you must reproduce edge-to-edge.
+
+▸ MENTALLY CROP a tight local region of the scene around the subject.
+  Place her near ONE tangible anchor object she can lean on / stand
+  beside (a column base, a railing section, a window ledge, a planter,
+  a stair edge, a wall corner, a doorway frame). Show only that local
+  fragment in the output — NOT the whole corridor, NOT the whole
+  building, NOT the whole garden.
+
+▸ BODY-TO-OBJECT SCALE — body height MUST read as a real human relative
+  to visible reference objects:
+    • a Doric column is ~80cm wide  → torso similar width
+    • a baluster railing is ~90cm tall → at hip-to-waist height
+    • a window ledge is ~95cm high → at hip height
+    • a doorway is ~210cm tall → head reaches ~80% of the doorway
+  Avoid the "tiny doll in giant architecture" mistake.
+
+▸ LENS — 85mm portrait telephoto feel. NOT wide-angle. NO 24mm
+  architectural-vista distortion. Compressed front-to-back perspective,
+  intimate not panoramic.
+
+▸ DEPTH OF FIELD — shallow (f/2.0–f/2.8 feel). Subject + immediate
+  anchor stay tack-sharp. Background recedes into smooth creamy bokeh
+  (color blocks and soft shapes), NOT crisp architectural detail.
+
+▸ ALLOW ARCHITECTURE TO EXTEND OUT OF FRAME — one column may go off
+  the top edge, one wall may go off the side. Out-of-frame signals
+  intimacy. A clean fully-bounded establishing shot is WRONG here.
+
+❌ DO NOT recreate the entire scene plate. NO panorama. NO full corridor
+   view. NO sweeping vista. NO full-building reveal. NO 6-7-people-wide
+   ground area. The plate is a mood board, not a blueprint.
+`;
+
+/** 多人中景构图（poster 用，50mm 自然 + 中等景深） */
+const FRAMING_MEDIUM_GROUP = `══════════════════════════════════════════════════════════
+🎯 FRAMING & SCALE — the scene plate is ATMOSPHERE REFERENCE, not a canvas to fill
+══════════════════════════════════════════════════════════
+
+CRITICAL: the scene plate is a reference for atmosphere, light, materials,
+palette — NOT a canvas you must reproduce in full.
+
+▸ MENTALLY CROP a defined SECTION of the scene that comfortably hosts the
+  group of 3-4 people side by side, NOT 6-7. Show only that section in
+  the output. Use one clear anchor element (a wall section, a window, a
+  fountain corner, a railing, a path) as context — partially out of
+  frame is fine and preferred.
+
+▸ BODY-TO-OBJECT SCALE — every subject's body height must read as a real
+  human relative to nearby reference objects (columns, doors, windows).
+  Avoid "tiny dolls in giant architecture."
+
+▸ LENS — 50mm natural portrait feel. NOT ultra-wide. NO panoramic look.
+
+▸ DEPTH OF FIELD — moderate shallow (f/3.5–f/5.6 feel). Group plane
+  sharp; background softens but remains recognizable.
+
+❌ DO NOT recreate the entire scene plate's panorama. NO full-building
+   reveal, NO scenic establishing shot. The plate is a mood board.
+`;
+
+/** Phone-snap 紧凑构图（社媒图用 —— 还是要有手机感，但不要广角全景） */
+const FRAMING_PHONE_TIGHT = `══════════════════════════════════════════════════════════
+🎯 FRAMING — even on phone, the camera was CLOSE to the subject(s)
+══════════════════════════════════════════════════════════
+
+The scene plate is atmosphere reference — NOT a panorama you must fill.
+
+▸ The phone was held close. Frame should show subject(s) in the
+  foreground/middle as a meaningful chunk of the image, with one or two
+  scene elements behind them as casual context.
+▸ NOT a scenic establishing shot with small figures in a vast landscape.
+▸ Subjects' body heights must read as real humans relative to nearby
+  reference objects (a doorway, a column, a sign, a car). No "doll vs
+  giant architecture" look.
+▸ Phone wide-angle (~24mm) distortion at the edges is allowed, but the
+  central subjects stay close and intimate. Background can extend
+  PARTIALLY OUT OF FRAME — that's how casual phone snaps actually look.
+`;
+
+// ─────────────────────────────────────────────────────────
 // 子功能 1：背景换图（background swap）
 // ─────────────────────────────────────────────────────────
 
+/** 背景换图模式 */
+export type BackgroundSwapMode = "composition" | "edit";
+
+const BG_SWAP_MODE_LABELS: Record<BackgroundSwapMode, string> = {
+  composition:
+    "重新合成（推荐）—— 模型按新场景重新打光、可微调姿势，整合更自然",
+  edit: "硬换（兜底）—— 锁定原图所有元素只换背景，可能有合成感",
+};
+
+export const BG_SWAP_MODE_OPTIONS = (
+  Object.keys(BG_SWAP_MODE_LABELS) as BackgroundSwapMode[]
+).map((v) => ({ value: v, label: BG_SWAP_MODE_LABELS[v] }));
+
+export function isValidBackgroundSwapMode(
+  v: unknown,
+): v is BackgroundSwapMode {
+  return typeof v === "string" && v in BG_SWAP_MODE_LABELS;
+}
+
 /**
- * 拼装背景换图 prompt。
+ * 拼装背景换图 prompt（dispatch 到具体模式）。
  *
- * 给 Gemini Pro Image edit 模式吃两张图：
  *   IMAGE 1 = 原始成片（模特 + 服装 + 旧背景）
  *   IMAGE 2 = scene plate（空场景）
  *
- * 任务：保留 IMAGE 1 的人 / 衣 / 姿势 / 表情，把背景替换为 IMAGE 2，
- * 同时让人物的光线方向 / 阴影 / 色温 / 氛围跟 IMAGE 2 匹配。
+ * - composition（推荐）：把原图当作"这个模特+这件衣服"的参考，
+ *   按新场景重新合成一张照片，允许姿势 / 光线 / 镜头 / 距离自然变化。
+ *   解决 edit 模式"人物悬浮、光线不匹配"的硬融感。
+ * - edit（兜底）：完整保留原图人物 / 衣服 / 姿势，只换背景。
+ *   有些场景需要严格保留原片状态时用。
  *
- * @param scenePlateName - scene plate 的中文名（注入 prompt 帮模型对齐语义）
+ * @param scenePlateName - scene plate 中文名
+ * @param mode - composition / edit，默认 composition
+ * @param userHint - 可选用户补充指令（"模特沿着小径走来"）
  */
-export function buildBackgroundSwapPrompt(scenePlateName?: string): string {
+export function buildBackgroundSwapPrompt(
+  scenePlateName?: string,
+  mode: BackgroundSwapMode = "composition",
+  userHint?: string,
+): string {
+  if (mode === "composition") {
+    return buildBackgroundSwapPromptComposition(scenePlateName, userHint);
+  }
+  return buildBackgroundSwapPromptEdit(scenePlateName);
+}
+
+/* ───────── composition 模式（推荐） ───────── */
+
+function buildBackgroundSwapPromptComposition(
+  scenePlateName?: string,
+  userHint?: string,
+): string {
+  const sceneHint = scenePlateName
+    ? `\n  Scene location name: "${scenePlateName}"`
+    : "";
+  const userHintBlock = userHint?.trim()
+    ? `\n══════════════════════════════════════════════════════════
+👤 USER ADDITIONAL HINT (creative direction)
+══════════════════════════════════════════════════════════
+
+${userHint.trim()}\n`
+    : "";
+
+  return `You will receive TWO images:
+
+▸ IMAGE 1 — A photograph of a model wearing a specific garment
+   (in some prior background — that background is to be DISCARDED).
+▸ IMAGE 2 — A new venue / location.${sceneHint}
+
+══════════════════════════════════════════════════════════
+🚨 TASK — Generate a FRESH SHOOT at IMAGE 2's location
+══════════════════════════════════════════════════════════
+
+This is NOT "paste subject onto new background" editing.
+This is a brand-new photograph captured ON LOCATION at IMAGE 2's venue,
+using IMAGE 1 as a "this is the model and her dress" reference.
+
+Think: same model + same dress, photographed by a different photographer
+at a different time and place. Pose may shift naturally; lighting is
+completely redone.
+
+══════════════════════════════════════════════════════════
+✅ EXTRACT FROM IMAGE 1 (preserve identity, NOT pixel data)
+══════════════════════════════════════════════════════════
+
+KEEP:
+- Model's face: identity, features, hair color & style, skin tone
+- Garment: color, fabric, fit, length, neckline, sleeves, patterns,
+  embroidery, beads, lace, hems, all visible details
+- Accessories visible on the subject (jewelry, shoes, etc.)
+
+❌ DO NOT preserve from IMAGE 1:
+- The original background — completely gone
+- The original lighting on the subject — fully redone for IMAGE 2
+- The original pose — allowed to shift naturally for the new scene
+- The original camera distance / framing — set fresh for new scene
+
+══════════════════════════════════════════════════════════
+🎬 RENDER FRESH AT IMAGE 2
+══════════════════════════════════════════════════════════
+
+▸ POSE: natural for IMAGE 2's setting. The pose CAN AND SHOULD shift
+  slightly from the source — e.g., if IMAGE 2 is a path she might be
+  walking; if it's a wall she might lean. Do NOT robotically lock the
+  source pose.
+
+▸ CAMERA: eye-level fashion editorial framing, full body or 3/4 framing
+  (match the natural scale a fashion photographer would choose for
+  IMAGE 2's environment).
+
+▸ LIGHTING: 100% from IMAGE 2's natural light sources. The subject MUST
+  look as if she was actually photographed at this venue at this time
+  of day:
+  - Color temperature: shift skin tone and dress color to match scene
+    (warm golden hour vs cool overcast vs warm string-lit night)
+  - Brightness: match scene's ambient level (night scene = subject is
+    darker overall, with selective rim/key from practical lights)
+  - Shadow direction: from scene's key light, with realistic ground
+    shadow at the subject's feet
+  - Ambient bounce: subtle color reflections from scene surfaces onto
+    subject (warm stone bounce, green grass bounce, etc.)
+  - Atmospheric perspective / haze: if scene has haze, apply it to
+    subject's edges proportionally
+
+▸ INTEGRATION: subject stands in IMAGE 2's natural "people zone"
+  (path, floor, lawn, ground area). Soft anchored shadows at feet.
+  No "cut-out" silhouette — edges should feel organically lit by scene.
+
+${FRAMING_TIGHT_SINGLE}
+══════════════════════════════════════════════════════════
+❌ FORBIDDEN — these break the "fresh shoot" feel
+══════════════════════════════════════════════════════════
+
+- "Pasted-on" look: subject lit differently from environment
+- Subject still studio-bright while scene is night/dim/golden
+- Sharp cut-out silhouette against scene
+- Concept art / painted look / 3D render aesthetic
+- Modifying garment color, fabric, or design details
+- Swapping the model's identity (must stay the same person)
+- Adding people, props, or decorations not in IMAGE 2
+- Modifying scene structure beyond what's needed for subject placement
+- Returning IMAGE 1 unchanged
+${userHintBlock}
+══════════════════════════════════════════════════════════
+OUTPUT
+══════════════════════════════════════════════════════════
+
+Output ONE photograph at high resolution. The result should look like
+the model was actually on location at IMAGE 2's venue — fresh shoot,
+not composite.
+`;
+}
+
+/* ───────── edit 模式（兜底） ───────── */
+
+function buildBackgroundSwapPromptEdit(scenePlateName?: string): string {
   const sceneHint = scenePlateName
     ? `\n  Scene plate name (for context): "${scenePlateName}"`
     : "";
@@ -99,6 +341,7 @@ will not look like she belongs in IMAGE 2 unless her lighting matches:
   unchanged; only the background changes)
 - If IMAGE 1 was full-body, output is full-body; if half-body, half-body.
 
+${FRAMING_TIGHT_SINGLE}
 ══════════════════════════════════════════════════════════
 ❌ FORBIDDEN
 ══════════════════════════════════════════════════════════
@@ -316,7 +559,8 @@ ${compositionRule}
 
 ▸ FACING DIRECTION — Default: subjects face roughly toward the camera
   (0-30° rotation). They are aware of being photographed.
-${userHintBlock}
+
+${FRAMING_MEDIUM_GROUP}${userHintBlock}
 ══════════════════════════════════════════════════════════
 📐 OUTPUT QUALITY (poster / KV requirements)
 ══════════════════════════════════════════════════════════
@@ -353,6 +597,198 @@ Output ONE photograph at high resolution. The result should look like a
 single editorial photoshoot moment captured at ${sceneImageIndex}'s
 location, with all ${n === 1 ? "subject" : "subjects"} present together
 in unified lighting.
+`;
+}
+
+// ─────────────────────────────────────────────────────────
+// 子功能 4：仿图（参考图驱动的多人合成）
+// 流程分两步：
+//   1. analyze —— 用 Gemini 2.5 Flash vision 解析参考图里的模特数量 + 每个人的位置/姿势/视角，
+//      返回结构化 JSON，UI 拿到就能渲染 A/B/C/D/E 编号 + 上传槽
+//   2. compose —— 用 Pro Image 4K 把参考图 + N 张产品图融合：
+//      参考图给场景/光线/构图/姿势布局，产品图给身份+服装，按编号一一对应
+// ─────────────────────────────────────────────────────────
+
+/** 仿图 analyze prompt：让 Gemini 2.5 Flash 解析参考图里的人物 */
+export const REPLICATE_ANALYZE_PROMPT = `You are analyzing a fashion editorial / wedding / lookbook photograph.
+
+Identify EVERY visible human model in the photo (1 to 5 people max). For each person,
+return a structured description.
+
+Output STRICT JSON only — no markdown, no commentary, no code fences.
+
+Schema:
+{
+  "count": <integer 1-5>,
+  "models": [
+    {
+      "label": "A" | "B" | "C" | "D" | "E",   // assigned LEFT-TO-RIGHT order in the frame
+      "position": "leftmost" | "center-left" | "center" | "center-right" | "rightmost" | "front" | "back" | etc.,
+      "role": "bride" | "bridesmaid" | "groom" | "groomsman" | "guest" | "model" | etc.,
+      "pose": "<one short Chinese sentence describing what she/he is doing, e.g. '侧身倚靠柱子，左手撩头发'>",
+      "view": "frontal" | "three-quarter" | "profile" | "back",
+      "framing": "full-body" | "three-quarter" | "waist-up" | "headshot"
+    }
+  ]
+}
+
+Rules:
+- Labels MUST go LEFT-TO-RIGHT in screen order (A is leftmost). If two people overlap
+  horizontally, the closer one (foreground) gets the earlier label.
+- If you see fewer than 1 or more than 5 people, clip to [1, 5].
+- "pose" field MUST be in Chinese, one short sentence (≤25 chars).
+- ALL other fields are English enum values from the schema above.
+- Return ONLY the JSON object. No prose.`;
+
+/**
+ * 仿图 compose prompt：多图融合
+ *
+ * IMAGE 1 = 参考图（场景 + 模特排布 + 光线 + 构图）
+ * IMAGES 2..N+1 = N 张产品图，按 A/B/C/D/E 顺序对应参考图里的模特位
+ *
+ * @param models analyze 返回的 models 数组（已经 1-N 张产品图各对应一位）
+ * @param userHint 可选追加（"模特们更靠近一点"）
+ */
+export function buildReplicatePrompt(
+  models: Array<{
+    label: string;
+    position: string;
+    role: string;
+    pose: string;
+    view: string;
+    framing: string;
+  }>,
+  userHint?: string,
+): string {
+  const n = models.length;
+  const refLabel = "IMAGE 1";
+  const sourceRange =
+    n === 1 ? "IMAGE 2" : `IMAGES 2-${n + 1}`;
+
+  const slotMappingLines = models
+    .map((m, idx) => {
+      const imgIdx = idx + 2;
+      return `▸ Slot ${m.label} → IMAGE ${imgIdx}
+   • Position in ${refLabel}: ${m.position}
+   • Role: ${m.role}
+   • Original pose in ${refLabel} (use as guide, may relax): ${m.pose}
+   • View: ${m.view} · Framing: ${m.framing}
+   • Replace this person's face/identity AND clothing using IMAGE ${imgIdx}.
+     Keep IMAGE ${imgIdx}'s model face & garment; ignore IMAGE ${imgIdx}'s background.`;
+    })
+    .join("\n\n");
+
+  const userHintBlock = userHint?.trim()
+    ? `\n══════════════════════════════════════════════════════════
+👤 USER ADDITIONAL HINT (creative direction)
+══════════════════════════════════════════════════════════
+
+${userHint.trim()}\n`
+    : "";
+
+  return `You will receive ${n + 1} images:
+
+▸ ${refLabel} — A REFERENCE photograph. Use it as the SCENE / LIGHTING /
+   COMPOSITION / GROUP-LAYOUT template. We will REPLACE the people in this
+   reference photo with people from the source photos.
+▸ ${sourceRange} — ${n} source photo${n > 1 ? "s" : ""} of model${n > 1 ? "s" : ""}
+   wearing clothing. Each shows one person + their garment in some prior
+   background (background to be ignored).
+
+══════════════════════════════════════════════════════════
+🚨 TASK — Re-shoot ${refLabel} with the source models
+══════════════════════════════════════════════════════════
+
+Generate ONE new photograph that LOOKS LIKE ${refLabel}'s scene + lighting +
+group composition, but with the people swapped: each labeled position in
+${refLabel} is filled by the corresponding source model & garment.
+
+══════════════════════════════════════════════════════════
+✅ TAKE FROM ${refLabel} (REFERENCE)
+══════════════════════════════════════════════════════════
+
+- The ENTIRE scene / location / background
+- Lighting direction, color temperature, time of day, atmosphere
+- Camera angle, focal length feel, depth of field
+- Group composition: where each person stands relative to the other(s)
+  AND relative to the scene
+- Approximate poses (use as guide; allow natural variation)
+
+══════════════════════════════════════════════════════════
+🔄 SLOT MAPPING (replace each labeled position with the source model)
+══════════════════════════════════════════════════════════
+
+${slotMappingLines}
+
+══════════════════════════════════════════════════════════
+✅ TAKE FROM EACH SOURCE IMAGE
+══════════════════════════════════════════════════════════
+
+- Face / identity / hair color / skin tone of that source's model
+- Garment: every detail — color, fabric, fit, length, neckline, sleeves,
+  patterns, embroidery, beads, lace, hems, accessories, shoes
+- DO NOT change the source model's face or garment
+
+❌ DO NOT borrow source images' backgrounds — they are discarded.
+❌ DO NOT swap face identity between slots — slot A keeps IMAGE 2's face,
+   slot B keeps IMAGE 3's face, etc.
+
+══════════════════════════════════════════════════════════
+🎬 POSE FREEDOM
+══════════════════════════════════════════════════════════
+
+Pose is NOT strictly locked. Each replaced model may NATURALLY relax /
+adjust her pose to fit her body and the scene — slight repositioning,
+hand placement variation, gaze shift are all allowed and encouraged.
+The goal is "looks natural in the scene", not "robot-perfect copy of
+the original pose".
+
+══════════════════════════════════════════════════════════
+☀️ LIGHTING UNIFICATION
+══════════════════════════════════════════════════════════
+
+Critical: every replaced model must be re-lit by ${refLabel}'s light:
+- Light direction (key/fill from same direction as in ${refLabel})
+- Color temperature (warm golden / cool overcast / etc. matching ${refLabel})
+- Shadow density and ground shadows on the floor of ${refLabel}'s scene
+- Ambient bounce from ${refLabel}'s nearby surfaces
+- Atmospheric haze / glow if present in ${refLabel}
+
+If source photos had different lighting originally, RE-LIGHT them so the
+final image looks like one cohesive moment shot at ${refLabel}'s location.
+
+══════════════════════════════════════════════════════════
+🧍 SCALE & PROPORTION
+══════════════════════════════════════════════════════════
+
+- All replaced models share consistent realistic body height (no doll vs
+  giant mismatches)
+- Body height reads as a real human relative to ${refLabel}'s reference
+  objects (column / wall / door / window etc.)
+- Heads at roughly same vertical level unless ${refLabel}'s composition
+  shows otherwise (e.g., one sitting)
+${userHintBlock}
+══════════════════════════════════════════════════════════
+❌ FORBIDDEN
+══════════════════════════════════════════════════════════
+
+- Mismatched lighting (subject lit differently from scene)
+- Tangled limbs between subjects
+- Subject identity swap between slots
+- Studio-bright subject in dim/golden scene
+- "Pasted-on" cut-out look
+- Adding/removing people not in ${refLabel}
+- Modifying ${refLabel}'s scene or layout beyond people-swap
+- Modifying source garments or faces
+- Concept art / painted look / 3D render aesthetic
+- Watermarks, text, logos
+
+══════════════════════════════════════════════════════════
+OUTPUT
+══════════════════════════════════════════════════════════
+
+ONE photograph at high resolution. Looks like ${refLabel}'s photoshoot
+re-cast with the source models, all in unified lighting and natural pose.
 `;
 }
 
@@ -496,6 +932,7 @@ Slightly off-center is fine and encouraged for phone-snap feel.`
 - Their relative scales should make sense (no giant + tiny mismatches)`
 }
 
+${FRAMING_PHONE_TIGHT}
 ══════════════════════════════════════════════════════════
 📱 PHONE-SNAP AESTHETIC (deliberately imperfect — imperfection IS the point)
 ══════════════════════════════════════════════════════════

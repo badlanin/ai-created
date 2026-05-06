@@ -110,6 +110,7 @@ export function LeftNav({
       "/admin/scene-tools/background-swap",
       "/admin/scene-tools/poster",
       "/admin/scene-tools/social-snap",
+      "/admin/scene-tools/replicate",
     ],
     [],
   );
@@ -323,11 +324,20 @@ export function LeftNav({
                 active={isActive("/admin/scene-tools/background-swap")}
               />
               <SubItem
+                href="/admin/scene-tools/poster"
+                label="氛围海报"
+                active={isActive("/admin/scene-tools/poster")}
+              />
+              <SubItem
                 href="/admin/scene-tools/social-snap"
                 label="社媒图"
                 active={isActive("/admin/scene-tools/social-snap")}
               />
-              {/* 子功能 2 氛围海报后续上线 */}
+              <SubItem
+                href="/admin/scene-tools/replicate"
+                label="仿图"
+                active={isActive("/admin/scene-tools/replicate")}
+              />
             </Collapsible>
 
             <SectionHeader className="mt-5">系统</SectionHeader>

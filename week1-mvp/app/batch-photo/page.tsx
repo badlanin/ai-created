@@ -126,6 +126,16 @@ const QUALITY_LEVELS: Array<{
   { value: "hd", label: "HD 清晰", desc: "~896×1200 · 最省" },
 ];
 
+/** 纯色背景预设（产品图常用底色） */
+const SOLID_COLOR_PRESETS: Array<{ name: string; hex: string }> = [
+  { name: "浅米色", hex: "#F5F1EA" },
+  { name: "暖白", hex: "#FAF7F1" },
+  { name: "浅灰", hex: "#E8E8E6" },
+  { name: "米黄", hex: "#EFE5D0" },
+  { name: "暖灰", hex: "#D4CDBE" },
+  { name: "浅粉", hex: "#F2E5E0" },
+];
+
 /* ─────────── 3 槽位配置 ─────────── */
 
 const PRODUCT_SLOTS = [
@@ -214,7 +224,14 @@ function BatchPhotoTab({
 
   // ─── 选择 ───
   const [identityId, setIdentityId] = useState<number | null>(null);
-  const [sceneId, setSceneId] = useState<number | null>(null);
+  // Step 4 改造（N 纯色姿势 + 1-2 张场景配姿势的混合输出模式）：
+  // - solidColorHex/Name：所有 pose 的纯色背景（必填，默认浅米）
+  // - extraScenePairs：额外场景配姿势（可选 ≤ 2 张）。pose_id 必须来自已选姿势池。
+  const [solidColorHex, setSolidColorHex] = useState<string>("#F5F1EA");
+  const [solidColorName, setSolidColorName] = useState<string>("浅米色");
+  const [extraScenePairs, setExtraScenePairs] = useState<
+    Array<{ scene_id: number; pose_id: number | null }>
+  >([]);
   const [templateId, setTemplateId] = useState<number | null>(null);
   const [photographyId, setPhotographyId] = useState<number | null>(null);
   const [realismId, setRealismId] = useState<number | null>(null);
@@ -305,8 +322,16 @@ function BatchPhotoTab({
 
     const savedIdentity = slotStore.get<number>("identityId");
     if (savedIdentity) setIdentityId(savedIdentity);
-    const savedScene = slotStore.get<number>("sceneId");
-    if (savedScene) setSceneId(savedScene);
+    const savedSolidHex = slotStore.get<string>("solidColorHex");
+    if (savedSolidHex && /^#[0-9A-Fa-f]{6}$/.test(savedSolidHex))
+      setSolidColorHex(savedSolidHex);
+    const savedSolidName = slotStore.get<string>("solidColorName");
+    if (savedSolidName) setSolidColorName(savedSolidName);
+    const savedExtra =
+      slotStore.get<Array<{ scene_id: number; pose_id: number | null }>>(
+        "extraScenePairs",
+      );
+    if (Array.isArray(savedExtra)) setExtraScenePairs(savedExtra.slice(0, 2));
     const savedPoses = slotStore.get<number[]>("selectedPoseIds");
     if (savedPoses) setSelectedPoseIds(new Set(savedPoses));
     const savedAspect = slotStore.get<string>("aspectRatio");
@@ -331,7 +356,9 @@ function BatchPhotoTab({
   useEffect(() => {
     slotStore.merge({
       identityId,
-      sceneId,
+      solidColorHex,
+      solidColorName,
+      extraScenePairs,
       templateId,
       photographyId,
       realismId,
@@ -347,7 +374,9 @@ function BatchPhotoTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     identityId,
-    sceneId,
+    solidColorHex,
+    solidColorName,
+    extraScenePairs,
     templateId,
     photographyId,
     realismId,
@@ -361,10 +390,33 @@ function BatchPhotoTab({
     selectedPoseIds,
   ]);
 
-  /* ─── 估价 ─── */
+  /* ─── extraScenePairs 自洁：当前选中的 pose 集合外的 pair 自动剔除 ─── */
   useEffect(() => {
-    const count = selectedPoseIds.size;
-    if (count === 0 || !modelId) {
+    setExtraScenePairs((prev) => {
+      const next = prev
+        .map((p) =>
+          p.pose_id !== null && !selectedPoseIds.has(p.pose_id)
+            ? { ...p, pose_id: null }
+            : p,
+        )
+        .slice(0, 2);
+      // 浅比较：完全没变就不更新
+      const same =
+        next.length === prev.length &&
+        next.every(
+          (n, i) =>
+            n.scene_id === prev[i].scene_id && n.pose_id === prev[i].pose_id,
+        );
+      return same ? prev : next;
+    });
+  }, [selectedPoseIds]);
+
+  /* ─── 估价（N 纯色 + M 场景配姿势）─── */
+  // 仅统计 pose_id 已绑定的 extra pair（避免未配置完成时误算）
+  const validExtraCount = extraScenePairs.filter((p) => p.pose_id !== null).length;
+  const totalImageCount = selectedPoseIds.size + validExtraCount;
+  useEffect(() => {
+    if (totalImageCount === 0 || !modelId) {
       setEstimate(null);
       return;
     }
@@ -375,7 +427,7 @@ function BatchPhotoTab({
         body: JSON.stringify({
           model: modelId,
           quality_level: qualityLevel,
-          image_count: count,
+          image_count: totalImageCount,
         }),
       })
         .then((r) => (r.ok ? r.json() : null))
@@ -393,7 +445,7 @@ function BatchPhotoTab({
         .catch(() => setEstimate(null));
     }, 300);
     return () => clearTimeout(t);
-  }, [selectedPoseIds.size, modelId, qualityLevel]);
+  }, [totalImageCount, modelId, qualityLevel]);
 
   /* ─── 轮询 ─── */
   const handleJobFinished = useCallback(() => {
@@ -639,20 +691,27 @@ function BatchPhotoTab({
     });
   }
 
+  // 校验：每张额外场景必须配 pose（要么删掉 pair、要么挑一个 pose）
+  const allExtraPairsConfigured = extraScenePairs.every(
+    (p) => p.pose_id !== null,
+  );
   const canSubmit =
     !submitting &&
     !analyzing &&
     hasProductImages &&
     identityId !== null &&
-    sceneId !== null &&
     templateId !== null &&
     selectedPoseIds.size > 0 &&
+    allExtraPairsConfigured &&
     Boolean(modelId);
 
   /* ─── 提交 ─── */
   async function handleSubmit() {
     if (!canSubmit) {
-      notifyHelpers.warn(push, "请完成所有必填项（至少正面图 + 模特/场景/Prompt/姿势）");
+      notifyHelpers.warn(
+        push,
+        "请完成所有必填项（至少正面图 + 模特 / Prompt / 姿势；额外场景需各自配一个姿势）",
+      );
       return;
     }
     if (estimate && !estimate.affordable && !estimate.is_unlimited) {
@@ -676,8 +735,14 @@ function BatchPhotoTab({
         }
       });
       fd.append("identity_id", String(identityId));
-      fd.append("scene_id", String(sceneId));
       fd.append("template_id", String(templateId));
+      fd.append("solid_color_hex", solidColorHex);
+      fd.append("solid_color_name", solidColorName);
+      // 只发送 pose_id 已配上的 pair
+      const validPairs = extraScenePairs.filter(
+        (p) => p.pose_id !== null,
+      ) as Array<{ scene_id: number; pose_id: number }>;
+      fd.append("extra_scene_pose_pairs", JSON.stringify(validPairs));
       if (photographyId) fd.append("photography_id", String(photographyId));
       if (realismId) fd.append("realism_id", String(realismId));
       if (expressionId) fd.append("expression_id", String(expressionId));
@@ -705,11 +770,11 @@ function BatchPhotoTab({
       slotStore.setActiveJob(body.job_id);
       setActiveJobCount((v) => v + 1);
       setViewMode("task");
-      const poseCount = selectedPoseIds.size;
+      const totalCount = selectedPoseIds.size + validPairs.length;
       notifyHelpers.info(
         push,
         `任务已提交`,
-        `共 ${poseCount} 张 · 受 Google quota 限制，预计 ${Math.ceil(poseCount / 2)}+ 分钟`,
+        `共 ${totalCount} 张（${selectedPoseIds.size} 纯色 + ${validPairs.length} 场景）· 受 Google quota 限制，预计 ${Math.ceil(totalCount / 2)}+ 分钟`,
       );
     } catch (e) {
       notifyHelpers.error(
@@ -729,6 +794,8 @@ function BatchPhotoTab({
     setSelectedMaterialIds([]);
     setSelectedPoseIds(new Set());
     setUserSeed("");
+    setExtraScenePairs([]);
+    // 纯色色值不重置（用户可能希望每次都用同一个底色）
     setActiveJobId(null);
     slotStore.reset();
     notifyHelpers.info(push, "已清空当前任务");
@@ -812,7 +879,7 @@ function BatchPhotoTab({
           onQualityChange={setQualityLevel}
           userSeed={userSeed}
           onUserSeedChange={setUserSeed}
-          totalCount={selectedPoseIds.size}
+          totalCount={totalImageCount}
           estimate={estimate}
           submitting={submitting}
           canSubmit={canSubmit}
@@ -1058,55 +1125,217 @@ function BatchPhotoTab({
               )}
             </CollapsibleSection>
 
-            {/* Step 4: 场景（按分类折叠） */}
+            {/* Step 4: 背景设置（纯色 + 可选额外场景）*/}
             <CollapsibleSection
-              title="④ 选择场景"
-              description={
-                sceneId
-                  ? `已选择`
-                  : `${scenes.length} 个场景背景，按分类折叠`
-              }
-              badge={sceneId ? "✓" : undefined}
-              defaultOpen={!sceneId}
+              title="④ 背景设置"
+              description={`纯色 ${solidColorName}${
+                validExtraCount > 0
+                  ? ` + ${validExtraCount} 张场景`
+                  : "（可加 1-2 张场景图）"
+              }`}
+              badge="✓"
+              defaultOpen={false}
             >
-              {scenes.length === 0 ? (
-                <EmptyHint href="/admin/scenes" label="去添加场景" />
-              ) : (
-                <div className="space-y-2">
-                  {sceneGroups.map((g, idx) => (
-                    <CollapsibleSection
-                      key={g.key}
-                      variant="minimal"
-                      title={g.key}
-                      badge={g.items.length}
-                      defaultOpen={
-                        idx === 0 ||
-                        (sceneId !== null &&
-                          g.items.some((s) => s.id === sceneId))
-                      }
-                    >
-                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2.5 mt-2">
-                        {g.items.map((s) => (
-                          <Thumbnail
-                            key={s.id}
-                            src={s.image_url}
-                            alt={s.name}
-                            ratio="3/4"
-                            fit="contain"
-                            selected={sceneId === s.id}
-                            onClick={() => setSceneId(s.id)}
-                            badge={
-                              sceneId === s.id ? (
-                                <ThumbnailBadge tone="blue">已选</ThumbnailBadge>
-                              ) : undefined
-                            }
-                          />
-                        ))}
-                      </div>
-                    </CollapsibleSection>
-                  ))}
+              <div className="space-y-5">
+                {/* 4.1 纯色背景（必填，默认浅米）*/}
+                <div>
+                  <div className="text-[12px] text-fg-secondary mb-2 font-medium">
+                    🎨 主背景：纯色
+                    <span className="ml-2 text-[11px] text-fg-muted font-normal">
+                      所有姿势走这个色，作为产品图主背景
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {SOLID_COLOR_PRESETS.map((c) => (
+                      <button
+                        key={c.hex}
+                        onClick={() => {
+                          setSolidColorHex(c.hex);
+                          setSolidColorName(c.name);
+                        }}
+                        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-[12px] transition-colors ${
+                          solidColorHex === c.hex
+                            ? "border-brand-400 bg-bg-active text-fg-primary"
+                            : "border-border-subtle hover:border-border-strong bg-bg-tertiary text-fg-secondary"
+                        }`}
+                      >
+                        <span
+                          className="w-4 h-4 rounded border border-border-subtle"
+                          style={{ backgroundColor: c.hex }}
+                        />
+                        <span>{c.name}</span>
+                      </button>
+                    ))}
+                    <label className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-border-subtle bg-bg-tertiary text-[12px] text-fg-secondary cursor-pointer hover:border-border-strong">
+                      <span>自定义</span>
+                      <input
+                        type="color"
+                        value={solidColorHex}
+                        onChange={(e) => {
+                          setSolidColorHex(e.target.value.toUpperCase());
+                          // 如果当前 name 不在预设里，标"自定义"
+                          if (
+                            !SOLID_COLOR_PRESETS.some(
+                              (p) => p.hex.toLowerCase() === e.target.value.toLowerCase(),
+                            )
+                          ) {
+                            setSolidColorName("自定义");
+                          }
+                        }}
+                        className="w-5 h-5 cursor-pointer rounded border-0"
+                        style={{ padding: 0 }}
+                      />
+                      <span className="text-fg-muted text-[10px]">
+                        {solidColorHex}
+                      </span>
+                    </label>
+                  </div>
                 </div>
-              )}
+
+                {/* 4.2 额外场景（可选 ≤ 2 张）*/}
+                <div>
+                  <div className="text-[12px] text-fg-secondary mb-2 font-medium">
+                    🏞️ 额外场景图（可选 ≤ 2 张）
+                    <span className="ml-2 text-[11px] text-fg-muted font-normal">
+                      每张场景额外 +1 张，需配 1 个已选姿势
+                    </span>
+                  </div>
+
+                  {extraScenePairs.length > 0 && (
+                    <div className="space-y-2 mb-3">
+                      {extraScenePairs.map((pair, idx) => {
+                        const scene = scenes.find(
+                          (s) => s.id === pair.scene_id,
+                        );
+                        const selectedPosesArr = poses.filter((po) =>
+                          selectedPoseIds.has(po.id),
+                        );
+                        return (
+                          <div
+                            key={`${pair.scene_id}-${idx}`}
+                            className="flex items-center gap-3 p-2 bg-bg-secondary rounded border border-border-subtle"
+                          >
+                            {scene?.image_url ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={scene.image_url}
+                                alt={scene.name}
+                                className="w-12 h-16 object-cover rounded border border-border-subtle"
+                              />
+                            ) : (
+                              <div className="w-12 h-16 bg-bg-tertiary rounded border border-border-subtle" />
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm font-medium text-fg-primary truncate">
+                                {scene?.name || "（场景已删除）"}
+                              </div>
+                              <select
+                                value={pair.pose_id ?? ""}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setExtraScenePairs((prev) =>
+                                    prev.map((p, i) =>
+                                      i === idx
+                                        ? {
+                                            ...p,
+                                            pose_id: v ? Number(v) : null,
+                                          }
+                                        : p,
+                                    ),
+                                  );
+                                }}
+                                className="input select text-xs h-7 mt-1 max-w-full"
+                              >
+                                <option value="">
+                                  {selectedPosesArr.length === 0
+                                    ? "（请先去 ⑤ 勾选姿势）"
+                                    : "-- 选一个姿势 --"}
+                                </option>
+                                {selectedPosesArr.map((po) => (
+                                  <option key={po.id} value={po.id}>
+                                    {po.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <button
+                              onClick={() =>
+                                setExtraScenePairs((prev) =>
+                                  prev.filter((_, i) => i !== idx),
+                                )
+                              }
+                              className="p-1.5 text-fg-muted hover:text-danger transition-colors"
+                              title="移除这个场景"
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {extraScenePairs.length < 2 && (
+                    <CollapsibleSection
+                      variant="minimal"
+                      title={`+ 添加场景（${extraScenePairs.length}/2）`}
+                      defaultOpen={false}
+                    >
+                      {scenes.length === 0 ? (
+                        <EmptyHint
+                          href="/admin/scenes"
+                          label="去添加场景"
+                        />
+                      ) : (
+                        <div className="space-y-2 mt-2">
+                          {sceneGroups.map((g) => (
+                            <CollapsibleSection
+                              key={g.key}
+                              variant="minimal"
+                              title={g.key}
+                              badge={g.items.length}
+                              defaultOpen={false}
+                            >
+                              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2.5 mt-2">
+                                {g.items.map((s) => {
+                                  const alreadyAdded = extraScenePairs.some(
+                                    (p) => p.scene_id === s.id,
+                                  );
+                                  return (
+                                    <Thumbnail
+                                      key={s.id}
+                                      src={s.image_url}
+                                      alt={s.name}
+                                      ratio="3/4"
+                                      fit="contain"
+                                      selected={alreadyAdded}
+                                      onClick={() => {
+                                        if (alreadyAdded) return;
+                                        if (extraScenePairs.length >= 2) return;
+                                        setExtraScenePairs((prev) => [
+                                          ...prev,
+                                          { scene_id: s.id, pose_id: null },
+                                        ]);
+                                      }}
+                                      badge={
+                                        alreadyAdded ? (
+                                          <ThumbnailBadge tone="blue">
+                                            已加
+                                          </ThumbnailBadge>
+                                        ) : undefined
+                                      }
+                                    />
+                                  );
+                                })}
+                              </div>
+                            </CollapsibleSection>
+                          ))}
+                        </div>
+                      )}
+                    </CollapsibleSection>
+                  )}
+                </div>
+              </div>
             </CollapsibleSection>
 
             {/* Step 5: 姿势（按类型折叠） */}
@@ -1114,7 +1343,11 @@ function BatchPhotoTab({
               title="⑤ 选择姿势"
               description={
                 selectedPoseIds.size > 0
-                  ? `已选 ${selectedPoseIds.size}，将生成 ${selectedPoseIds.size} 张图`
+                  ? `已选 ${selectedPoseIds.size}${
+                      validExtraCount > 0
+                        ? ` 纯色 + ${validExtraCount} 场景 = ${selectedPoseIds.size + validExtraCount} 张图`
+                        : `，将生成 ${selectedPoseIds.size} 张图`
+                    }`
                   : `按拍摄类型分组，可多选`
               }
               badge={

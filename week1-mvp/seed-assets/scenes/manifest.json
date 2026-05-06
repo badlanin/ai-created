@@ -1,26 +1,5 @@
 [
   {
-    "file": "scenes/scene_01.webp",
-    "name": "通用浅色背景 1",
-    "tags": "浅色,极简",
-    "sort_order": 100,
-    "usage": "single"
-  },
-  {
-    "file": "scenes/scene_02.webp",
-    "name": "通用浅色背景 2",
-    "tags": "浅色,极简",
-    "sort_order": 110,
-    "usage": "single"
-  },
-  {
-    "file": "scenes/scene_03.webp",
-    "name": "通用浅色背景 3",
-    "tags": "浅色,极简",
-    "sort_order": 120,
-    "usage": "single"
-  },
-  {
     "file": "scenes/single/scene_single_studio_arch_window_01.webp",
     "name": "拱窗白棚",
     "tags": "棚拍,拱窗,哥特,白色",
