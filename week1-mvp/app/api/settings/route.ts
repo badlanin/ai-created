@@ -20,10 +20,10 @@ const CONCURRENCY_KEYS = new Set(["image_concurrency"]);
  * 系统设置 API（仅管理员）
  *
  * GET    /api/settings
- *   返回所有 settings + 当前 provider 推断
- *   注意：gemini_api_key 字段会被脱敏（只露前 4 + 后 4，中间 *）
+ *   返回所有 settings + 当前 provider 状态
+ *   gemini_api_key 字段会被脱敏（只露前 4 + 后 4，中间 *）
  *
- * PATCH  /api/settings  body: { ai_provider?: 'vertex'|'gemini_api', gemini_api_key?: string, ...其他 key: value }
+ * PATCH  /api/settings  body: { gemini_api_key?: string, ...其他 key: value }
  *   更新指定 settings。空字符串 = 清空。
  */
 
@@ -34,7 +34,6 @@ interface SettingRow {
 }
 
 const ALLOWED_PATCH_KEYS = new Set([
-  "ai_provider",
   "gemini_api_key",
   "usd_to_cny",
   "default_budget_cny",
@@ -88,13 +87,6 @@ export async function PATCH(req: NextRequest) {
     const updates: Array<{ key: string; value: string }> = [];
     for (const [k, v] of Object.entries(body)) {
       if (!ALLOWED_PATCH_KEYS.has(k)) continue;
-      // 校验：ai_provider 必须是合法枚举
-      if (k === "ai_provider" && v !== "vertex" && v !== "gemini_api") {
-        return NextResponse.json(
-          { error: `ai_provider 只能是 'vertex' 或 'gemini_api'` },
-          { status: 400 },
-        );
-      }
       // gemini_api_key：允许空字符串（= 清空）；非空时简单格式校验（AIza 开头，39 字符）
       if (k === "gemini_api_key" && typeof v === "string" && v.length > 0) {
         if (!/^AIza[0-9A-Za-z_-]{20,}$/.test(v)) {

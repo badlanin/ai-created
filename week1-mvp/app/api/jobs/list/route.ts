@@ -8,20 +8,14 @@ type FeatureFilter =
   | "all"
   | "recolor"
   | "batch_photo"
-  | "background_swap"
-  | "poster"
-  | "social_snap"
   | "identity_gen"
-  | "replicate";
+  | "scene_tools";
 
 const ALLOWED_FEATURES: ReadonlyArray<Exclude<FeatureFilter, "all">> = [
   "recolor",
   "batch_photo",
-  "background_swap",
-  "poster",
-  "social_snap",
   "identity_gen",
-  "replicate",
+  "scene_tools",
 ];
 type StatusFilter = "all" | "active" | "completed" | "failed" | "canceled";
 

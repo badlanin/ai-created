@@ -116,16 +116,30 @@ module.exports = {
           "50%": { opacity: "0.5" },
         },
       },
-      // ── 字体 ──
+      // ── 字体（Apple 系跨平台 stack）──
       fontFamily: {
         sans: [
-          "Inter",
-          '"Noto Sans SC"',
           "-apple-system",
           "BlinkMacSystemFont",
+          '"SF Pro Display"',
+          '"SF Pro Text"',
+          '"PingFang SC"',
+          '"Helvetica Neue"',
+          '"Hiragino Sans GB"',
+          '"Microsoft YaHei"',
           "system-ui",
           "sans-serif",
         ],
+      },
+      // ── 度加风工具卡片渐变（首页 6 卡用）──
+      backgroundImage: {
+        "grad-blue":   "linear-gradient(135deg, #4A8EFF 0%, #6366F1 100%)",
+        "grad-indigo": "linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%)",
+        "grad-purple": "linear-gradient(135deg, #8B5CF6 0%, #C084FC 100%)",
+        "grad-pink":   "linear-gradient(135deg, #EC4899 0%, #F472B6 100%)",
+        "grad-teal":   "linear-gradient(135deg, #14B8A6 0%, #0EA5E9 100%)",
+        "grad-amber":  "linear-gradient(135deg, #F59E0B 0%, #EF4444 100%)",
+        "grad-brand":  "linear-gradient(135deg, #6366F1 0%, #A855F7 100%)",
       },
     },
   },

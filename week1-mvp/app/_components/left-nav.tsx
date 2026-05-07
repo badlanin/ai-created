@@ -104,26 +104,6 @@ export function LeftNav({
     if (adminExpanded) setAdminOpen(true);
   }, [adminExpanded]);
 
-  // 场景工具组（admin 专属，新功能区块）
-  const sceneToolsPaths = useMemo(
-    () => [
-      "/admin/scene-tools/background-swap",
-      "/admin/scene-tools/poster",
-      "/admin/scene-tools/social-snap",
-      "/admin/scene-tools/replicate",
-    ],
-    [],
-  );
-  const sceneToolsExpanded = useMemo(
-    () => sceneToolsPaths.some((p) => isActive(p)),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pathname],
-  );
-  const [sceneToolsOpen, setSceneToolsOpen] = useState(sceneToolsExpanded);
-  useEffect(() => {
-    if (sceneToolsExpanded) setSceneToolsOpen(true);
-  }, [sceneToolsExpanded]);
-
   const displayName = user.display_name || user.username;
 
   // ===== 折叠态 =====
@@ -274,6 +254,12 @@ export function LeftNav({
             badge={activeJobCount > 0 ? String(activeJobCount) : undefined}
           />
           <NavItem
+            href="/scene-tools"
+            Icon={Sparkles}
+            label="服饰场景图"
+            active={isActive("/scene-tools")}
+          />
+          <NavItem
             href="/history"
             Icon={HistoryIcon}
             label="历史记录"
@@ -308,36 +294,6 @@ export function LeftNav({
               <SubItem href="/admin/photography" label="摄影" active={isActive("/admin/photography")} />
               <SubItem href="/admin/prompts" label="Prompt" active={isActive("/admin/prompts")} />
               <SubItem href="/admin/ai-models" label="AI 模型" active={isActive("/admin/ai-models")} />
-            </Collapsible>
-
-            <SectionHeader className="mt-5">场景工具</SectionHeader>
-            <Collapsible
-              label="生成场景图"
-              Icon={Sparkles}
-              open={sceneToolsOpen}
-              onToggle={() => setSceneToolsOpen((v) => !v)}
-              hasActive={sceneToolsExpanded}
-            >
-              <SubItem
-                href="/admin/scene-tools/background-swap"
-                label="背景换图"
-                active={isActive("/admin/scene-tools/background-swap")}
-              />
-              <SubItem
-                href="/admin/scene-tools/poster"
-                label="氛围海报"
-                active={isActive("/admin/scene-tools/poster")}
-              />
-              <SubItem
-                href="/admin/scene-tools/social-snap"
-                label="社媒图"
-                active={isActive("/admin/scene-tools/social-snap")}
-              />
-              <SubItem
-                href="/admin/scene-tools/replicate"
-                label="仿图"
-                active={isActive("/admin/scene-tools/replicate")}
-              />
             </Collapsible>
 
             <SectionHeader className="mt-5">系统</SectionHeader>

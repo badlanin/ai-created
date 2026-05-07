@@ -24,10 +24,7 @@ export type JobFeature =
   | "recolor"
   | "batch_photo"
   | "identity_gen"
-  | "background_swap"
-  | "poster"
-  | "social_snap"
-  | "replicate";
+  | "scene_tools";
 
 export interface JobRow {
   id: string;

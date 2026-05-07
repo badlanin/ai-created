@@ -50,3 +50,9 @@ export {
   type CollapsibleSectionProps,
 } from "./collapsible-section";
 export { SearchInput, type SearchInputProps } from "./search-input";
+export { PageHeader, type PageHeaderProps } from "./page-header";
+export {
+  ToolCard,
+  type ToolCardProps,
+  type ToolCardGradient,
+} from "./tool-card";

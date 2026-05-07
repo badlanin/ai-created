@@ -103,10 +103,7 @@ export async function analyzeGarment(
   const text = response.text;
   if (!text) {
     throw new Error(
-      "Vertex AI 未返回内容，请检查：\n" +
-        "1. VM 的 Service Account 是否有 Vertex AI User 角色\n" +
-        "2. 项目是否已启用 Vertex AI API\n" +
-        "3. GCP_LOCATION 是否支持 Gemini 2.5 Flash",
+      "Gemini 未返回内容，请检查：admin → 系统设置 里 API Key 是否已配置且有效。",
     );
   }
 

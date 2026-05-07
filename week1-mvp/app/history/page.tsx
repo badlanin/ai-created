@@ -45,20 +45,14 @@ type Me = {
 type Feature =
   | "recolor"
   | "batch_photo"
-  | "background_swap"
-  | "poster"
-  | "social_snap"
   | "identity_gen"
-  | "replicate";
+  | "scene_tools";
 
 const FEATURE_LABELS: Record<Feature, string> = {
   recolor: "换色",
   batch_photo: "批量摄影",
-  background_swap: "背景换图",
-  poster: "氛围海报",
-  social_snap: "社媒图",
   identity_gen: "形象生成",
-  replicate: "仿图",
+  scene_tools: "服饰场景图",
 };
 
 type JobRow = {
@@ -96,11 +90,9 @@ type FeatureTab = "all" | Feature;
 const FEATURE_TAB_OPTIONS: Array<{ value: FeatureTab; label: string }> = [
   { value: "all", label: "全部工具" },
   { value: "batch_photo", label: "批量摄影" },
+  { value: "scene_tools", label: "服饰场景图" },
   { value: "recolor", label: "换色" },
-  { value: "background_swap", label: "背景换图" },
-  { value: "poster", label: "氛围海报" },
-  { value: "social_snap", label: "社媒图" },
-  { value: "replicate", label: "仿图" },
+  { value: "identity_gen", label: "形象生成" },
 ];
 
 function formatTime(unix: number): string {
@@ -146,32 +138,22 @@ function formatConfig(job: JobRow): string {
     if (typeof p.image_count === "number") chips.push(`${p.image_count} 图`);
   } else if (job.feature === "batch_photo") {
     if (p.identity_name) chips.push(`模特: ${p.identity_name as string}`);
-    if (p.scene_name) chips.push(`场景: ${p.scene_name as string}`);
-    if (Array.isArray(p.pose_names)) {
-      const pns = p.pose_names as string[];
-      if (pns.length) chips.push(`${pns.length} 姿势`);
+    if (typeof p.solid_pose_count === "number" && p.solid_pose_count > 0) {
+      chips.push(`${p.solid_pose_count} 纯色`);
     }
-  } else if (job.feature === "background_swap") {
-    if (p.scene_name) chips.push(`场景: ${p.scene_name as string}`);
-    if (p.aspect_ratio) chips.push(String(p.aspect_ratio));
-  } else if (job.feature === "poster") {
-    if (p.scene_name) chips.push(`场景: ${p.scene_name as string}`);
-    if (typeof p.source_count === "number")
-      chips.push(`${p.source_count} 人`);
-    if (p.composition) chips.push(String(p.composition));
-    if (p.aspect_ratio) chips.push(String(p.aspect_ratio));
-  } else if (job.feature === "social_snap") {
-    if (p.scene_name) chips.push(`场景: ${p.scene_name as string}`);
-    if (typeof p.source_count === "number")
-      chips.push(`${p.source_count} 人`);
-    if (p.vibe) chips.push(String(p.vibe));
+    if (Array.isArray(p.extra_pairs)) {
+      const m = (p.extra_pairs as Array<unknown>).length;
+      if (m > 0) chips.push(`${m} 场景`);
+    }
+  } else if (job.feature === "scene_tools") {
+    if (typeof p.product_count === "number")
+      chips.push(`${p.product_count} 产品`);
+    if (typeof p.scene_count === "number")
+      chips.push(`${p.scene_count} 场景`);
     if (p.aspect_ratio) chips.push(String(p.aspect_ratio));
   } else if (job.feature === "identity_gen") {
     if (p.ethnicity) chips.push(String(p.ethnicity));
     if (p.body_shape) chips.push(String(p.body_shape));
-  } else if (job.feature === "replicate") {
-    if (typeof p.count === "number") chips.push(`${p.count} 人`);
-    if (p.aspect_ratio) chips.push(String(p.aspect_ratio));
   }
   if (p.quality_level) chips.push(String(p.quality_level).toUpperCase());
   if (p.realism_name) chips.push(`${p.realism_name}`);
@@ -554,23 +536,11 @@ function JobCard({
         return <Palette size={14} strokeWidth={2} className="text-brand-400" />;
       case "batch_photo":
         return <Camera size={14} strokeWidth={2} className="text-pink-600" />;
-      case "background_swap":
-        return <Eye size={14} strokeWidth={2} className="text-emerald-500" />;
-      case "poster":
-        return (
-          <Users size={14} strokeWidth={2} className="text-purple-500" />
-        );
-      case "social_snap":
-        return (
-          <Camera size={14} strokeWidth={2} className="text-orange-500" />
-        );
+      case "scene_tools":
+        return <Sparkles size={14} strokeWidth={2} className="text-cyan-500" />;
       case "identity_gen":
         return (
           <Users size={14} strokeWidth={2} className="text-amber-500" />
-        );
-      case "replicate":
-        return (
-          <Sparkles size={14} strokeWidth={2} className="text-cyan-500" />
         );
       default:
         return <Clock size={14} strokeWidth={2} className="text-fg-tertiary" />;

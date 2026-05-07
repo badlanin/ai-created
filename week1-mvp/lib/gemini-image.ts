@@ -9,9 +9,8 @@ import { readImageInfo, formatImageInfo } from "./image-info";
  * - 输入若干张参考图 + 文本提示，生成新图
  * - 适合：换色、风格迁移、模特穿着合成
  *
- * 鉴权：ADC（Application Default Credentials）
- *   - 优先用 GOOGLE_APPLICATION_CREDENTIALS 指向的凭证文件
- *   - 否则走 VM 绑定的 Service Account
+ * 鉴权：Gemini API key（直连 aistudio.google.com）
+ *   - 由 admin → 系统设置 配置，存在 settings 表里
  *
  * 可用模型由 ai_models 表动态维护（/admin/ai-models 管理）。
  *
@@ -22,7 +21,7 @@ import { readImageInfo, formatImageInfo } from "./image-info";
  * - 对应 route 里 maxDuration 要设 600s（留 20s 给 Next.js 返回错误）
  */
 
-/** 单次 Vertex AI 调用超时（毫秒）。配套 maxDuration = 600s */
+/** 单次 Gemini 调用超时（毫秒）。配套 maxDuration = 600s */
 const CALL_TIMEOUT_MS = 580_000;
 
 export interface GenImageInput {
@@ -39,7 +38,7 @@ export interface GenImageResult {
     promptTokenCount?: number;
     candidatesTokenCount?: number;
     totalTokenCount?: number;
-  }; // Vertex AI 返回的真实 token 计数，用于计费
+  }; // Gemini API 返回的真实 token 计数，用于计费
 }
 
 /**
