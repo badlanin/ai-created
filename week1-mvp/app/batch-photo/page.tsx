@@ -938,14 +938,14 @@ function BatchPhotoTab({
           {/* 任务看板 —— 持久化展示我的最近任务 */}
           <TaskDock feature="batch_photo" />
 
-          <div className="space-y-4">
-            {/* Step 1: 产品图上传 */}
+          <div className="space-y-2">
+            {/* Step 1: 产品图上传（紧凑：3 槽限宽不撑满）*/}
             <CollapsibleSection
               title="① 上传产品图"
               description="拖拽 / 点击 / Ctrl+V 粘贴；一张图也能开始"
               defaultOpen
             >
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-3 gap-2.5 max-w-[540px]">
                 {PRODUCT_SLOTS.map((cfg, i) => (
                   <ProductSlot
                     key={cfg.key}
@@ -1101,7 +1101,7 @@ function BatchPhotoTab({
                           g.items.some((m) => m.id === identityId))
                       }
                     >
-                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2.5 mt-2">
+                      <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-8 gap-1.5 mt-1">
                         {g.items.map((m) => (
                           <Thumbnail
                             key={m.id}
@@ -1296,7 +1296,7 @@ function BatchPhotoTab({
                               badge={g.items.length}
                               defaultOpen={false}
                             >
-                              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2.5 mt-2">
+                              <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-8 gap-1.5 mt-1">
                                 {g.items.map((s) => {
                                   const alreadyAdded = extraScenePairs.some(
                                     (p) => p.scene_id === s.id,
@@ -1374,7 +1374,7 @@ function BatchPhotoTab({
                       })()}
                       defaultOpen
                     >
-                      <div className="flex flex-wrap gap-1.5 mt-2">
+                      <div className="flex flex-wrap gap-1 mt-1">
                         {heroPoses.map((p) => {
                           const active = selectedPoseIds.has(p.id);
                           return (
@@ -1430,7 +1430,7 @@ function BatchPhotoTab({
                         }
                         defaultOpen
                       >
-                        <div className="flex flex-wrap gap-1.5 mt-2">
+                        <div className="flex flex-wrap gap-1 mt-1">
                           {list.map((p) => {
                             const active = selectedPoseIds.has(p.id);
                             return (
@@ -1439,7 +1439,7 @@ function BatchPhotoTab({
                                 type="button"
                                 onClick={() => togglePose(p.id)}
                                 title={p.text}
-                                className={`px-3 py-1.5 rounded-md border text-[12px] transition-colors ${
+                                className={`px-2.5 py-1 rounded-md border text-[12px] leading-tight transition-colors ${
                                   active
                                     ? "border-transparent text-brand-400 font-medium"
                                     : "border-border-default text-fg-secondary hover:border-border-strong hover:text-fg-primary"
@@ -1448,7 +1448,7 @@ function BatchPhotoTab({
                                   active
                                     ? {
                                         background: "var(--brand-50-bg)",
-                                        borderColor: "rgba(59, 130, 246, 0.4)",
+                                        borderColor: "rgba(99, 102, 241, 0.4)",
                                       }
                                     : undefined
                                 }

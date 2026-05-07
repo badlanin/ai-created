@@ -163,21 +163,20 @@ body {
 body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* Apple 系无衬线（跨平台优雅 fallback：mac/iOS 用 SF Pro，
-     PingFang SC 给中文，Win 用系统 ui，所有平台都能跑出干净体验） */
+  /* 苹方系字体栈：PingFang 优先（macOS/iOS 原生），Noto Sans SC 兜底（Win/Linux），
+     最后 Microsoft YaHei。中文必出现 PingFang 系视觉。 */
   font-family:
+    "PingFang SC", "PingFang TC", "PingFang HK",
     -apple-system, BlinkMacSystemFont,
     "SF Pro Display", "SF Pro Text",
-    "PingFang SC", "Helvetica Neue",
+    "Noto Sans SC", "Helvetica Neue",
     "Hiragino Sans GB", "Microsoft YaHei",
     system-ui, sans-serif;
   font-size: 14px;
-  line-height: 1.6;
+  line-height: 1.55;
   color: var(--text-primary);
   background: var(--bg-canvas);
   -webkit-tap-highlight-color: transparent;
-  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
-  letter-spacing: -0.005em;
 }
 
 /* 滚动条（Webkit）：浅色主题 */
@@ -399,11 +398,14 @@ a {
     color: var(--text-tertiary);
   }
 
-  /* ── 表单输入 ── */
+  /* ── 表单输入 ──
+     注意：line-height 1.5 + padding 8px = 文字垂直居中不裁切
+     原来 body line-height 1.6 + 这里 padding 10 + tailwind h-9 (36px) 会把汉字顶切 */
   .input {
     width: 100%;
-    padding: 10px 14px;
+    padding: 8px 12px;
     font-size: 13px;
+    line-height: 1.5;
     color: var(--text-primary);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
@@ -413,6 +415,14 @@ a {
       box-shadow var(--duration-fast),
       background var(--duration-fast);
   }
+  /* select / option / textarea 也跟随相同 line-height，确保汉字不裁切 */
+  select.input,
+  textarea.input {
+    line-height: 1.5;
+  }
+  /* 当外部用 tailwind 给 select 加固定高度（h-9, h-10）时，确保内部不被压扁 */
+  select.input.h-9, select.h-9 { height: 36px; padding-top: 6px; padding-bottom: 6px; }
+  select.input.h-10, select.h-10 { height: 40px; padding-top: 8px; padding-bottom: 8px; }
   .input::placeholder {
     color: var(--text-muted);
   }

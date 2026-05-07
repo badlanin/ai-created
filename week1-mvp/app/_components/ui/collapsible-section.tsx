@@ -70,7 +70,7 @@ export function CollapsibleSection({
         <button
           type="button"
           onClick={toggle}
-          className="w-full flex items-center gap-2 py-2 text-left group"
+          className="w-full flex items-center gap-2 py-1 text-left group"
           aria-expanded={isOpen}
         >
           {!hideChevron ? (
@@ -80,7 +80,7 @@ export function CollapsibleSection({
               className={`text-fg-tertiary transition-transform duration-base ${isOpen ? "" : "-rotate-90"}`}
             />
           ) : null}
-          <span className="text-[13px] font-medium text-fg-primary group-hover:text-white">
+          <span className="text-[13px] font-medium text-fg-secondary group-hover:text-fg-primary">
             {title}
           </span>
           {badge !== undefined ? (
@@ -95,7 +95,7 @@ export function CollapsibleSection({
             </span>
           ) : null}
         </button>
-        {isOpen ? <div className="pt-1 pb-3">{children}</div> : null}
+        {isOpen ? <div className="pt-0.5 pb-2">{children}</div> : null}
       </div>
     );
   }
@@ -107,19 +107,19 @@ export function CollapsibleSection({
       <button
         type="button"
         onClick={toggle}
-        className="w-full flex items-center gap-3 px-5 py-3.5 text-left hover:bg-bg-hover transition-colors"
+        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-left hover:bg-bg-hover transition-colors"
         aria-expanded={isOpen}
       >
         {!hideChevron ? (
           <ChevronDown
-            size={16}
+            size={15}
             strokeWidth={2}
             className={`text-fg-tertiary transition-transform duration-base ${isOpen ? "" : "-rotate-90"}`}
           />
         ) : null}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-[14px] font-semibold text-fg-primary">
+            <span className="text-[13.5px] font-semibold text-fg-primary">
               {title}
             </span>
             {badge !== undefined ? (
@@ -127,7 +127,7 @@ export function CollapsibleSection({
             ) : null}
           </div>
           {description ? (
-            <div className="text-[12px] text-fg-tertiary mt-0.5">
+            <div className="text-[12px] text-fg-tertiary mt-0.5 leading-snug">
               {description}
             </div>
           ) : null}
@@ -137,7 +137,7 @@ export function CollapsibleSection({
         ) : null}
       </button>
       {isOpen ? (
-        <div className="px-5 pb-5 pt-1 border-t border-border-subtle animate-fade-in">
+        <div className="px-4 pb-3 pt-1 border-t border-border-subtle animate-fade-in">
           {children}
         </div>
       ) : null}
