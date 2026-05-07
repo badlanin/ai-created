@@ -5,16 +5,34 @@ module.exports = {
     "./components/**/*.{ts,tsx}",
     "./lib/**/*.{ts,tsx}",
   ],
+  // 动态 className 用到的工具卡渐变类需 safelist 防 purge
+  safelist: [
+    "tool-card-blue",
+    "tool-card-indigo",
+    "tool-card-purple",
+    "tool-card-pink",
+    "tool-card-teal",
+    "tool-card-amber",
+    "bg-grad-blue",
+    "bg-grad-indigo",
+    "bg-grad-purple",
+    "bg-grad-pink",
+    "bg-grad-teal",
+    "bg-grad-amber",
+    "bg-grad-brand",
+  ],
   theme: {
     extend: {
-      // ── 深色主题表面色 ──
+      // ── 表面色 ──
       backgroundColor: {
+        "bg-canvas": "var(--bg-canvas)",
         "bg-primary": "var(--bg-primary)",
         "bg-secondary": "var(--bg-secondary)",
         "bg-tertiary": "var(--bg-tertiary)",
         "bg-elevated": "var(--bg-elevated)",
         "bg-card": "var(--bg-card)",
         "bg-hover": "var(--bg-hover)",
+        "bg-active": "var(--bg-active)",
       },
       // ── 文字 ──
       textColor: {

@@ -76,7 +76,7 @@ const TEXT_SCENE_PRESETS: Array<{ name: string; text: string }> = [
  * ───────────────────────────────────────────────────────── */
 
 export default function SceneToolsPage() {
-  const { user } = useCurrentUser();
+  const user = useCurrentUser();
 
   // 数据
   const [scenesLib, setScenesLib] = useState<Scene[]>([]);
@@ -225,11 +225,12 @@ export default function SceneToolsPage() {
   }
 
   // ─── 轮询 job ───
-  const job = useJobPolling(activeJobId, {
+  const polled = useJobPolling(activeJobId, {
     onFinished: () => {
       // 完成后让用户在这里看见，job 数据 still on screen
     },
   });
+  const job = polled.data?.job;
 
   // 场景按 category 分组（图片场景库选择面板用）
   const sceneGroups = useMemo(() => {
