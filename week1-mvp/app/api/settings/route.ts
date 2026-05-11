@@ -35,6 +35,9 @@ interface SettingRow {
 
 const ALLOWED_PATCH_KEYS = new Set([
   "gemini_api_key",
+  "openai_api_key",
+  "openai_proxy_url",
+  "openai_ipm_limit",
   "usd_to_cny",
   "default_budget_cny",
   "image_rate_limit_per_min",
@@ -42,7 +45,7 @@ const ALLOWED_PATCH_KEYS = new Set([
   "image_concurrency",
 ]);
 
-const SECRET_KEYS = new Set(["gemini_api_key"]);
+const SECRET_KEYS = new Set(["gemini_api_key", "openai_api_key"]);
 
 function maskSecret(value: string): string {
   if (!value) return "";
@@ -94,6 +97,30 @@ export async function PATCH(req: NextRequest) {
             {
               error:
                 "gemini_api_key 格式不正确，应为 'AIza' 开头的字符串。请去 https://aistudio.google.com/app/apikey 重新复制。",
+            },
+            { status: 400 },
+          );
+        }
+      }
+      // openai_api_key：'sk-' 开头
+      if (k === "openai_api_key" && typeof v === "string" && v.length > 0) {
+        if (!/^sk-[A-Za-z0-9_-]{20,}$/.test(v)) {
+          return NextResponse.json(
+            {
+              error:
+                "openai_api_key 格式不正确，应为 'sk-' 开头。去 https://platform.openai.com/api-keys 申请。",
+            },
+            { status: 400 },
+          );
+        }
+      }
+      // openai_proxy_url：必须是 http:// 或 https:// 开头（可空）
+      if (k === "openai_proxy_url" && typeof v === "string" && v.length > 0) {
+        if (!/^https?:\/\//.test(v)) {
+          return NextResponse.json(
+            {
+              error:
+                "openai_proxy_url 必须以 http:// 或 https:// 开头，例如 http://127.0.0.1:7892",
             },
             { status: 400 },
           );

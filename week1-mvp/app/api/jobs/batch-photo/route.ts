@@ -3,11 +3,8 @@ import path from "path";
 import fs from "fs/promises";
 import { getDb, DATA_DIR_PATH } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import {
-  formatGarmentAttrs,
-  generateImage,
-  type GenImageInput,
-} from "@/lib/gemini-image";
+import { formatGarmentAttrs } from "@/lib/gemini-image";
+import { generateImage, estimateImageCostUSD } from "@/lib/image-gen";
 import { resolveModelId } from "@/lib/ai-models";
 import {
   formatMaterialDetails,
@@ -22,6 +19,7 @@ import { createJob } from "@/lib/jobs-db";
 import { startJobWorker, type HandlerContext } from "@/lib/job-runner";
 import { pickShoeSpec } from "@/lib/shoe-spec";
 import { FRAMING_TIGHT_SINGLE } from "@/lib/scene-tools-prompt";
+import { buildImageManifest } from "@/lib/image-input-manifest";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -558,14 +556,15 @@ async function batchPhotoItemHandler(
   }
 
   // 读模特图 + (可选)场景图 + 产品图
+  type ImgInput = { buffer: Buffer; mimeType: string };
   const identityAbs = path.join(DATA_DIR_PATH, p.identity.image_path);
   const identityBuf = await fs.readFile(identityAbs);
-  const identityInput: GenImageInput = {
+  const identityInput: ImgInput = {
     buffer: identityBuf,
     mimeType: "image/png",
   };
 
-  let sceneInput: GenImageInput | null = null;
+  let sceneInput: ImgInput | null = null;
   if (sceneImagePath) {
     const sceneAbs = path.join(DATA_DIR_PATH, sceneImagePath);
     const sceneBuf = await fs.readFile(sceneAbs);
@@ -579,7 +578,7 @@ async function batchPhotoItemHandler(
     };
   }
 
-  const productInputs: GenImageInput[] = [];
+  const productInputs: ImgInput[] = [];
   for (let i = 0; i < p.product_paths.length; i++) {
     const buf = await fs.readFile(p.product_paths[i]);
     productInputs.push({
@@ -622,10 +621,19 @@ async function batchPhotoItemHandler(
     /\{\{(\w+)\}\}/g,
     (_m, key: string) => promptVars[key] ?? "",
   );
-  const finalPrompt = `${filledTemplate}\n\n${qualityHintText}\n\n${framingBlock}`;
+
+  // 输入清单：按实际 input 顺序（产品 N → identity → 可选场景）动态生成 manifest
+  // 修复了模板里硬写"参考图 1-2"在产品数不为 2 时索引错位的问题
+  const manifest = buildImageManifest({
+    productCount: productInputs.length,
+    hasIdentity: true,
+    hasScene: sceneInput !== null,
+    sceneName: sceneInput ? sceneNameForPrompt : undefined,
+  });
+  const finalPrompt = `${manifest}\n${filledTemplate}\n\n${qualityHintText}\n\n${framingBlock}`;
 
   // 注意：纯色 item 不传 scene image
-  const parts: GenImageInput[] = sceneInput
+  const parts: ImgInput[] = sceneInput
     ? [...productInputs, identityInput, sceneInput]
     : [...productInputs, identityInput];
 
@@ -634,11 +642,14 @@ async function batchPhotoItemHandler(
 
   const gen = await retryWithBackoff(
     () =>
-      generateImage(parts, finalPrompt, ctx.job.model, {
+      generateImage({
+        inputs: parts,
+        prompt: finalPrompt,
+        modelId: ctx.job.model,
         aspectRatio: p.aspect_ratio ?? undefined,
         imageSize,
-        seed: p.batch_seed,            // 整批共享同一 seed → 模特脸 / 光线 / 背景一致
-        temperature: 0.15,             // 批次模式低温，最大化一致性
+        seed: p.batch_seed,            // 整批共享同一 seed → 模特脸 / 光线 / 背景一致（OpenAI 路径忽略）
+        temperature: 0.15,             // 批次模式低温，最大化一致性（OpenAI 路径忽略）
       }),
     {
       onRetry: (e, attempt, delay) => {
@@ -658,12 +669,27 @@ async function batchPhotoItemHandler(
   const filePath = path.join(outputsDir, filename);
   await fs.writeFile(filePath, gen.data);
 
+  // OpenAI 走固定单价（size×quality），不走 token —— 算好覆盖记账金额
+  const costOverrideUsd =
+    gen.provider === "openai"
+      ? estimateImageCostUSD({
+          modelId: ctx.job.model,
+          aspectRatio: p.aspect_ratio ?? undefined,
+          imageSize,
+        })
+      : undefined;
+
   recordUsage({
     userId: ctx.userId,
     model: ctx.job.model,
     feature: "batch_photo",
-    usageMetadata: gen.usageMetadata,
+    usageMetadata: {
+      promptTokenCount: gen.usage?.inputTokens,
+      candidatesTokenCount: gen.usage?.outputTokens,
+      totalTokenCount: gen.usage?.totalTokens,
+    },
     success: true,
+    costOverrideUsd,
     notes: {
       job_id: ctx.job.id,
       pose: pose.name,
@@ -674,14 +700,15 @@ async function batchPhotoItemHandler(
       aspect_ratio: p.aspect_ratio,
       quality_level: qualityLevel,
       image_size: imageSize,
+      provider: gen.provider,
     },
   });
 
   return {
     result_image_path: `outputs/${filename}`,
     result_image_url: `/assets/outputs/${filename}`,
-    input_tokens: gen.usageMetadata?.promptTokenCount ?? undefined,
-    output_tokens: gen.usageMetadata?.candidatesTokenCount ?? undefined,
+    input_tokens: gen.usage?.inputTokens ?? undefined,
+    output_tokens: gen.usage?.outputTokens ?? undefined,
   };
 }
 

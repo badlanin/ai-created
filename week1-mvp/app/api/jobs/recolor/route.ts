@@ -6,9 +6,8 @@ import { requireUser } from "@/lib/auth";
 import {
   buildRecolorPrompt,
   formatGarmentAttrs,
-  generateImage,
-  type GenImageInput,
 } from "@/lib/gemini-image";
+import { generateImage, estimateImageCostUSD } from "@/lib/image-gen";
 import { resolveModelId } from "@/lib/ai-models";
 import {
   formatMaterialDetails,
@@ -377,12 +376,13 @@ async function recolorItemHandler(
   }
 
   // 读所有图 —— 主图放第一个
+  type ImgInput = { buffer: Buffer; mimeType: string };
   const inputBuffers: Buffer[] = [];
   for (const fp of p.input_paths) {
     inputBuffers.push(await fs.readFile(fp));
   }
   const mimeTypes = p.input_mime_types ?? [];
-  const inputs: GenImageInput[] = p.input_paths.map((_fp, i) => ({
+  const inputs: ImgInput[] = p.input_paths.map((_fp, i) => ({
     buffer: inputBuffers[i],
     mimeType: mimeTypes[i] || "image/jpeg",
   }));
@@ -405,13 +405,13 @@ async function recolorItemHandler(
     );
     swatchBuf = Buffer.alloc(0);
   }
-  const swatchInput: GenImageInput | null =
+  const swatchInput: ImgInput | null =
     swatchBuf.length > 0
       ? { buffer: swatchBuf, mimeType: "image/png" }
       : null;
 
   // 输入顺序：[主图] [其他视角图...] [色卡]  —— 色卡放最后，prompt 显式引用"最后一张"
-  const reordered: GenImageInput[] = [
+  const reordered: ImgInput[] = [
     inputs[itemMeta.imgIdx],
     ...inputs.filter((_, i) => i !== itemMeta.imgIdx),
     ...(swatchInput ? [swatchInput] : []),
@@ -448,11 +448,14 @@ async function recolorItemHandler(
   const FALLBACK_MODEL = "gemini-3-pro-image-preview";
 
   const callGen = (model: string) =>
-    generateImage(reordered, prompt, model, {
+    generateImage({
+      inputs: reordered,
+      prompt,
+      modelId: model,
       aspectRatio: p.aspect_ratio ?? undefined,
       imageSize,
-      seed: p.batch_seed, // 整批共享同一 seed → 一致性
-      temperature: 0.05, // 极低温：最大化确定性，减少颜色漂移
+      seed: p.batch_seed, // 整批共享同一 seed → 一致性（OpenAI 忽略）
+      temperature: 0.05, // 极低温：最大化确定性，减少颜色漂移（OpenAI 忽略）
     });
 
   let gen;
@@ -515,12 +518,28 @@ async function recolorItemHandler(
 
   // 计费用实际跑出图的那个 model（fallback 时是 Pro Image，不是 job 表里的 Flash）
   const actualModel = usedFallback ? FALLBACK_MODEL : PRIMARY_MODEL;
+
+  // OpenAI 固定单价覆盖；fallback 到 Gemini Pro 时不覆盖（走 token 计费）
+  const costOverrideUsd =
+    gen.provider === "openai"
+      ? estimateImageCostUSD({
+          modelId: actualModel,
+          aspectRatio: p.aspect_ratio ?? undefined,
+          imageSize,
+        })
+      : undefined;
+
   recordUsage({
     userId: ctx.userId,
     model: actualModel,
     feature: "recolor",
-    usageMetadata: gen.usageMetadata,
+    usageMetadata: {
+      promptTokenCount: gen.usage?.inputTokens,
+      candidatesTokenCount: gen.usage?.outputTokens,
+      totalTokenCount: gen.usage?.totalTokens,
+    },
     success: true,
+    costOverrideUsd,
     notes: {
       job_id: ctx.job.id,
       color: itemMeta.colorName,
@@ -529,6 +548,7 @@ async function recolorItemHandler(
       aspect_ratio: p.aspect_ratio,
       quality_level: p.quality_level,
       image_size: imageSize,
+      provider: gen.provider,
       ...(usedFallback ? { fallback_from: PRIMARY_MODEL } : {}),
     },
   });
@@ -538,8 +558,8 @@ async function recolorItemHandler(
     result_image_url: `/assets/outputs/${correctedFilename}`,
     raw_image_path: `outputs/${rawFilename}`,
     correction_meta: correctionMeta ? JSON.stringify(correctionMeta) : null,
-    input_tokens: gen.usageMetadata?.promptTokenCount ?? undefined,
-    output_tokens: gen.usageMetadata?.candidatesTokenCount ?? undefined,
+    input_tokens: gen.usage?.inputTokens ?? undefined,
+    output_tokens: gen.usage?.outputTokens ?? undefined,
   };
 }
 

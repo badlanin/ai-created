@@ -81,11 +81,18 @@ export default function SceneToolsPage() {
   // 数据
   const [scenesLib, setScenesLib] = useState<Scene[]>([]);
 
+  // 数据：AI 模型列表（从 /api/ai-models 拉）
+  const [models, setModels] = useState<
+    Array<{ model_id: string; label: string; badge?: string | null }>
+  >([]);
+
   // 表单
   const [products, setProducts] = useState<ProductFile[]>([]);
   const [scenes, setScenes] = useState<SceneEntry[]>([]);
   const [aspectRatio, setAspectRatio] = useState("3:4");
   const [userHint, setUserHint] = useState("");
+  const [modelId, setModelId] = useState("gemini-3-pro-image-preview");
+  const [imageSize, setImageSize] = useState<"1K" | "2K" | "4K">("4K");
 
   // 提交
   const [submitting, setSubmitting] = useState(false);
@@ -95,11 +102,28 @@ export default function SceneToolsPage() {
   // 场景图选择面板（显示 / 隐藏）
   const [scenePickerOpen, setScenePickerOpen] = useState(false);
 
-  // 加载场景库
+  // 加载场景库 + 模型列表
   useEffect(() => {
     fetch("/api/scenes")
       .then((r) => (r.ok ? r.json() : []))
       .then((data: Scene[]) => setScenesLib(data))
+      .catch(() => {});
+    fetch("/api/ai-models?category=image_gen")
+      .then((r) => (r.ok ? r.json() : []))
+      .then(
+        (
+          data: Array<{
+            model_id: string;
+            label: string;
+            badge?: string | null;
+            is_default?: 0 | 1;
+          }>,
+        ) => {
+          setModels(data);
+          const def = data.find((m) => m.is_default === 1) || data[0];
+          if (def) setModelId(def.model_id);
+        },
+      )
       .catch(() => {});
   }, []);
 
@@ -206,6 +230,8 @@ export default function SceneToolsPage() {
       });
       fd.append("scenes", JSON.stringify(scenesPayload));
       fd.append("aspect_ratio", aspectRatio);
+      fd.append("model", modelId);
+      fd.append("image_size", imageSize);
       if (userHint.trim()) fd.append("user_hint", userHint.trim());
 
       const res = await fetch("/api/scene-tools", {
@@ -404,21 +430,65 @@ export default function SceneToolsPage() {
           </h2>
 
           <div className="space-y-3 mb-4">
+            {/* 模型选择 */}
             <div>
               <label className="block text-[11px] text-fg-tertiary mb-1">
-                输出比例
+                模型
               </label>
               <select
-                value={aspectRatio}
-                onChange={(e) => setAspectRatio(e.target.value)}
+                value={modelId}
+                onChange={(e) => setModelId(e.target.value)}
                 className="input select text-sm h-9"
               >
-                {ASPECT_RATIOS.map((a) => (
-                  <option key={a.value} value={a.value}>
-                    {a.label}
+                {models.length === 0 ? (
+                  <option value="gemini-3-pro-image-preview">
+                    Nano Banana Pro
                   </option>
-                ))}
+                ) : (
+                  models.map((m) => (
+                    <option key={m.model_id} value={m.model_id}>
+                      {m.label}
+                      {m.badge ? ` · ${m.badge}` : ""}
+                    </option>
+                  ))
+                )}
               </select>
+            </div>
+
+            {/* 比例 + 画质 横排 */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[11px] text-fg-tertiary mb-1">
+                  比例
+                </label>
+                <select
+                  value={aspectRatio}
+                  onChange={(e) => setAspectRatio(e.target.value)}
+                  className="input select text-sm h-9"
+                >
+                  {ASPECT_RATIOS.map((a) => (
+                    <option key={a.value} value={a.value}>
+                      {a.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] text-fg-tertiary mb-1">
+                  画质
+                </label>
+                <select
+                  value={imageSize}
+                  onChange={(e) =>
+                    setImageSize(e.target.value as "1K" | "2K" | "4K")
+                  }
+                  className="input select text-sm h-9"
+                >
+                  <option value="1K">1K（最便宜）</option>
+                  <option value="2K">2K（性价比）</option>
+                  <option value="4K">4K（最佳）</option>
+                </select>
+              </div>
             </div>
 
             <div>

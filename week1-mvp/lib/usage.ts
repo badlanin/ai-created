@@ -49,6 +49,12 @@ export interface RecordUsageInput {
   success?: boolean;
   error?: string | null;
   notes?: Record<string, unknown> | null;
+  /**
+   * 固定单价覆盖（USD）。OpenAI gpt-image-2 是按 size×quality 固定价计费，
+   * 不是 token × per-1M-rate，所以 OpenAI 路径要直接传这个值绕过 calcCost
+   * 的 token 计算。Gemini 路径留空，走原 token 计费。
+   */
+  costOverrideUsd?: number;
 }
 
 /**
@@ -57,7 +63,16 @@ export interface RecordUsageInput {
 export function recordUsage(input: RecordUsageInput): void {
   try {
     const tokens = extractTokens(input.usageMetadata);
-    const cost = calcCost(input.model, tokens.prompt, tokens.completion);
+    const tokenCost = calcCost(input.model, tokens.prompt, tokens.completion);
+
+    // OpenAI 固定单价覆盖：cost_usd 来自调用方，cost_cny 用当前汇率换算
+    let costUsd = tokenCost.cost_usd;
+    let costCny = tokenCost.cost_cny;
+    if (typeof input.costOverrideUsd === "number" && input.costOverrideUsd >= 0) {
+      costUsd = input.costOverrideUsd;
+      costCny = input.costOverrideUsd * tokenCost.usd_to_cny;
+    }
+
     const db = getDb();
     db.prepare(
       `INSERT INTO usage_records
@@ -70,11 +85,11 @@ export function recordUsage(input: RecordUsageInput): void {
       input.generationId ?? null,
       input.model,
       input.feature,
-      cost.prompt_tokens,
-      cost.completion_tokens,
-      cost.total_tokens,
-      cost.cost_usd,
-      cost.cost_cny,
+      tokenCost.prompt_tokens,
+      tokenCost.completion_tokens,
+      tokenCost.total_tokens,
+      costUsd,
+      costCny,
       input.success === false ? 0 : 1,
       input.error ?? null,
       input.notes ? JSON.stringify(input.notes) : null,

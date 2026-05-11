@@ -1,7 +1,14 @@
 /**
  * 计费相关：价格查询 + 成本计算 + 汇率
+ *
+ * 计费有两条路径：
+ *   1. Gemini  → token × per-1M-rate（走 model_prices 表）
+ *   2. OpenAI gpt-image-* → size × quality 固定价（走 openai-image.estimateOpenAIImageCostUSD）
+ *
+ * estimateImageCost 会按 modelId 前缀分发到正确的路径。
  */
 import { getDb } from "./db";
+import { estimateOpenAIImageCostUSD } from "./openai-image";
 
 export interface ModelPriceRow {
   model_id: string;
@@ -215,8 +222,35 @@ export function estimateImageCost(
   modelId: string,
   qualityLevel: "hd" | "2k" | "4k",
 ): { cost_usd: number; cost_cny: number; price_found: boolean } {
-  const price = getModelPrice(modelId);
   const usdToCny = getUsdToCny();
+
+  // ─── OpenAI gpt-image-* 走固定单价表（按 size×quality） ───
+  if (modelId.startsWith("gpt-image")) {
+    // 按 qualityLevel 映射默认竖向 size 和 quality 档位
+    // 跟 lib/image-gen.ts 的 mapAspectAndSizeToOpenAI(portrait) 对齐
+    const sizeMap = {
+      hd: "1024x1536" as const,
+      "2k": "1440x2560" as const,
+      "4k": "2144x3824" as const,
+    };
+    const qualityMap = {
+      hd: "medium" as const,
+      "2k": "high" as const,
+      "4k": "high" as const,
+    };
+    const cost_usd = estimateOpenAIImageCostUSD(
+      sizeMap[qualityLevel],
+      qualityMap[qualityLevel],
+    );
+    return {
+      cost_usd,
+      cost_cny: cost_usd * usdToCny,
+      price_found: cost_usd > 0,
+    };
+  }
+
+  // ─── Gemini token 计费路径 ───
+  const price = getModelPrice(modelId);
   if (!price) {
     return { cost_usd: 0, cost_cny: 0, price_found: false };
   }

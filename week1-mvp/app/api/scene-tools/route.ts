@@ -3,7 +3,7 @@ import path from "path";
 import fs from "fs/promises";
 import { DATA_DIR_PATH, getDb } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import { generateImage, type GenImageInput } from "@/lib/gemini-image";
+import { generateImage, estimateImageCostUSD } from "@/lib/image-gen";
 import { resolveModelId } from "@/lib/ai-models";
 import { recordUsage } from "@/lib/usage";
 import { assertWithinBudget, getUserBudgetStatus } from "@/lib/pricing";
@@ -163,12 +163,20 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ─── 模型 ───
+    // ─── 模型 + 画质 ───
     const modelRaw = formData.get("model");
     const model = resolveModelId(
       "image_gen",
       typeof modelRaw === "string" ? modelRaw : undefined,
     );
+    // 画质：'1K' | '2K' | '4K'，默认 4K（高质量）
+    // Gemini 用 imageSize（'1K' | '2K' | '4K'）
+    // OpenAI 用 quality（low / medium / high）+ size（具体像素）—— image-gen dispatcher 会自动映射
+    const qualityRaw = formData.get("image_size");
+    const imageSize: "1K" | "2K" | "4K" =
+      qualityRaw === "1K" || qualityRaw === "2K" || qualityRaw === "4K"
+        ? qualityRaw
+        : "4K";
 
     // ─── 构造 N×M 个 items（笛卡尔积）───
     const N = productFiles.length;
@@ -203,6 +211,7 @@ export async function POST(req: NextRequest) {
       items: items.map((it) => ({ label: it.label })),
       params: {
         aspect_ratio: aspectRatio,
+        image_size: imageSize,
         user_hint: userHint || null,
         product_count: N,
         scene_count: M,
@@ -304,6 +313,7 @@ async function sceneToolsItemHandler(
 }> {
   const p = ctx.params as {
     aspect_ratio?: string;
+    image_size?: "1K" | "2K" | "4K";
     user_hint?: string | null;
     product_count: number;
     scene_count: number;
@@ -337,7 +347,7 @@ async function sceneToolsItemHandler(
   const productMime = p.product_mime_types[itemMeta.product_idx] || "image/jpeg";
   if (!productPath) throw new Error(`product[${itemMeta.product_idx}] 丢失`);
   const productBuf = await fs.readFile(productPath);
-  const productInput: GenImageInput = {
+  const productInput = {
     buffer: productBuf,
     mimeType: productMime,
   };
@@ -347,7 +357,7 @@ async function sceneToolsItemHandler(
   if (!scene) throw new Error(`scene[${itemMeta.scene_idx}] 丢失`);
 
   let prompt: string;
-  const inputs: GenImageInput[] = [productInput];
+  const inputs: Array<{ buffer: Buffer; mimeType: string }> = [productInput];
   if (scene.type === "text") {
     prompt = buildSceneShootText(scene.text, p.user_hint || undefined);
   } else {
@@ -367,12 +377,15 @@ async function sceneToolsItemHandler(
     prompt = buildSceneShootImage(scene.scene_name, p.user_hint || undefined);
   }
 
-  // 调 Gemini Pro Image 4K
+  // 调出图（gemini-image / openai-image 自动分发）
   const gen = await retryWithBackoff(
     () =>
-      generateImage(inputs, prompt, ctx.job.model, {
+      generateImage({
+        inputs,
+        prompt,
+        modelId: ctx.job.model,
         aspectRatio: p.aspect_ratio,
-        imageSize: "4K",
+        imageSize: p.image_size || "4K",
         temperature: 0.4,
       }),
     {
@@ -393,26 +406,43 @@ async function sceneToolsItemHandler(
   const filePath = path.join(outputsDir, filename);
   await fs.writeFile(filePath, gen.data);
 
+  // OpenAI 是固定单价（按 size×quality），不是 token 计费 —— 算好直接覆盖
+  const costOverrideUsd =
+    gen.provider === "openai"
+      ? estimateImageCostUSD({
+          modelId: ctx.job.model,
+          aspectRatio: p.aspect_ratio,
+          imageSize: p.image_size || "4K",
+        })
+      : undefined;
+
   recordUsage({
     userId: ctx.userId,
     model: ctx.job.model,
     feature: "other",
-    usageMetadata: gen.usageMetadata,
+    usageMetadata: {
+      promptTokenCount: gen.usage?.inputTokens,
+      candidatesTokenCount: gen.usage?.outputTokens,
+      totalTokenCount: gen.usage?.totalTokens,
+    },
     success: true,
+    costOverrideUsd,
     notes: {
       job_id: ctx.job.id,
       kind: "scene_tools",
+      provider: gen.provider,
       product_idx: itemMeta.product_idx,
       scene_idx: itemMeta.scene_idx,
       scene_type: scene.type,
       aspect_ratio: p.aspect_ratio,
+      image_size: p.image_size,
     },
   });
 
   return {
     result_image_path: `outputs/${filename}`,
     result_image_url: `/assets/outputs/${filename}`,
-    input_tokens: gen.usageMetadata?.promptTokenCount ?? undefined,
-    output_tokens: gen.usageMetadata?.candidatesTokenCount ?? undefined,
+    input_tokens: gen.usage?.inputTokens ?? undefined,
+    output_tokens: gen.usage?.outputTokens ?? undefined,
   };
 }

@@ -51,17 +51,38 @@ export function buildGenaiClient(): GoogleGenAI {
 export function getCurrentProviderInfo(): {
   hasGeminiApiKey: boolean;
   geminiApiKeyMask: string;
+  hasOpenaiApiKey: boolean;
+  openaiApiKeyMask: string;
+  openaiProxyUrl: string;
 } {
   const s = readProviderSettings();
-  const key = s.geminiApiKey;
-  const mask =
-    key.length === 0
-      ? ""
-      : key.length <= 8
-        ? "*".repeat(key.length)
-        : `${key.slice(0, 4)}${"*".repeat(Math.max(0, key.length - 8))}${key.slice(-4)}`;
+  const mask = (k: string) => {
+    if (!k) return "";
+    if (k.length <= 8) return "*".repeat(k.length);
+    return `${k.slice(0, 4)}${"*".repeat(Math.max(0, k.length - 8))}${k.slice(-4)}`;
+  };
+
+  // 顺便读 OpenAI key + proxy
+  let openaiKey = "";
+  let openaiProxy = "";
+  try {
+    const db = getDb();
+    const rows = db
+      .prepare(
+        `SELECT key, value FROM settings WHERE key IN ('openai_api_key', 'openai_proxy_url')`,
+      )
+      .all() as Array<{ key: string; value: string }>;
+    for (const r of rows) {
+      if (r.key === "openai_api_key") openaiKey = (r.value || "").trim();
+      if (r.key === "openai_proxy_url") openaiProxy = (r.value || "").trim();
+    }
+  } catch {}
+
   return {
-    hasGeminiApiKey: key.length > 0,
-    geminiApiKeyMask: mask,
+    hasGeminiApiKey: s.geminiApiKey.length > 0,
+    geminiApiKeyMask: mask(s.geminiApiKey),
+    hasOpenaiApiKey: openaiKey.length > 0,
+    openaiApiKeyMask: mask(openaiKey),
+    openaiProxyUrl: openaiProxy,
   };
 }

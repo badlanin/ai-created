@@ -410,6 +410,8 @@ function migrate(db: Database.Database) {
   seedScenesFromAssets(db);
   // 老库的"v2 新场景"补种（manifest 含 27 张新场景，按 name 幂等）
   migrateInsertNewScenes(db);
+  // 老库的新姿势补种（按 name 幂等，flag v2）
+  migrateInsertNewPoses(db);
 }
 
 /**
@@ -549,6 +551,26 @@ function seedAiModels(db: Database.Database) {
       category: "image_gen",
       is_default: 0,
       sort_order: 30,
+    },
+    // ----- OpenAI Image -----
+    // 注意：截至 2026-04 官方 model 列表只有 gpt-image-2 / 1.5 / 1 / 1-mini，
+    //       没有 gpt-image-2-mini，便宜路径继续用 gpt-image-1-mini
+    {
+      model_id: "gpt-image-2",
+      label: "GPT Image 2",
+      description: "OpenAI · 真实感强、氛围细节出色，但 Tier 1 限 5 IPM",
+      category: "image_gen",
+      is_default: 0,
+      badge: "新",
+      sort_order: 40,
+    },
+    {
+      model_id: "gpt-image-1-mini",
+      label: "GPT Image 1 Mini",
+      description: "OpenAI · 便宜版本，适合快速草稿/批量探索",
+      category: "image_gen",
+      is_default: 0,
+      sort_order: 50,
     },
   ];
 
@@ -1838,6 +1860,23 @@ function seedModelPrices(db: Database.Database) {
       tier: "standard",
       notes: "Nano Banana 初代 preview",
     },
+    // OpenAI gpt-image-2（按 size × quality 固定价，token-based 计费不太适用）
+    // 这里塞个名义 token 单价占位，实际 cost 由 lib/openai-image estimateCost 函数返回（按 size×quality 查表）
+    {
+      model_id: "gpt-image-2",
+      input_per_1m_usd: 10.0,
+      output_per_1m_usd: 0.0, // output 部分走固定 per-image，token 计费忽略
+      tier: "standard",
+      notes:
+        "GPT Image 2 - 按 size×quality 固定价：1024×1536 high $0.165 / med $0.041 / low $0.005；4K high $2.24。Tier 1 限 5 IPM",
+    },
+    {
+      model_id: "gpt-image-1-mini",
+      input_per_1m_usd: 5.0,
+      output_per_1m_usd: 0.0,
+      tier: "standard",
+      notes: "GPT Image 1 Mini 便宜版本，按 size 固定价",
+    },
   ];
 
   const stmt = db.prepare(
@@ -1896,6 +1935,24 @@ function seedSettings(db: Database.Database) {
       value: "",
       notes:
         "Gemini API key（仅 ai_provider=gemini_api 时使用）。从 https://aistudio.google.com/app/apikey 创建。",
+    },
+    {
+      key: "openai_api_key",
+      value: "",
+      notes:
+        "OpenAI API key（gpt-image-2 用）。从 https://platform.openai.com/api-keys 创建。",
+    },
+    {
+      key: "openai_proxy_url",
+      value: "",
+      notes:
+        "OpenAI 调用走的代理（GFW 环境需要），如 http://127.0.0.1:7892。生产 VM 在墙外可留空。",
+    },
+    {
+      key: "openai_ipm_limit",
+      value: "5",
+      notes:
+        "OpenAI gpt-image-2 每分钟图片数上限（Tier 1 = 5，Tier 2 = 50，按账号 tier 配）",
     },
   ];
 
@@ -2192,5 +2249,132 @@ function migrateInsertNewScenes(db: Database.Database) {
     console.log(
       `[db] migrateInsertNewScenes: 补种 ${inserted} 张 / 清理 ${deleted} 张（已标记 ${FLAG}=done）`,
     );
+  }
+}
+
+/**
+ * 新姿势补种（v2）
+ * 来源：docs/new-poses.json
+ * 6 全身 + 4 特写 = 10 个新姿势。按 name 幂等，重复部署不会重插。
+ */
+function migrateInsertNewPoses(db: Database.Database) {
+  const FLAG = "migrated_poses_v2";
+  const flag = db
+    .prepare(`SELECT value FROM settings WHERE key = ?`)
+    .get(FLAG) as { value: string } | undefined;
+  if (flag?.value === "done") return;
+
+  type PoseSeed = {
+    name: string;
+    text: string;
+    type: "full" | "half" | "closeup";
+    tags: string;
+    is_hero: 0 | 1;
+    sort_order: number;
+  };
+
+  const NEW_POSES: PoseSeed[] = [
+    {
+      name: "背身回眸",
+      text: "Model stands with her back to the camera, head turned slightly over her left shoulder looking softly back at the lens. Spine elongated, shoulders relaxed and slightly squared. One hand resting naturally at her side, the other lightly touching her hip. Hair gathered low at the nape or in a low bun to expose the neckline and back of the dress. Calm composed expression with a hint of a smile. Frames the back of the gown / bodice fully.",
+      type: "full",
+      tags: "全身,背身,回眸,展示后背",
+      is_hero: 1,
+      sort_order: 100,
+    },
+    {
+      name: "自然正面站",
+      text: "Model stands facing the camera straight-on, weight evenly distributed across both feet, body axis perfectly vertical. Both arms relaxed and naturally falling at her sides, slightly away from the body so the silhouette of the dress is fully visible. Shoulders open, chin slightly raised, gaze direct and confident. Subtle natural smile or neutral elegant expression. Hair flowing freely over shoulders. The pose maximally shows off the full front view of the garment.",
+      type: "full",
+      tags: "全身,正面,自然站立,基础",
+      is_hero: 1,
+      sort_order: 110,
+    },
+    {
+      name: "单手叉腰正面",
+      text: "Model stands facing the camera with weight shifted slightly to one leg (contrapposto). One hand placed lightly on her hip with the elbow angled outward, the other arm falling gracefully at her side. Shoulders open and relaxed, head straight with a soft confident gaze and gentle closed-lip smile. Hair cascading naturally over one shoulder. The pose creates a subtle S-curve through the body that flatters the dress's waist and skirt drape.",
+      type: "full",
+      tags: "全身,正面,叉腰,S形",
+      is_hero: 1,
+      sort_order: 120,
+    },
+    {
+      name: "背身撩发",
+      text: "Model with her back to the camera, head and torso turned gently to one side as she lifts one hand up to lightly touch or sweep her hair behind her ear or along her temple. The lifted arm creates a soft elegant curve framing her face in three-quarter profile. Other arm relaxed at her side or resting at her lower back. Shoulders relaxed, spine elongated. Calm contemplative expression with eyes looking softly downward or off-camera.",
+      type: "full",
+      tags: "全身,背身,撩发,优雅",
+      is_hero: 1,
+      sort_order: 130,
+    },
+    {
+      name: "双手扶腰",
+      text: "Model stands facing the camera with both hands placed lightly on her hips, fingers spread naturally, elbows angled outward. Weight slightly forward, body axis vertical. Shoulders squared and open, posture confident but relaxed. Head straight or slightly tilted, gaze direct with a neutral or subtly amused expression. This pose emphasizes the waistline and hip silhouette of the dress, ideal for showing off cinched-waist or A-line cuts.",
+      type: "full",
+      tags: "全身,正面,双手叉腰,自信",
+      is_hero: 0,
+      sort_order: 140,
+    },
+    {
+      name: "S形侧立",
+      text: "Model stands in a soft S-curve pose: one hip pushed gently to the side, weight on the back leg, front leg slightly forward and crossed. One hand lightly rests near the collarbone or touches the strap of the dress, the other falls naturally at the hip. Torso gently twisted toward the camera in three-quarter view. Head tilted slightly, looking directly at the lens with a sultry or warm expression. The pose creates an hourglass silhouette emphasizing waist and bust.",
+      type: "full",
+      tags: "全身,S形,侧身,性感",
+      is_hero: 0,
+      sort_order: 150,
+    },
+    {
+      name: "全身侧光开衩",
+      text: "Full-body standing pose photographed slightly from the side, light coming from the front-right creating soft shadow on the left side of the body. Model facing camera with head turned slightly down and to one side in a contemplative gaze. One leg stepping forward through a high front slit, revealing the thigh and the dress's lining. Both arms relaxed at sides, hands hanging naturally. This pose showcases the slit construction and the ruched / draped fabric detail at the waist.",
+      type: "full",
+      tags: "全身,正面,侧光,开衩展示",
+      is_hero: 0,
+      sort_order: 160,
+    },
+    {
+      name: "腰部以上双叉腰",
+      text: "Tightly cropped half-body view from approximately mid-thigh up. Model facing the camera with both hands placed on the hips just above the waist, elbows angled outward creating a strong triangular frame. Crop excludes the face (cut just below the chin) to emphasize the bodice, neckline, fabric texture, and waist construction of the dress. Strong confident stance, shoulders square.",
+      type: "half",
+      tags: "半身,叉腰,展示版型,无脸",
+      is_hero: 0,
+      sort_order: 200,
+    },
+    {
+      name: "侧身腰部细节",
+      text: "Cropped to focus on the bodice and high-slit detail from collarbone to upper thigh. Model standing in three-quarter angle with body slightly turned away from camera. One hand resting on the waist where the corset / waistline detail is, the other hand subtly lifting the slit edge of the skirt to reveal the leg. Crop excludes the face. Emphasizes the corset structure, lace inset, and slit construction.",
+      type: "half",
+      tags: "半身,侧身,腰部细节,开衩,无脸",
+      is_hero: 0,
+      sort_order: 210,
+    },
+    {
+      name: "锁骨胸前特写",
+      text: "Tight close-up from upper chest to lower waist, framed to highlight the bodice details: neckline cut, lace trim, embroidery placement, beading, and any decorative bow / ribbon at the bust. Model's hands gently positioned: one hand may lightly touch the strap or pull a ribbon loose; the other rests on the corseted waist. Crop excludes the face. Photographed against soft warm light to emphasize fabric texture and lace sheerness.",
+      type: "closeup",
+      tags: "特写,锁骨,胸前,蕾丝细节",
+      is_hero: 0,
+      sort_order: 300,
+    },
+  ];
+
+  const findByName = db.prepare(`SELECT id FROM poses WHERE name = ?`);
+  const insertStmt = db.prepare(
+    `INSERT INTO poses (name, text, type, tags, is_hero, sort_order)
+     VALUES (@name, @text, @type, @tags, @is_hero, @sort_order)`,
+  );
+
+  let inserted = 0;
+  const tx = db.transaction(() => {
+    for (const p of NEW_POSES) {
+      if (findByName.get(p.name)) continue; // 同名已存在 → 跳过
+      insertStmt.run(p);
+      inserted += 1;
+    }
+    db.prepare(
+      `INSERT OR REPLACE INTO settings (key, value, notes) VALUES (?, 'done', ?)`,
+    ).run(FLAG, "姿势库 v2 补种（10 个新姿势：6 全身 + 4 特写 / 半身）");
+  });
+  tx();
+  if (inserted > 0) {
+    console.log(`[db] migrateInsertNewPoses: 补种 ${inserted} 个新姿势（已标记 ${FLAG}=done）`);
   }
 }

@@ -13,6 +13,9 @@ interface SettingItem {
 interface ProviderInfo {
   hasGeminiApiKey: boolean;
   geminiApiKeyMask: string;
+  hasOpenaiApiKey?: boolean;
+  openaiApiKeyMask?: string;
+  openaiProxyUrl?: string;
 }
 
 // 限流相关 key 的推荐值（仅 Gemini API 直连模式，按 Tier 分档）
@@ -37,6 +40,12 @@ export default function SettingsAdminPage() {
   // API key 表单
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [apiKeyTouched, setApiKeyTouched] = useState(false);
+
+  // OpenAI 配置表单
+  const [openaiKeyInput, setOpenaiKeyInput] = useState("");
+  const [openaiKeyTouched, setOpenaiKeyTouched] = useState(false);
+  const [openaiProxyInput, setOpenaiProxyInput] = useState("");
+  const [openaiProxyTouched, setOpenaiProxyTouched] = useState(false);
 
   // 限流/并发表单
   const [rateForm, setRateForm] = useState({
@@ -79,6 +88,8 @@ export default function SettingsAdminPage() {
         usd_to_cny: map.get("usd_to_cny") ?? "6.83",
         default_budget_cny: map.get("default_budget_cny") ?? "0",
       });
+      // OpenAI 代理 URL 从 settings 表读（key 本身不回显，因为是 secret）
+      setOpenaiProxyInput(map.get("openai_proxy_url") ?? "");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -125,15 +136,40 @@ export default function SettingsAdminPage() {
     }
     await patchSettings(
       { gemini_api_key: apiKeyInput.trim() },
-      "API key 已保存，下次 AI 调用立即生效。",
+      "Gemini API key 已保存。",
     );
     setApiKeyInput("");
     setApiKeyTouched(false);
   }
 
   async function handleClearKey() {
-    if (!confirm("确定清空 Gemini API key？清空后所有出图功能会报错。")) return;
-    await patchSettings({ gemini_api_key: "" }, "已清空 API key");
+    if (!confirm("确定清空 Gemini API key？清空后所有 Gemini 出图功能会报错。")) return;
+    await patchSettings({ gemini_api_key: "" }, "已清空 Gemini API key");
+    await load();
+  }
+
+  async function handleSaveOpenAI(e: React.FormEvent) {
+    e.preventDefault();
+    const body: Record<string, unknown> = {};
+    if (openaiKeyTouched && openaiKeyInput.trim()) {
+      body.openai_api_key = openaiKeyInput.trim();
+    }
+    if (openaiProxyTouched) {
+      body.openai_proxy_url = openaiProxyInput.trim();
+    }
+    if (Object.keys(body).length === 0) {
+      setError("没有要保存的修改");
+      return;
+    }
+    await patchSettings(body, "OpenAI 配置已保存。");
+    setOpenaiKeyInput("");
+    setOpenaiKeyTouched(false);
+    setOpenaiProxyTouched(false);
+  }
+
+  async function handleClearOpenaiKey() {
+    if (!confirm("确定清空 OpenAI API key？清空后所有 gpt-image-2 出图会报错。")) return;
+    await patchSettings({ openai_api_key: "" }, "已清空 OpenAI API key");
     await load();
   }
 
@@ -264,6 +300,111 @@ export default function SettingsAdminPage() {
                 className="px-4 py-2 bg-brand-600 text-white text-sm rounded-md hover:bg-brand-700 disabled:opacity-50"
               >
                 {saving ? "保存中…" : "保存 API Key"}
+              </button>
+            </div>
+          </form>
+        )}
+      </section>
+
+      {/* ===== OpenAI API Key + 代理 ===== */}
+      <section className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle p-6 mb-6">
+        <h2 className="text-base font-semibold text-fg-primary mb-1">
+          OpenAI API Key（gpt-image-2）
+        </h2>
+        <p className="text-xs text-fg-tertiary mb-4">
+          gpt-image-2 用于真实感场景图 / Try-On / 仿图等。
+          <strong>Tier 1 实测限额：5 IPM、月预算 $100。</strong>
+          GFW 环境需要配代理（127.0.0.1:7892 之类）。
+        </p>
+
+        {loading ? (
+          <div className="text-sm text-fg-tertiary">加载中…</div>
+        ) : (
+          <form onSubmit={handleSaveOpenAI} className="space-y-4">
+            {provider && (
+              <div className="p-3 rounded bg-bg-tertiary border border-border-subtle text-xs text-fg-secondary">
+                当前 API Key：
+                <span className="ml-1 font-mono font-semibold text-fg-primary">
+                  {provider.hasOpenaiApiKey
+                    ? provider.openaiApiKeyMask
+                    : "(未配置 - gpt-image-2 不可用)"}
+                </span>
+              </div>
+            )}
+
+            <div>
+              <label className="block text-sm font-medium text-fg-secondary mb-1">
+                {provider?.hasOpenaiApiKey ? "替换 OpenAI Key" : "填入 OpenAI Key"}
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  value={openaiKeyInput}
+                  onChange={(e) => {
+                    setOpenaiKeyInput(e.target.value);
+                    setOpenaiKeyTouched(true);
+                  }}
+                  placeholder={
+                    provider?.hasOpenaiApiKey
+                      ? "留空 = 不修改；输入新值 = 替换"
+                      : "sk-... (从 https://platform.openai.com/api-keys 创建)"
+                  }
+                  className="flex-1 px-3 py-2 border border-border-default rounded-md text-sm font-mono"
+                  autoComplete="off"
+                />
+                {provider?.hasOpenaiApiKey && (
+                  <button
+                    type="button"
+                    onClick={handleClearOpenaiKey}
+                    disabled={saving}
+                    className="px-3 py-2 text-xs text-danger border border-[rgba(239,68,68,0.3)] rounded hover:bg-[var(--danger-bg)] disabled:opacity-50"
+                  >
+                    清空
+                  </button>
+                )}
+              </div>
+              <p className="mt-1 text-xs text-fg-tertiary">
+                创建地址：
+                <a
+                  href="https://platform.openai.com/api-keys"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-brand-400 underline"
+                >
+                  OpenAI API Keys
+                </a>
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-fg-secondary mb-1">
+                代理 URL（可选）
+              </label>
+              <input
+                type="text"
+                value={openaiProxyInput}
+                onChange={(e) => {
+                  setOpenaiProxyInput(e.target.value);
+                  setOpenaiProxyTouched(true);
+                }}
+                placeholder="例如 http://127.0.0.1:7892（GFW 环境必填）"
+                className="w-full px-3 py-2 border border-border-default rounded-md text-sm font-mono"
+              />
+              <p className="mt-1 text-xs text-fg-tertiary">
+                生产 VM 在墙外可留空；从国内本地调用必须填代理。
+              </p>
+            </div>
+
+            <div>
+              <button
+                type="submit"
+                disabled={
+                  saving ||
+                  (!openaiKeyTouched && !openaiProxyTouched)
+                }
+                className="px-4 py-2 bg-brand-600 text-white text-sm rounded-md hover:bg-brand-700 disabled:opacity-50"
+              >
+                {saving ? "保存中…" : "保存 OpenAI 配置"}
               </button>
             </div>
           </form>
