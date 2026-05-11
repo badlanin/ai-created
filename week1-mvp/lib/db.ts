@@ -2453,7 +2453,7 @@ function migrateInsertNewMaterials(db: Database.Database) {
       light_behavior:
         "蕾丝花片本身呈现立体感，边缘可能有阴影；底层主面料的光泽不受影响；花片镂空处直接显露底布颜色和质感",
       texture_rules:
-        "花片边缘清晰锐利可辨；花纹立体（3D embroidery 凸起 0.5-2mm）；与主面料的衔接处可见细密缝线；不要让花片"陷进"主面料里失去贴附感",
+        "花片边缘清晰锐利可辨；花纹立体（3D embroidery 凸起 0.5-2mm）；与主面料的衔接处可见细密缝线；不要让花片『陷进』主面料里失去贴附感",
       dont_confuse_with:
         "不要画成整片蕾丝面料（应该是局部点缀）；不要画成印花图案（必须有立体凸起）；不要丢失底布纹理（透过镂空能看见）",
       sort_order: 220,
