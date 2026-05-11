@@ -105,9 +105,21 @@ export interface UnifiedImageResult {
 
 /* ───────── aspectRatio + imageSize → OpenAI size 映射 ───────── */
 
+/**
+ * 判断该 OpenAI 模型是否只支持 legacy 固定 size 集
+ * （gpt-image-1 / 1.5 / 1-mini 都只支持 1024x1024 / 1024x1536 / 1536x1024 / auto）。
+ * 只有 gpt-image-2 支持自定义 size + 2K/4K。
+ */
+function isLegacyOpenAISizeModel(modelId: string): boolean {
+  if (!modelId.startsWith("gpt-image")) return false;
+  // gpt-image-2 是新模型，支持自定义；其他全部 legacy
+  return !modelId.startsWith("gpt-image-2");
+}
+
 function mapAspectAndSizeToOpenAI(
   aspectRatio?: string,
   imageSize?: "0.5K" | "1K" | "2K" | "4K",
+  modelId?: string,
 ): OpenAIImageSize {
   // 横竖判断
   let isPortrait = false;
@@ -121,9 +133,17 @@ function mapAspectAndSizeToOpenAI(
   }
 
   const tier = imageSize || "1K";
+  const legacy = modelId ? isLegacyOpenAISizeModel(modelId) : false;
 
-  // 注意：gpt-image-2 规定 max edge < 3840（严格小于），所以 4K 用 3824x2144 不是 3840x2160
-  // 2K 用官方推荐的 2560x1440 / 1440x2560
+  // ─── Legacy 模型（gpt-image-1 / 1.5 / 1-mini）：只能 1024x1024 / 1024x1536 / 1536x1024 ───
+  // 2K/4K 档位降级到 legacy 集里的最大尺寸（portrait 1024x1536 / landscape 1536x1024 / square 1024x1024）
+  if (legacy) {
+    if (isSquare) return "1024x1024";
+    if (isPortrait) return "1024x1536";
+    return "1536x1024";
+  }
+
+  // ─── gpt-image-2（max edge < 3840 严格小于；2K 用 2560x1440 官方推荐档）───
 
   if (isSquare) {
     // 方形
@@ -169,7 +189,7 @@ export async function generateImage(
     // OpenAI 路径
     const size: OpenAIImageSize =
       opts.size ??
-      mapAspectAndSizeToOpenAI(opts.aspectRatio, opts.imageSize);
+      mapAspectAndSizeToOpenAI(opts.aspectRatio, opts.imageSize, opts.modelId);
     const quality: OpenAIImageQuality =
       opts.quality ?? mapImageSizeToQuality(opts.imageSize);
 
@@ -255,7 +275,8 @@ export function estimateImageCostUSD(opts: {
   const provider = getProviderForModel(opts.modelId);
   if (provider === "openai") {
     const size =
-      opts.size ?? mapAspectAndSizeToOpenAI(opts.aspectRatio, opts.imageSize);
+      opts.size ??
+      mapAspectAndSizeToOpenAI(opts.aspectRatio, opts.imageSize, opts.modelId);
     const quality = opts.quality ?? mapImageSizeToQuality(opts.imageSize);
     return estimateOpenAIImageCostUSD(size, quality);
   }

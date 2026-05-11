@@ -227,12 +227,22 @@ export function estimateImageCost(
   // ─── OpenAI gpt-image-* 走固定单价表（按 size×quality） ───
   if (modelId.startsWith("gpt-image")) {
     // 按 qualityLevel 映射默认竖向 size 和 quality 档位
-    // 跟 lib/image-gen.ts 的 mapAspectAndSizeToOpenAI(portrait) 对齐
-    const sizeMap = {
-      hd: "1024x1536" as const,
-      "2k": "1440x2560" as const,
-      "4k": "2144x3824" as const,
-    };
+    // 跟 lib/image-gen.ts 的 mapAspectAndSizeToOpenAI(portrait) 对齐。
+    // legacy 模型（gpt-image-1 / 1.5 / 1-mini）只能 1024x1536，2K/4K 在那边被 clamp 回 1024x1536，
+    // 这里 cost 估算也要同步降级，否则会高估
+    const isLegacy =
+      modelId.startsWith("gpt-image") && !modelId.startsWith("gpt-image-2");
+    const sizeMap = isLegacy
+      ? {
+          hd: "1024x1536" as const,
+          "2k": "1024x1536" as const, // legacy 2K 被 clamp 回 1024x1536
+          "4k": "1024x1536" as const, // legacy 4K 被 clamp 回 1024x1536
+        }
+      : {
+          hd: "1024x1536" as const,
+          "2k": "1440x2560" as const,
+          "4k": "2144x3824" as const,
+        };
     const qualityMap = {
       hd: "medium" as const,
       "2k": "high" as const,

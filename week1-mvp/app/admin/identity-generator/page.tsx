@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Sparkles, RefreshCw, Save, ArrowLeft, ExternalLink } from "lucide-react";
+import { Sparkles, RefreshCw, Save, ArrowLeft, ExternalLink, Upload, X } from "lucide-react";
+import { Dropzone } from "@/app/_components/ui";
 
 /* ─────────────────────────────────────────────────────────
  *  类型与选项 — 跟 lib/identity-prompt.ts 对齐
@@ -90,7 +91,18 @@ type CommittedResult = {
   category_label: string | null;
 };
 
+type Variant = {
+  gen_id: string;
+  image_url: string;
+  mime_type: string;
+};
+
+type Mode = "text" | "prototype";
+
 export default function IdentityGeneratorPage() {
+  // 模式：纯文生图 vs 原型 + 变体
+  const [mode, setMode] = useState<Mode>("text");
+
   // 表单
   const [params, setParams] = useState<IdentityParams>({
     ethnicity: "east-asian",
@@ -106,6 +118,15 @@ export default function IdentityGeneratorPage() {
   const [committing, setCommitting] = useState(false);
   const [committed, setCommitted] = useState<CommittedResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // 原型 + 变体模式专用
+  const [prototypeFile, setPrototypeFile] = useState<File | null>(null);
+  const [prototypeUrl, setPrototypeUrl] = useState<string>("");
+  const [variantCount, setVariantCount] = useState<number>(2);
+  const [variants, setVariants] = useState<Variant[]>([]);
+  const [selectedVariantId, setSelectedVariantId] = useState<string | null>(
+    null,
+  );
 
   // commit 表单（保存阶段才用到）
   const [name, setName] = useState("");
@@ -200,6 +221,92 @@ export default function IdentityGeneratorPage() {
     setGenerated(null);
     setCommitted(null);
     setError(null);
+    setVariants([]);
+    setSelectedVariantId(null);
+  }
+
+  /* ── 原型 + 变体模式 handlers ── */
+
+  function handlePickPrototype(files: File[]) {
+    const f = files[0];
+    if (!f) return;
+    // 释放上一张的 blob url
+    if (prototypeUrl) URL.revokeObjectURL(prototypeUrl);
+    setPrototypeFile(f);
+    setPrototypeUrl(URL.createObjectURL(f));
+    // 切换原型后清空变体结果
+    setVariants([]);
+    setSelectedVariantId(null);
+    setGenerated(null);
+    setError(null);
+  }
+
+  function handleClearPrototype() {
+    if (prototypeUrl) URL.revokeObjectURL(prototypeUrl);
+    setPrototypeFile(null);
+    setPrototypeUrl("");
+    setVariants([]);
+    setSelectedVariantId(null);
+  }
+
+  async function handleGenerateVariants() {
+    if (!prototypeFile) {
+      setError("请先上传原型图");
+      return;
+    }
+    setError(null);
+    setGenerating(true);
+    setVariants([]);
+    setSelectedVariantId(null);
+    setGenerated(null);
+    try {
+      const fd = new FormData();
+      fd.append("prototype", prototypeFile);
+      fd.append("ethnicity", params.ethnicity);
+      fd.append("age", params.age);
+      fd.append("hairColor", params.hairColor);
+      fd.append("hairStyle", params.hairStyle);
+      fd.append("n", String(variantCount));
+
+      const res = await fetch("/api/identities/generate-variants", {
+        method: "POST",
+        body: fd,
+      });
+      if (!res.ok) {
+        const body = (await res.json()) as { error?: string };
+        throw new Error(body.error || res.statusText);
+      }
+      const result = (await res.json()) as {
+        variants: Variant[];
+        params: IdentityParams;
+      };
+      setVariants(result.variants);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  /**
+   * 用户挑中某个变体 → 把它套进 generated 状态，复用既有的 commit 流程
+   */
+  function selectVariant(v: Variant) {
+    setSelectedVariantId(v.gen_id);
+    // 把 variant 包装成 GeneratedResult 形状，复用 commit form
+    setGenerated({
+      gen_id: v.gen_id,
+      image_url: v.image_url,
+      params,
+      mime_type: v.mime_type,
+      tokens: { prompt: 0, completion: 0 }, // OpenAI 是固定单价，token 字段意义不大
+    });
+    // 默认 name：种族 + "原型变体" + 年龄 + variant id 后 6 位
+    const ethnicityLabel =
+      ETHNICITY_OPTIONS.find((e) => e.value === params.ethnicity)?.label || "";
+    const idSuffix = v.gen_id.slice(-6);
+    setName(`${ethnicityLabel}·原型变体·${params.age}·${idSuffix}`.slice(0, 50));
+    setCategory("universal");
   }
 
   // 估算单张成本：~2000 output tokens × $120/1M = $0.24，加 prompt 大约 ¥1.7
@@ -278,13 +385,80 @@ export default function IdentityGeneratorPage() {
         </div>
       )}
 
+      {/* 模式切换 */}
+      <div className="mb-4 flex gap-1 p-1 bg-bg-tertiary border border-border-subtle rounded-md w-fit">
+        <button
+          onClick={() => {
+            setMode("text");
+            handleReset();
+          }}
+          className={
+            mode === "text"
+              ? "px-3 py-1.5 text-xs rounded bg-brand-500 text-white font-medium"
+              : "px-3 py-1.5 text-xs rounded text-fg-secondary hover:text-fg-primary"
+          }
+        >
+          纯文生图
+        </button>
+        <button
+          onClick={() => {
+            setMode("prototype");
+            handleReset();
+          }}
+          className={
+            mode === "prototype"
+              ? "px-3 py-1.5 text-xs rounded bg-brand-500 text-white font-medium"
+              : "px-3 py-1.5 text-xs rounded text-fg-secondary hover:text-fg-primary"
+          }
+        >
+          原型 + 变体
+          <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-brand-200 text-brand-700">
+            NEW
+          </span>
+        </button>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* 左：参数表单 */}
         <section className="bg-bg-secondary rounded-lg border border-border-subtle p-5">
           <h2 className="text-sm font-semibold text-fg-primary mb-4">
-            ① 配置参数
+            {mode === "text" ? "① 配置参数" : "① 上传原型 + 配置变体"}
           </h2>
           <div className="space-y-3">
+            {/* 原型模式：上传原型图 */}
+            {mode === "prototype" && (
+              <Field label="原型图（真人参考 · 保留身体 + 姿势 + 背景）">
+                {!prototypeFile ? (
+                  <Dropzone
+                    accept="image/*"
+                    multiple={false}
+                    onFiles={handlePickPrototype}
+                    icon={<Upload size={20} strokeWidth={1.6} />}
+                    title="拖拽 / 点击 / Ctrl+V 粘贴原型"
+                    description="PNG / JPG · 限 20MB · 推荐 3:4 全身像"
+                    compact
+                  />
+                ) : (
+                  <div className="relative group">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={prototypeUrl}
+                      alt="prototype"
+                      className="w-full max-h-[280px] object-contain rounded border border-border-subtle bg-bg-tertiary"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleClearPrototype}
+                      className="absolute top-1 right-1 p-1 bg-black/60 text-white rounded hover:bg-black/80"
+                      title="移除"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                )}
+              </Field>
+            )}
+
             <Field label="种族 / 肤色">
               <select
                 value={params.ethnicity}
@@ -347,36 +521,70 @@ export default function IdentityGeneratorPage() {
               </select>
             </Field>
 
-            <Field label="体型">
-              <select
-                value={params.bodyShape}
-                onChange={(e) =>
-                  setParams({ ...params, bodyShape: e.target.value })
-                }
-                className="input select text-sm h-9"
-              >
-                {BODY_SHAPE_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
+            {/* 体型只在文生图模式选；原型模式下体型由原型图决定 */}
+            {mode === "text" && (
+              <Field label="体型">
+                <select
+                  value={params.bodyShape}
+                  onChange={(e) =>
+                    setParams({ ...params, bodyShape: e.target.value })
+                  }
+                  className="input select text-sm h-9"
+                >
+                  {BODY_SHAPE_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
+
+            {/* 原型模式：变体数 1..4 */}
+            {mode === "prototype" && (
+              <Field label="变体数 (一次出几张换头版本)">
+                <div className="flex gap-1.5">
+                  {[1, 2, 3, 4].map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setVariantCount(n)}
+                      className={
+                        variantCount === n
+                          ? "flex-1 py-2 rounded text-sm bg-brand-500 text-white font-medium"
+                          : "flex-1 py-2 rounded text-sm bg-bg-base text-fg-secondary border border-border-subtle hover:bg-brand-50 hover:text-brand-600"
+                      }
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-1 text-[10px] text-fg-muted">
+                  N×$0.165 (gpt-image-2 high 1024×1536) · 4 张约 ¥4.7
+                </div>
+              </Field>
+            )}
 
             <button
-              onClick={handleGenerate}
-              disabled={generating}
+              onClick={
+                mode === "text" ? handleGenerate : handleGenerateVariants
+              }
+              disabled={
+                generating || (mode === "prototype" && !prototypeFile)
+              }
               className="btn btn-primary w-full mt-2"
             >
               {generating ? (
                 <>
                   <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  生成中…（Pro 4K，约 30-90 秒）
+                  {mode === "text"
+                    ? "生成中…（Pro 4K，约 30-90 秒）"
+                    : `生成 ${variantCount} 张变体中…（约 ${variantCount * 20}-${variantCount * 40} 秒）`}
                 </>
               ) : (
                 <>
                   <Sparkles size={14} strokeWidth={2.2} />
-                  生成
+                  {mode === "text" ? "生成" : `生成 ${variantCount} 张变体`}
                 </>
               )}
             </button>
@@ -389,12 +597,14 @@ export default function IdentityGeneratorPage() {
             ② 预览 / 保存
           </h2>
 
-          {!generated && !generating && (
+          {!generated && !generating && variants.length === 0 && (
             <div className="text-sm text-fg-tertiary p-8 text-center border border-dashed border-border-default rounded">
-              左边配好参数，点"生成"
+              {mode === "text"
+                ? "左边配好参数，点\"生成\""
+                : "左边上传原型 + 配置变体，点\"生成 N 张变体\""}
               <br />
               <span className="text-[11px] text-fg-muted">
-                出图后会显示在这里
+                {mode === "text" ? "出图后会显示在这里" : "N 张变体出图后会显示在这里，点中意的那张去保存"}
               </span>
             </div>
           )}
@@ -403,7 +613,49 @@ export default function IdentityGeneratorPage() {
             <div className="text-sm text-fg-tertiary p-8 text-center border border-dashed border-border-default rounded">
               <span className="inline-block w-5 h-5 border-2 border-brand-400 border-t-transparent rounded-full animate-spin mb-2" />
               <br />
-              Pro 模型在思考 + 渲染 4K 全身像，请耐心等约 30-90 秒…
+              {mode === "text"
+                ? "Pro 模型在思考 + 渲染 4K 全身像，请耐心等约 30-90 秒…"
+                : `gpt-image-2 在并行跑 ${variantCount} 张换头变体，约 ${variantCount * 20}-${variantCount * 40} 秒…`}
+            </div>
+          )}
+
+          {/* 原型模式：N 张变体网格 */}
+          {mode === "prototype" && variants.length > 0 && !generated && (
+            <div className="space-y-3">
+              <div className="text-[12px] text-fg-secondary">
+                出了 {variants.length} 张变体 · 点中意的那张去填写名称保存
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {variants.map((v) => (
+                  <button
+                    key={v.gen_id}
+                    type="button"
+                    onClick={() => selectVariant(v)}
+                    className="relative group rounded border-2 border-transparent hover:border-brand-400 overflow-hidden"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={v.image_url}
+                      alt={`variant ${v.gen_id}`}
+                      className="w-full aspect-[3/4] object-cover"
+                    />
+                    <div className="absolute inset-x-0 bottom-0 p-1.5 bg-gradient-to-t from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+                      <span className="text-[11px] text-white font-medium">
+                        选这张 →
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={handleGenerateVariants}
+                disabled={generating || !prototypeFile}
+                className="btn btn-secondary btn-sm w-full"
+                title="重新跑一组变体"
+              >
+                <RefreshCw size={12} strokeWidth={2.2} />
+                重跑这一组（{variantCount} 张）
+              </button>
             </div>
           )}
 
@@ -421,22 +673,53 @@ export default function IdentityGeneratorPage() {
               </div>
 
               <div className="text-[11px] text-fg-muted">
-                tokens · {generated.tokens.prompt} prompt /{" "}
-                {generated.tokens.completion} completion · 约 ¥
-                {generatedCostCny}
+                {mode === "text" ? (
+                  <>
+                    tokens · {generated.tokens.prompt} prompt /{" "}
+                    {generated.tokens.completion} completion · 约 ¥
+                    {generatedCostCny}
+                  </>
+                ) : (
+                  <>
+                    gpt-image-2 · 1024×1536 · high · ¥1.13 / 张（固定单价）
+                  </>
+                )}
               </div>
 
               {/* 重生成 / 调整 / 保存 三个动作 */}
               <div className="flex gap-2">
                 <button
-                  onClick={handleGenerate}
+                  onClick={
+                    mode === "text" ? handleGenerate : handleGenerateVariants
+                  }
                   disabled={generating || committing}
                   className="btn btn-secondary btn-sm flex-1"
-                  title="同样参数再生成一张"
+                  title={
+                    mode === "text"
+                      ? "同样参数再生成一张"
+                      : "重新跑一组变体"
+                  }
                 >
                   <RefreshCw size={12} strokeWidth={2.2} />
-                  重生成
+                  {mode === "text"
+                    ? "重生成"
+                    : `重跑 ${variantCount} 张变体`}
                 </button>
+                {mode === "prototype" && variants.length > 0 && (
+                  <button
+                    onClick={() => {
+                      // 回到变体网格选其他变体（不重新跑）
+                      setGenerated(null);
+                      setSelectedVariantId(null);
+                    }}
+                    disabled={generating || committing}
+                    className="btn btn-secondary btn-sm flex-1"
+                    title="返回变体网格挑别的"
+                  >
+                    <ArrowLeft size={12} strokeWidth={2.2} />
+                    挑其他变体
+                  </button>
+                )}
                 <button
                   onClick={handleReset}
                   disabled={generating || committing}

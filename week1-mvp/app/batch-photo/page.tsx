@@ -126,6 +126,19 @@ const QUALITY_LEVELS: Array<{
   { value: "hd", label: "HD 清晰", desc: "~896×1200 · 最省" },
 ];
 
+/**
+ * 礼服类型选项（伴娘服 / 晚会礼服 / 舞会礼服 / 毕业礼服 / 新娘妈妈礼服）
+ * 通过 garment_attrs 走到 prompt 模板的 {{garment_attrs}} 占位符里，影响出图调性。
+ * 这是用户主动选择的"创意定位"，不是 AI 解析出来的，所以放在 Step 2 顶部。
+ */
+const DRESS_TYPE_OPTIONS: Array<{ value: string; label: string; hint: string }> = [
+  { value: "伴娘服", label: "伴娘服", hint: "婚礼伴娘 · 清新柔美调性" },
+  { value: "晚会礼服", label: "晚会礼服", hint: "鸡尾酒会 / 晚宴 · 优雅高级" },
+  { value: "舞会礼服", label: "舞会礼服", hint: "Prom / 毕业舞会 · 青春闪耀" },
+  { value: "毕业礼服", label: "毕业礼服", hint: "学位 / 谢师礼 · 庄重知性" },
+  { value: "新娘妈妈礼服", label: "新娘妈妈礼服", hint: "Mother-of-the-bride · 端庄典雅" },
+];
+
 /** 纯色背景预设（产品图常用底色） */
 const SOLID_COLOR_PRESETS: Array<{ name: string; hex: string }> = [
   { name: "浅米色", hex: "#F5F1EA" },
@@ -221,6 +234,11 @@ function BatchPhotoTab({
   const [garmentAttrs, setGarmentAttrs] = useState<GarmentAttrs | null>(null);
   const [selectedMaterialIds, setSelectedMaterialIds] = useState<number[]>([]);
   const [showMaterialPicker, setShowMaterialPicker] = useState(false);
+
+  // ─── 礼服类型（伴娘 / 晚会 / 舞会 / 毕业 / 新娘妈妈）───
+  // 用户上传图片前就先确定，影响 prompt 的"场合 / 风格调性"。
+  // 通过 garment_attrs 的 "礼服类型" key 走到 prompt 模板的 {{garment_attrs}} 占位符。
+  const [dressType, setDressType] = useState<string>("伴娘服");
 
   // ─── 选择 ───
   const [identityId, setIdentityId] = useState<number | null>(null);
@@ -344,6 +362,8 @@ function BatchPhotoTab({
     if (savedGarment) setGarmentAttrs(savedGarment);
     const savedMatIds = slotStore.get<number[]>("selectedMaterialIds");
     if (savedMatIds) setSelectedMaterialIds(savedMatIds);
+    const savedDressType = slotStore.get<string>("dressType");
+    if (savedDressType) setDressType(savedDressType);
 
     fetch("/api/jobs/active")
       .then((r) => (r.ok ? r.json() : { count: 0 }))
@@ -369,6 +389,7 @@ function BatchPhotoTab({
       userSeed,
       garmentAttrs,
       selectedMaterialIds,
+      dressType,
       selectedPoseIds: Array.from(selectedPoseIds),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -387,6 +408,7 @@ function BatchPhotoTab({
     userSeed,
     garmentAttrs,
     selectedMaterialIds,
+    dressType,
     selectedPoseIds,
   ]);
 
@@ -750,9 +772,13 @@ function BatchPhotoTab({
       if (selectedMaterialIds.length > 0) {
         fd.append("material_ids", JSON.stringify(selectedMaterialIds));
       }
-      if (garmentAttrs) {
-        fd.append("garment_attrs", JSON.stringify(garmentAttrs));
-      }
+      // 礼服类型作为顶层维度注入 garment_attrs（写在最前面，
+      // formatGarmentAttrs 会按 Object.entries 顺序输出，prompt 里第一行即"礼服类型：xx"）
+      const mergedAttrs: GarmentAttrs = {
+        礼服类型: dressType,
+        ...(garmentAttrs || {}),
+      };
+      fd.append("garment_attrs", JSON.stringify(mergedAttrs));
       fd.append("model", modelId);
       fd.append("aspect_ratio", aspectRatio);
       fd.append("quality_level", qualityLevel);
@@ -983,6 +1009,36 @@ function BatchPhotoTab({
                 description="可选 · AI 自动识别款式属性，提升出图准确度"
                 defaultOpen={!!garmentAttrs}
               >
+                {/* 礼服类型 5 选 1（用户主动选，不是 AI 解析） */}
+                <div className="mb-3 p-2.5 bg-bg-tertiary border border-border-subtle rounded-md">
+                  <div className="text-[11px] text-fg-tertiary mb-1.5">
+                    礼服类型
+                    <span className="ml-1 text-[10px] text-fg-muted">
+                      （影响出图整体调性 / 场合感）
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {DRESS_TYPE_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setDressType(opt.value)}
+                        title={opt.hint}
+                        className={
+                          dressType === opt.value
+                            ? "px-2.5 py-1 rounded-md text-[12px] bg-brand-500 text-white font-medium"
+                            : "px-2.5 py-1 rounded-md text-[12px] bg-bg-base text-fg-secondary border border-border-subtle hover:bg-brand-50 hover:text-brand-600"
+                        }
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mt-1.5 text-[10px] text-fg-muted">
+                    {DRESS_TYPE_OPTIONS.find((o) => o.value === dressType)?.hint}
+                  </div>
+                </div>
+
                 <div className="mb-3">
                   <button
                     type="button"

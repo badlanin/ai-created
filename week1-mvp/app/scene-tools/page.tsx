@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useCurrentUser } from "@/lib/hooks/use-current-user";
 import { useJobPolling } from "@/lib/hooks/use-job-polling";
+import { Dropzone } from "@/app/_components/ui";
 
 /* ─────────────────────────────────────────────────────────
  *  类型
@@ -137,11 +138,12 @@ export default function SceneToolsPage() {
     };
   }, []);
 
-  function onPickProducts(files: FileList | null) {
-    if (!files || files.length === 0) return;
+  function onPickProducts(files: FileList | File[] | null) {
+    if (!files || (files instanceof FileList ? files.length : files.length) === 0)
+      return;
+    const arr: File[] = files instanceof FileList ? Array.from(files) : files;
     const newProducts: ProductFile[] = [];
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i];
+    for (const f of arr) {
       if (!f.type.startsWith("image/")) continue;
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       const url = URL.createObjectURL(f);
@@ -311,49 +313,49 @@ export default function SceneToolsPage() {
           </h2>
 
           {products.length === 0 ? (
-            <label className="block">
-              <input
-                type="file"
-                accept="image/*"
-                multiple
-                onChange={(e) => onPickProducts(e.target.files)}
-                className="hidden"
-              />
-              <div className="border border-dashed border-border-default rounded p-8 text-center cursor-pointer hover:border-brand-400 hover:bg-bg-hover transition-colors">
-                <Upload
-                  size={28}
-                  strokeWidth={1.6}
-                  className="text-fg-tertiary mx-auto mb-2"
-                />
-                <div className="text-sm text-fg-primary">点击上传产品图</div>
-                <div className="text-[11px] text-fg-muted mt-1">
-                  PNG / JPG / WebP · 限 20MB · 支持多选
-                </div>
-                <div className="text-[10px] text-fg-muted mt-2">
-                  推荐：批量摄影出过的纯色背景成片（含模特+服装）
-                </div>
-              </div>
-            </label>
+            <Dropzone
+              accept="image/*"
+              multiple
+              onFiles={(files) => onPickProducts(files)}
+              icon={<Upload size={28} strokeWidth={1.6} />}
+              title="拖拽 / 点击 / Ctrl+V 粘贴产品图"
+              description="PNG / JPG / WebP · 限 20MB · 支持多选 · 鼠标移到此处后可粘贴剪贴板里的图"
+            />
           ) : (
-            <div className="grid grid-cols-3 gap-2 max-h-[480px] overflow-y-auto pr-1">
-              {products.map((p) => (
-                <div key={p.id} className="relative group">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={p.url}
-                    alt={p.file.name}
-                    className="w-full aspect-[3/4] object-cover rounded border border-border-subtle"
-                  />
-                  <button
-                    onClick={() => removeProduct(p.id)}
-                    className="absolute top-1 right-1 p-1 bg-black/60 text-white rounded hover:bg-black/80 opacity-0 group-hover:opacity-100 transition-opacity"
-                    title="移除"
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              ))}
-            </div>
+            <>
+              <div className="grid grid-cols-3 gap-2 max-h-[480px] overflow-y-auto pr-1">
+                {products.map((p) => (
+                  <div key={p.id} className="relative group">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={p.url}
+                      alt={p.file.name}
+                      className="w-full aspect-[3/4] object-cover rounded border border-border-subtle"
+                    />
+                    <button
+                      onClick={() => removeProduct(p.id)}
+                      className="absolute top-1 right-1 p-1 bg-black/60 text-white rounded hover:bg-black/80 opacity-0 group-hover:opacity-100 transition-opacity"
+                      title="移除"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              {/* 已有图片后仍保留一个迷你 Dropzone 用于继续追加（拖 / 粘贴 / 点击） */}
+              <div className="mt-2">
+                <Dropzone
+                  compact
+                  accept="image/*"
+                  multiple
+                  onFiles={(files) => onPickProducts(files)}
+                >
+                  <div className="px-3 py-2 text-center text-[11px] text-fg-tertiary">
+                    + 继续添加（拖拽 / 点击 / Ctrl+V 粘贴）
+                  </div>
+                </Dropzone>
+              </div>
+            </>
           )}
         </section>
 

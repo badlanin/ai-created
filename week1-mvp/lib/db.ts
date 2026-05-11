@@ -412,6 +412,8 @@ function migrate(db: Database.Database) {
   migrateInsertNewScenes(db);
   // 老库的新姿势补种（按 name 幂等，flag v2）
   migrateInsertNewPoses(db);
+  // 老库的新装饰材质补种（亮片 / 珠子 / 3D花朵 等，按 name 幂等，flag v2）
+  migrateInsertNewMaterials(db);
 }
 
 /**
@@ -2376,5 +2378,185 @@ function migrateInsertNewPoses(db: Database.Database) {
   tx();
   if (inserted > 0) {
     console.log(`[db] migrateInsertNewPoses: 补种 ${inserted} 个新姿势（已标记 ${FLAG}=done）`);
+  }
+}
+
+/**
+ * 老库的"v2 新装饰材质"补种（亮片 / 珠子 / 3D花朵 / 提花 / 刺绣 / 多材质混搭 / 渐变色 / 蕾丝装饰）
+ *
+ * 跟基础面料库（雪纺 / 缎面 / 蕾丝 etc.）的区别：
+ *   - 基础面料是"主体面料"——决定整件衣服的版型、垂感、光泽方向
+ *   - 这一批是"装饰/工艺/染色处理"——常常叠加在基础面料上（缎面 + 亮片刺绣）
+ *
+ * UI 让用户多选时基础面料 + 装饰可以同时选；prompt builder（formatMaterialDetails）
+ * 已经支持多个 material 的 visual_traits / light_behavior 拼接，不用改。
+ *
+ * 按 name 幂等：已经存在的不重复插。完成后 settings 写 FLAG=done。
+ */
+function migrateInsertNewMaterials(db: Database.Database) {
+  const FLAG = "migrated_materials_v2";
+  const flag = db
+    .prepare(`SELECT value FROM settings WHERE key = ?`)
+    .get(FLAG) as { value: string } | undefined;
+  if (flag?.value === "done") return;
+
+  type MaterialSeed = {
+    name: string;
+    english_name: string;
+    aliases: string;
+    description: string;
+    visual_traits: string;
+    light_behavior: string;
+    texture_rules: string;
+    dont_confuse_with: string;
+    sort_order: number;
+  };
+
+  const NEW_MATERIALS: MaterialSeed[] = [
+    {
+      name: "亮片",
+      english_name: "sequin",
+      aliases: "亮片,sequin,sequins,sparkle,glitter,亮钻,亮片绣",
+      description: "小圆片状反光装饰，常密集排列在面料上形成闪烁效果",
+      visual_traits:
+        "无数小圆形或多边形反光片紧密排列在面料上、每片亮片大小约 3-6mm、表面金属质感、强烈定向反光、密集时整片面料呈鳞片状闪烁、灯光下产生彩虹光斑（spectral highlights）",
+      light_behavior:
+        "镜面反光极强：每一片亮片都是独立反光源，整体呈现闪烁颗粒感（点状高光阵列）；不同角度看时亮片明暗变化剧烈；闪光呈现尖锐的星芒效果",
+      texture_rules:
+        "必须看见独立的亮片颗粒，不能糊成一片光斑；亮片之间可见底层面料；密集排列时呈现鱼鳞状层次；边缘处可能露出亮片缝合的线迹",
+      dont_confuse_with:
+        "不要画成连续平滑的金属面（必须是离散颗粒）；不要画成印花亮粉（亮片有实体厚度）；不要丢失闪烁的星点效果",
+      sort_order: 200,
+    },
+    {
+      name: "珠子",
+      english_name: "beading",
+      aliases: "珠子,珠饰,bead,beads,beading,珠绣,pearl,珍珠绣",
+      description: "立体珠子装饰，单颗或成串缝缀在面料上",
+      visual_traits:
+        "球形或水滴形立体颗粒、表面光滑有圆润反光、单颗或排列成线条/花纹、珠子之间可见缝线和底布、整体有立体凸起感、珍珠光泽或玻璃透明感",
+      light_behavior:
+        "每颗珠子是球面反光体：高光点小而集中，沿珠面边缘有 falloff 阴影；珍珠类有内部柔和光泽（subsurface scattering 感）；玻璃珠透光时可见底层布料颜色",
+      texture_rules:
+        "必须画出珠子的立体感（球形阴影 + 高光），不能画成平面圆点；密集珠绣时珠子之间有微小阴影间隙；珠子在褶皱处会有遮挡和重叠",
+      dont_confuse_with:
+        "不要画成印花圆点（必须有立体阴影）；不要混淆为亮片（珠子是球形，亮片是片状）；不要让珠子失去高光变成哑色圆点",
+      sort_order: 210,
+    },
+    {
+      name: "蕾丝装饰",
+      english_name: "lace applique",
+      aliases: "蕾丝装饰,蕾丝贴花,lace applique,lace trim,蕾丝缀饰",
+      description: "把蕾丝作为装饰元素贴缝在其他面料上（非整体蕾丝面料）",
+      visual_traits:
+        "蕾丝花片缝在主体面料表面、花片有明确边缘、立体凸起、镂空花纹可见底层面料的颜色、常用于领口/袖口/腰部/裙摆作为点缀",
+      light_behavior:
+        "蕾丝花片本身呈现立体感，边缘可能有阴影；底层主面料的光泽不受影响；花片镂空处直接显露底布颜色和质感",
+      texture_rules:
+        "花片边缘清晰锐利可辨；花纹立体（3D embroidery 凸起 0.5-2mm）；与主面料的衔接处可见细密缝线；不要让花片"陷进"主面料里失去贴附感",
+      dont_confuse_with:
+        "不要画成整片蕾丝面料（应该是局部点缀）；不要画成印花图案（必须有立体凸起）；不要丢失底布纹理（透过镂空能看见）",
+      sort_order: 220,
+    },
+    {
+      name: "3D花朵",
+      english_name: "3D flower applique",
+      aliases: "3D花朵,立体花,3d flower,floral applique,立体花朵装饰",
+      description: "立体织物花朵缀饰，多层花瓣有真实立体感",
+      visual_traits:
+        "立体花朵贴缝在面料上、每朵花有多层花瓣、花瓣有自然弯曲弧度、花朵直径 3-15cm 不等、单朵或成簇排列、花蕊处可能有珠子或刺绣装饰、整体凸起 1-3cm",
+      light_behavior:
+        "每片花瓣是独立面，有自己的高光和阴影；花瓣层叠处有清晰的相互投影；花朵在不同光线下呈现立体雕塑感；花瓣边缘可能微微卷边产生 backlit 透光",
+      texture_rules:
+        "必须画出花瓣的层叠关系（外层包内层）；花瓣面料质感要清晰（雪纺花瓣 vs 缎面花瓣 vs 绉纱花瓣 视觉差异要保留）；不能画成平面贴纸",
+      dont_confuse_with:
+        "不要画成印花图案（必须立体）；不要画成蕾丝花纹（蕾丝是镂空平面，3D花朵是凸起雕塑）；不要让花朵变扁失去层叠感",
+      sort_order: 230,
+    },
+    {
+      name: "提花",
+      english_name: "jacquard",
+      aliases: "提花,jacquard,jacquard weave,提花织物,锦缎,brocade",
+      description: "织造时直接在面料上形成花纹，花纹与底布一体",
+      visual_traits:
+        "花纹是织出来的不是绣上去的、与底布一体无凸起、花纹和底色形成不同光泽对比（如同色提花的光泽方向不同）、纹理细腻、整片面料有华丽感",
+      light_behavior:
+        "底布和花纹的光泽方向 / 强度不同：花纹处可能更亮或更哑光（视编织方向）；不存在独立花片的高光，整体是一片连续表面的明暗对比；同色提花靠光泽差异显花",
+      texture_rules:
+        "花纹与底布在同一平面，不能有凸起；近观可见经纬交错形成的图案；同色提花要刻意保留花纹（不能因为颜色相近而消失）；图案规整连续",
+      dont_confuse_with:
+        "不要画成印花（提花是织出来的，印花是印上去的；提花更立体细腻）；不要画成绣花（无独立凸起花片）；不要丢失光泽对比让花纹消失",
+      sort_order: 240,
+    },
+    {
+      name: "刺绣",
+      english_name: "embroidery",
+      aliases: "刺绣,embroidery,embroidered,绣花,绣",
+      description: "用线在面料上绣出花纹，线条立体可见",
+      visual_traits:
+        "彩色或同色丝线在面料上绣出图案、可见独立的针脚和线条方向、立体凸起 0.5-2mm、线的光泽方向跟着针脚走、复杂图案可包含多种针法",
+      light_behavior:
+        "丝线本身有光泽，光泽方向跟针脚走向一致（顺光绣 vs 逆光绣 明暗差异明显）；绣线之间有微小阴影间隙；缎绣 vs 平绣 vs 锁边绣 的光感各不相同",
+      texture_rules:
+        "必须看见独立针脚走向（不能糊成一片）；绣线的丝光质感要保留；图案边缘可见绣线收尾的精细感；线密集时形成有方向性的纹理",
+      dont_confuse_with:
+        "不要画成印花（必须立体可辨针脚）；不要画成提花（绣花是后期附加，提花是织造一体）；不要画成蕾丝（无镂空）",
+      sort_order: 250,
+    },
+    {
+      name: "多材质混搭",
+      english_name: "mixed materials",
+      aliases: "多材质混搭,混搭,mixed,combo,mixed fabric,材质拼接",
+      description: "同一件衣服上多种不同面料组合（如缎面上身 + 雪纺裙摆）",
+      visual_traits:
+        "同一件衣服上 2-3 种面料按结构分区（上衣 vs 裙摆 vs 装饰）、不同面料的光泽和垂感对比明显、拼接处有明确分界线或包边、整体设计感更复杂",
+      light_behavior:
+        "每个面料区域保持自己的光感（缎面强反光区 vs 雪纺漫反射区 vs 蕾丝镂空区 同时呈现）；不要让所有区域光感趋同；面料交界处可能有阴影或饰边",
+      texture_rules:
+        "每种面料的视觉特征必须独立保留：缎面要光滑反光、雪纺要轻盈半透、蕾丝要镂空立体；分区清晰但过渡自然，不要硬切割感",
+      dont_confuse_with:
+        "不要把所有部分画成同一种面料；不要让接缝处生硬突兀；交界处的工艺（包边/拼缝）要可见",
+      sort_order: 260,
+    },
+    {
+      name: "渐变色",
+      english_name: "gradient ombre",
+      aliases: "渐变色,渐变,ombre,ombré,gradient,dip dye,扎染渐变",
+      description: "面料从一种颜色平滑过渡到另一种颜色",
+      visual_traits:
+        "颜色沿某一方向（上下/斜向/中心向外）平滑过渡、过渡区域无明显边界、可以是同色系深浅渐变也可以是异色渐变、保留面料原本的质感（不影响光泽和纹理）",
+      light_behavior:
+        "光泽和反光方式不变（缎面渐变还是缎面光泽，雪纺渐变还是雪纺漫反射），只是颜色随位置变化；高光和阴影的色相会随渐变区域改变",
+      texture_rules:
+        "颜色过渡必须平滑连续无色带；面料的纹理 / 编织 / 装饰不受渐变影响；渐变方向要清晰一致；色彩饱和度过渡也要自然",
+      dont_confuse_with:
+        "不要画成色块拼接（必须平滑过渡）；不要让渐变破坏面料原本的质感；不要出现可见的色带分界线",
+      sort_order: 270,
+    },
+  ];
+
+  let inserted = 0;
+  const upsert = db.prepare(
+    `INSERT INTO materials
+       (name, english_name, aliases, description,
+        visual_traits, light_behavior, texture_rules, dont_confuse_with, sort_order)
+     VALUES (@name, @english_name, @aliases, @description,
+             @visual_traits, @light_behavior, @texture_rules, @dont_confuse_with, @sort_order)`,
+  );
+  const exists = db.prepare(`SELECT id FROM materials WHERE name = ?`);
+
+  const tx = db.transaction(() => {
+    for (const m of NEW_MATERIALS) {
+      if (exists.get(m.name)) continue;
+      upsert.run(m);
+      inserted += 1;
+    }
+    db.prepare(
+      `INSERT OR REPLACE INTO settings (key, value, notes) VALUES (?, 'done', ?)`,
+    ).run(FLAG, "材质库 v2 补种（8 个装饰材质：亮片 / 珠子 / 蕾丝装饰 / 3D花朵 / 提花 / 刺绣 / 多材质混搭 / 渐变色）");
+  });
+  tx();
+  if (inserted > 0) {
+    console.log(`[db] migrateInsertNewMaterials: 补种 ${inserted} 个新材质（已标记 ${FLAG}=done）`);
   }
 }
