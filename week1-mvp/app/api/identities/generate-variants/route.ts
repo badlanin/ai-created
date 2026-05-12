@@ -5,6 +5,7 @@ import crypto from "crypto";
 import { DATA_DIR_PATH } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
 import { generateImage, estimateImageCostUSD } from "@/lib/image-gen";
+import { resolveModelId } from "@/lib/ai-models";
 import { recordUsage } from "@/lib/usage";
 import { assertWithinBudget } from "@/lib/pricing";
 import {
@@ -45,11 +46,12 @@ export const maxDuration = 600;
 const TEMP_DIR_REL = "temp/identity-gen";
 const TEMP_TTL_MS = 60 * 60 * 1000;
 
-// OpenAI gpt-image-2 系列 + 高画质 + 竖向 1024x1536（够清晰、不烧钱）
-// 4K 一张 $2.24，N=4 就要 $9 = ¥64，太贵；high quality 1024x1536 一张 $0.165，N=4 约 ¥4.7
-const VARIANT_MODEL = "gpt-image-2";
-const VARIANT_SIZE = "1024x1536" as const;
-const VARIANT_QUALITY = "high" as const;
+// 默认 Gemini Pro Image 4K（成功率稳定 + 国内可达；OpenAI 太慢易报错）。
+// 用户可以在前端切换到 gpt-image-2 / gpt-image-1-mini 等
+const DEFAULT_VARIANT_MODEL = "gemini-3-pro-image-preview";
+// OpenAI 路径专用：1024x1536 + high（4K 一张 $2.24 太贵；这档 N=4 约 ¥4.7）
+const OPENAI_VARIANT_SIZE = "1024x1536" as const;
+const OPENAI_VARIANT_QUALITY = "high" as const;
 
 export async function POST(req: NextRequest) {
   try {
@@ -106,6 +108,15 @@ export async function POST(req: NextRequest) {
     if (!Number.isFinite(n) || n < 1) n = 1;
     if (n > 4) n = 4;
 
+    // ─── 模型（可选，默认 Gemini Pro Image 4K） ───
+    // 调用方可以传 OpenAI gpt-image-2 / gpt-image-1-mini 或 Gemini 系列任一
+    // resolveModelId 会校验在 image_gen 类目；不在白名单则回退到全局默认（不一定是 Pro）
+    const modelRaw = formData.get("model");
+    const modelId =
+      typeof modelRaw === "string" && modelRaw.trim()
+        ? resolveModelId("image_gen", modelRaw.trim())
+        : DEFAULT_VARIANT_MODEL;
+
     // ─── 构造 prompt + 输入 buffer ───
     const prompt = buildPrototypeVariantPrompt(params);
     const prototypeBuf = Buffer.from(await prototypeRaw.arrayBuffer());
@@ -121,14 +132,28 @@ export async function POST(req: NextRequest) {
     const tempDir = path.join(DATA_DIR_PATH, TEMP_DIR_REL);
     await fs.mkdir(tempDir, { recursive: true });
 
+    // 根据 provider 选不同的出图参数：
+    //   - OpenAI 用 size/quality（1024x1536 high，固定单价）
+    //   - Gemini 用 aspectRatio/imageSize（3:4 + 4K，token 计费）
+    const isOpenAI = modelId.startsWith("gpt-image");
+    const callOpts = isOpenAI
+      ? {
+          size: OPENAI_VARIANT_SIZE,
+          quality: OPENAI_VARIANT_QUALITY,
+        }
+      : {
+          aspectRatio: "3:4",
+          imageSize: "4K" as const,
+          temperature: 0.3,
+        };
+
     const results = await Promise.all(
       Array.from({ length: n }, async (_, i) => {
         const gen = await generateImage({
           inputs: [prototypeInput],
           prompt,
-          modelId: VARIANT_MODEL,
-          size: VARIANT_SIZE,
-          quality: VARIANT_QUALITY,
+          modelId,
+          ...callOpts,
         });
 
         const ext = gen.mimeType.includes("png") ? "png" : "jpg";
@@ -137,15 +162,17 @@ export async function POST(req: NextRequest) {
         const absPath = path.join(tempDir, filename);
         await fs.writeFile(absPath, gen.data);
 
-        // 记账：OpenAI 走固定单价
-        const costOverrideUsd = estimateImageCostUSD({
-          modelId: VARIANT_MODEL,
-          size: VARIANT_SIZE,
-          quality: VARIANT_QUALITY,
-        });
+        // 记账：OpenAI 走固定单价覆盖；Gemini 走 token
+        const costOverrideUsd = isOpenAI
+          ? estimateImageCostUSD({
+              modelId,
+              size: OPENAI_VARIANT_SIZE,
+              quality: OPENAI_VARIANT_QUALITY,
+            })
+          : undefined;
         recordUsage({
           userId: user.id,
-          model: VARIANT_MODEL,
+          model: modelId,
           feature: "other",
           usageMetadata: {
             promptTokenCount: gen.usage?.inputTokens,
@@ -179,7 +206,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       variants: results,
       params,
-      model: VARIANT_MODEL,
+      model: modelId,
       count: results.length,
     });
   } catch (e) {

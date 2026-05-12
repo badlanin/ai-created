@@ -4,7 +4,8 @@ import fs from "fs/promises";
 import crypto from "crypto";
 import { DATA_DIR_PATH } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
-import { generateImage } from "@/lib/gemini-image";
+import { generateImage, estimateImageCostUSD } from "@/lib/image-gen";
+import { resolveModelId } from "@/lib/ai-models";
 import { recordUsage } from "@/lib/usage";
 import { assertWithinBudget } from "@/lib/pricing";
 import {
@@ -20,11 +21,12 @@ import {
 export const runtime = "nodejs";
 export const maxDuration = 600;
 
-// 强制 Pro 模型 + 4K + 3:4：identity 出图必须用最强档，不接受降级
-const IDENTITY_MODEL = "gemini-3-pro-image-preview";
+// identity 出图默认用 Pro Image 4K（最强档），但允许调用方传 model 覆盖
+// 实测 OpenAI gpt-image-2 一次 30-60 秒慢且 Tier 1 限速；Gemini Pro Image 一次 30-90 秒但成功率稳
+const DEFAULT_IDENTITY_MODEL = "gemini-3-pro-image-preview";
 const IDENTITY_ASPECT = "3:4" as const;
 const IDENTITY_SIZE = "4K" as const;
-// 温度低一点，prompt 写得这么死，不要让模型自由发挥
+// 温度低一点，prompt 写得这么死，不要让模型自由发挥（OpenAI 路径忽略此字段）
 const IDENTITY_TEMP = 0.3;
 
 const TEMP_DIR_REL = "temp/identity-gen";
@@ -77,19 +79,27 @@ export async function POST(req: NextRequest) {
       bodyShape: body.bodyShape,
     };
 
+    // 模型可选：调用方传 model 字段则用之，否则默认 Pro
+    // 注意 resolveModelId 在 input 不在白名单时会退回 getDefaultModelId(category)，
+    // 但 image_gen 类目的"全局默认"可能是 Flash —— identity 出图要求质量，
+    // 必须手动兜底到 DEFAULT_IDENTITY_MODEL（Pro）
+    const requestedModel =
+      typeof body.model === "string" ? body.model : undefined;
+    const modelId = requestedModel
+      ? resolveModelId("image_gen", requestedModel)
+      : DEFAULT_IDENTITY_MODEL;
+
     const prompt = buildIdentityPrompt(params);
 
-    // ─── 调 Gemini Pro Image ───
-    const gen = await generateImage(
-      [], // 纯文生图，无参考图
+    // ─── 调出图（dispatcher 按 modelId 前缀分发到 Gemini / OpenAI） ───
+    const gen = await generateImage({
+      inputs: [], // 纯文生图，无参考图
       prompt,
-      IDENTITY_MODEL,
-      {
-        aspectRatio: IDENTITY_ASPECT,
-        imageSize: IDENTITY_SIZE,
-        temperature: IDENTITY_TEMP,
-      },
-    );
+      modelId,
+      aspectRatio: IDENTITY_ASPECT,
+      imageSize: IDENTITY_SIZE,
+      temperature: IDENTITY_TEMP, // OpenAI 路径忽略
+    });
 
     // ─── 暂存到 temp ───
     const tempDir = path.join(DATA_DIR_PATH, TEMP_DIR_REL);
@@ -106,15 +116,30 @@ export async function POST(req: NextRequest) {
       console.warn("[identities/generate] temp cleanup 失败:", e);
     });
 
-    // ─── 记账 ───
+    // ─── 记账（OpenAI 路径走固定单价覆盖） ───
+    const costOverrideUsd =
+      gen.provider === "openai"
+        ? estimateImageCostUSD({
+            modelId,
+            aspectRatio: IDENTITY_ASPECT,
+            imageSize: IDENTITY_SIZE,
+          })
+        : undefined;
+
     recordUsage({
       userId: user.id,
-      model: IDENTITY_MODEL,
+      model: modelId,
       feature: "other",
-      usageMetadata: gen.usageMetadata,
+      usageMetadata: {
+        promptTokenCount: gen.usage?.inputTokens,
+        candidatesTokenCount: gen.usage?.outputTokens,
+        totalTokenCount: gen.usage?.totalTokens,
+      },
       success: true,
+      costOverrideUsd,
       notes: {
         kind: "identity-generator",
+        provider: gen.provider,
         params,
         gen_id: genId,
       },
@@ -124,10 +149,12 @@ export async function POST(req: NextRequest) {
       gen_id: genId,
       image_url: `/assets/${TEMP_DIR_REL}/${filename}`,
       params,
+      model: modelId,
+      provider: gen.provider,
       mime_type: gen.mimeType,
       tokens: {
-        prompt: gen.usageMetadata?.promptTokenCount ?? 0,
-        completion: gen.usageMetadata?.candidatesTokenCount ?? 0,
+        prompt: gen.usage?.inputTokens ?? 0,
+        completion: gen.usage?.outputTokens ?? 0,
       },
     });
   } catch (e) {

@@ -1,8 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Sparkles, RefreshCw, Save, ArrowLeft, ExternalLink, Upload, X } from "lucide-react";
 import { Dropzone } from "@/app/_components/ui";
+
+type AiModel = {
+  id: number;
+  model_id: string;
+  label: string;
+  description: string | null;
+  badge: string | null;
+  is_default: 0 | 1;
+};
 
 /* ─────────────────────────────────────────────────────────
  *  类型与选项 — 跟 lib/identity-prompt.ts 对齐
@@ -103,6 +112,13 @@ export default function IdentityGeneratorPage() {
   // 模式：纯文生图 vs 原型 + 变体
   const [mode, setMode] = useState<Mode>("text");
 
+  // 可选模型列表 + 当前选中
+  // 默认 Pro Image（gemini-3-pro-image-preview）；用户可以切到 OpenAI 或 Flash
+  const [aiModels, setAiModels] = useState<AiModel[]>([]);
+  const [modelId, setModelId] = useState<string>(
+    "gemini-3-pro-image-preview",
+  );
+
   // 表单
   const [params, setParams] = useState<IdentityParams>({
     ethnicity: "east-asian",
@@ -134,6 +150,28 @@ export default function IdentityGeneratorPage() {
   const [tags, setTags] = useState("");
   const [sortOrder, setSortOrder] = useState(0);
 
+  // ─────── 加载可选模型列表（image_gen 类） ───────
+  useEffect(() => {
+    fetch("/api/ai-models?category=image_gen")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list: AiModel[]) => {
+        if (!Array.isArray(list) || list.length === 0) return;
+        setAiModels(list);
+        // 优先用默认（Pro Image），其次是 list 里 is_default = 1 的
+        const hasPro = list.find(
+          (m) => m.model_id === "gemini-3-pro-image-preview",
+        );
+        const def = hasPro
+          ? hasPro.model_id
+          : list.find((m) => m.is_default === 1)?.model_id ||
+            list[0].model_id;
+        setModelId(def);
+      })
+      .catch(() => {
+        /* 拉不到就用默认值 */
+      });
+  }, []);
+
   // ─────── 操作 ───────
 
   async function handleGenerate() {
@@ -144,7 +182,7 @@ export default function IdentityGeneratorPage() {
       const res = await fetch("/api/identities/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(params),
+        body: JSON.stringify({ ...params, model: modelId }),
       });
       if (!res.ok) {
         const body = (await res.json()) as { error?: string };
@@ -267,6 +305,7 @@ export default function IdentityGeneratorPage() {
       fd.append("hairColor", params.hairColor);
       fd.append("hairStyle", params.hairStyle);
       fd.append("n", String(variantCount));
+      fd.append("model", modelId);
 
       const res = await fetch("/api/identities/generate-variants", {
         method: "POST",
@@ -425,6 +464,36 @@ export default function IdentityGeneratorPage() {
             {mode === "text" ? "① 配置参数" : "① 上传原型 + 配置变体"}
           </h2>
           <div className="space-y-3">
+            {/* 出图模型（两种模式共享） */}
+            <Field label="出图模型">
+              <select
+                value={modelId}
+                onChange={(e) => setModelId(e.target.value)}
+                className="input select text-sm h-9"
+                disabled={aiModels.length === 0}
+              >
+                {aiModels.length === 0 ? (
+                  <option value={modelId}>{modelId}</option>
+                ) : (
+                  aiModels.map((m) => (
+                    <option key={m.model_id} value={m.model_id}>
+                      {m.label}
+                      {m.badge ? ` · ${m.badge}` : ""}
+                    </option>
+                  ))
+                )}
+              </select>
+              <div className="mt-1 text-[10px] text-fg-muted leading-tight">
+                {aiModels.find((m) => m.model_id === modelId)?.description ||
+                  ""}
+                {modelId.startsWith("gpt-image") && (
+                  <span className="text-[10px] text-warning ml-1">
+                    · OpenAI Tier 1 限 5 IPM，慢且可能 429
+                  </span>
+                )}
+              </div>
+            </Field>
+
             {/* 原型模式：上传原型图 */}
             {mode === "prototype" && (
               <Field label="原型图（真人参考 · 保留身体 + 姿势 + 背景）">
@@ -560,7 +629,9 @@ export default function IdentityGeneratorPage() {
                   ))}
                 </div>
                 <div className="mt-1 text-[10px] text-fg-muted">
-                  N×$0.165 (gpt-image-2 high 1024×1536) · 4 张约 ¥4.7
+                  {modelId.startsWith("gpt-image")
+                    ? "N × OpenAI 固定单价（gpt-image-2 high 1024×1536 一张约 ¥1.13）"
+                    : "N × Gemini Pro 4K 约 ¥1.7 / 张（按 token 计）"}
                 </div>
               </Field>
             )}
@@ -614,8 +685,8 @@ export default function IdentityGeneratorPage() {
               <span className="inline-block w-5 h-5 border-2 border-brand-400 border-t-transparent rounded-full animate-spin mb-2" />
               <br />
               {mode === "text"
-                ? "Pro 模型在思考 + 渲染 4K 全身像，请耐心等约 30-90 秒…"
-                : `gpt-image-2 在并行跑 ${variantCount} 张换头变体，约 ${variantCount * 20}-${variantCount * 40} 秒…`}
+                ? `${aiModels.find((m) => m.model_id === modelId)?.label || modelId} 在思考 + 渲染，请耐心等约 30-90 秒…`
+                : `${aiModels.find((m) => m.model_id === modelId)?.label || modelId} 并行跑 ${variantCount} 张换头变体，约 ${variantCount * 20}-${variantCount * 40} 秒…`}
             </div>
           )}
 
@@ -673,15 +744,17 @@ export default function IdentityGeneratorPage() {
               </div>
 
               <div className="text-[11px] text-fg-muted">
-                {mode === "text" ? (
+                {modelId.startsWith("gpt-image") ? (
+                  <>
+                    {aiModels.find((m) => m.model_id === modelId)?.label ||
+                      modelId}{" "}
+                    · 固定单价（按 size×quality 查表，详见 admin 系统设置）
+                  </>
+                ) : (
                   <>
                     tokens · {generated.tokens.prompt} prompt /{" "}
                     {generated.tokens.completion} completion · 约 ¥
                     {generatedCostCny}
-                  </>
-                ) : (
-                  <>
-                    gpt-image-2 · 1024×1536 · high · ¥1.13 / 张（固定单价）
                   </>
                 )}
               </div>
