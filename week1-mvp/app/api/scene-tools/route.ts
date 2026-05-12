@@ -79,10 +79,12 @@ export async function POST(req: NextRequest) {
     }
 
     // ─── 解析 scenes 数组 ───
+    // count = 该场景出几张图（1-5，默认 1）。每张额外的 count 会触发模型按
+    // 场景物件出一个不同的自然互动姿势。
     const scenesRaw = formData.get("scenes");
     type SceneEntry =
-      | { type: "text"; text: string }
-      | { type: "image"; scene_id: number };
+      | { type: "text"; text: string; count: number }
+      | { type: "image"; scene_id: number; count: number };
     let scenes: SceneEntry[];
     try {
       const parsed = JSON.parse(String(scenesRaw || "[]"));
@@ -93,16 +95,25 @@ export async function POST(req: NextRequest) {
         .map((s: unknown): SceneEntry | null => {
           if (typeof s !== "object" || s === null) return null;
           const obj = s as Record<string, unknown>;
+          const rawCount = Number(obj.count);
+          const count =
+            Number.isFinite(rawCount) && rawCount >= 1
+              ? Math.min(5, Math.floor(rawCount))
+              : 1;
           if (obj.type === "text" && typeof obj.text === "string") {
             const text = obj.text.trim();
             if (text.length === 0) return null;
             if (text.length > 500) {
               throw new Error("文字场景描述太长（限 500 字）");
             }
-            return { type: "text", text };
+            return { type: "text", text, count };
           }
           if (obj.type === "image" && Number.isFinite(obj.scene_id)) {
-            return { type: "image", scene_id: Number(obj.scene_id) };
+            return {
+              type: "image",
+              scene_id: Number(obj.scene_id),
+              count,
+            };
           }
           return null;
         })
@@ -178,15 +189,19 @@ export async function POST(req: NextRequest) {
         ? qualityRaw
         : "4K";
 
-    // ─── 构造 N×M 个 items（笛卡尔积）───
+    // ─── 构造 items：N 产品 × 每个场景按 count 展开 ───
+    // 不再是简单 N×M 笛卡尔积，而是 N × sum(scene.count)
+    // 每个 (product_idx, scene_idx, variant_idx) 是一张图
     const N = productFiles.length;
     const M = scenes.length;
     type ItemMeta = {
       product_idx: number;
       scene_idx: number;
+      variant_idx: number; // 该场景的第几张变体（1..count）
+      variant_total: number; // 该场景总共出几张
       label: string;
     };
-    const items: Array<ItemMeta & { label: string }> = [];
+    const items: ItemMeta[] = [];
     for (let i = 0; i < N; i++) {
       for (let j = 0; j < M; j++) {
         const sceneEntry = scenes[j];
@@ -195,11 +210,19 @@ export async function POST(req: NextRequest) {
             ? imageScenes.get(sceneEntry.scene_id)?.name || `场景#${sceneEntry.scene_id}`
             : sceneEntry.text.slice(0, 14) +
               (sceneEntry.text.length > 14 ? "…" : "");
-        items.push({
-          product_idx: i,
-          scene_idx: j,
-          label: `产品 ${i + 1} · ${sceneLabel}`,
-        });
+        const total = sceneEntry.count;
+        for (let v = 1; v <= total; v++) {
+          items.push({
+            product_idx: i,
+            scene_idx: j,
+            variant_idx: v,
+            variant_total: total,
+            label:
+              total > 1
+                ? `产品 ${i + 1} · ${sceneLabel} · 变体 ${v}/${total}`
+                : `产品 ${i + 1} · ${sceneLabel}`,
+          });
+        }
       }
     }
 
@@ -326,13 +349,23 @@ async function sceneToolsItemHandler(
           scene_image_path?: string;
         }
     >;
-    items: Array<{ product_idx: number; scene_idx: number; label: string }>;
+    items: Array<{
+      product_idx: number;
+      scene_idx: number;
+      variant_idx?: number; // 新字段（v3）：该场景的第几张变体
+      variant_total?: number; // 新字段（v3）：该场景总共出几张
+      label: string;
+    }>;
     product_paths: string[];
     product_mime_types: string[];
   };
 
   const itemMeta = p.items[ctx.item.idx];
   if (!itemMeta) throw new Error(`item[${ctx.item.idx}] 丢失`);
+
+  // 兼容老 job（没 variant_idx 字段）
+  const variantIdx = itemMeta.variant_idx ?? 1;
+  const variantTotal = itemMeta.variant_total ?? 1;
 
   // 预算兜底
   const status = getUserBudgetStatus(ctx.userId);
@@ -356,10 +389,20 @@ async function sceneToolsItemHandler(
   const scene = p.scenes[itemMeta.scene_idx];
   if (!scene) throw new Error(`scene[${itemMeta.scene_idx}] 丢失`);
 
+  // 多变体（同一场景出多张）时附差异化 hint 到 user_hint 里
+  // 让模型对每一张变体选不同的互动物件 / 角度 / 距离
+  const variantHint =
+    variantTotal > 1
+      ? `这是该场景的第 ${variantIdx}/${variantTotal} 张变体——跟同场景的其他变体要明显不同的互动物件、动作或取景角度。`
+      : "";
+  const composedHint = [p.user_hint, variantHint]
+    .filter((s): s is string => Boolean(s && s.trim()))
+    .join("\n");
+
   let prompt: string;
   const inputs: Array<{ buffer: Buffer; mimeType: string }> = [productInput];
   if (scene.type === "text") {
-    prompt = buildSceneShootText(scene.text, p.user_hint || undefined);
+    prompt = buildSceneShootText(scene.text, composedHint || undefined);
   } else {
     if (!scene.scene_image_path) {
       throw new Error(`图片场景 ${scene.scene_id} 文件路径丢失`);
@@ -374,7 +417,7 @@ async function sceneToolsItemHandler(
           ? "image/webp"
           : "image/jpeg",
     });
-    prompt = buildSceneShootImage(scene.scene_name, p.user_hint || undefined);
+    prompt = buildSceneShootImage(scene.scene_name, composedHint || undefined);
   }
 
   // 调出图（gemini-image / openai-image 自动分发）
@@ -433,6 +476,8 @@ async function sceneToolsItemHandler(
       provider: gen.provider,
       product_idx: itemMeta.product_idx,
       scene_idx: itemMeta.scene_idx,
+      variant_idx: variantIdx,
+      variant_total: variantTotal,
       scene_type: scene.type,
       aspect_ratio: p.aspect_ratio,
       image_size: p.image_size,

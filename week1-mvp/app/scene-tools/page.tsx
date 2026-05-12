@@ -32,9 +32,18 @@ type ProductFile = {
   url: string; // local preview
 };
 
+// count = 这个场景出几张图（1-5，默认 1）
+// N 张产品图 × 每个场景按 count 展开成 count 张 → 总 = N × sum(count)
+// 多张同场景由 prompt 自动加"变体 X/N 互动差异化"hint，避免重复
 type SceneEntry =
-  | { id: string; type: "text"; text: string }
-  | { id: string; type: "image"; scene_id: number; scene_name: string };
+  | { id: string; type: "text"; text: string; count: number }
+  | {
+      id: string;
+      type: "image";
+      scene_id: number;
+      scene_name: string;
+      count: number;
+    };
 
 const ASPECT_RATIOS = [
   { value: "3:4", label: "3:4 竖（推荐）" },
@@ -166,7 +175,10 @@ export default function SceneToolsPage() {
   // 添加文字场景
   function addTextScene(initialText = "") {
     const id = `text-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    setScenes((prev) => [...prev, { id, type: "text", text: initialText }]);
+    setScenes((prev) => [
+      ...prev,
+      { id, type: "text", text: initialText, count: 1 },
+    ]);
   }
 
   // 添加图片场景
@@ -178,7 +190,13 @@ export default function SceneToolsPage() {
     }
     setScenes((prev) => [
       ...prev,
-      { id, type: "image", scene_id: scene.id, scene_name: scene.name },
+      {
+        id,
+        type: "image",
+        scene_id: scene.id,
+        scene_name: scene.name,
+        count: 1,
+      },
     ]);
   }
 
@@ -194,8 +212,15 @@ export default function SceneToolsPage() {
     );
   }
 
+  function updateSceneCount(id: string, count: number) {
+    const c = Math.max(1, Math.min(5, count));
+    setScenes((prev) => prev.map((s) => (s.id === id ? { ...s, count: c } : s)));
+  }
+
   // 总数 + 软警告
-  const totalCount = products.length * scenes.length;
+  // 每张场景按它的 count 展开，total = N 张产品图 × sum(count)
+  const sceneTotal = scenes.reduce((sum, s) => sum + (s.count || 1), 0);
+  const totalCount = products.length * sceneTotal;
   const estCostCny = totalCount * 1.7; // Pro 4K 约 ¥1.7/张
   const showWarning = totalCount > 20;
 
@@ -207,7 +232,7 @@ export default function SceneToolsPage() {
     if (!canSubmit) return;
     if (showWarning) {
       const ok = confirm(
-        `预计出 ${totalCount} 张图（${products.length} 产品 × ${scenes.length} 场景），约花费 ¥${estCostCny.toFixed(2)}。\n\n确认提交？`,
+        `预计出 ${totalCount} 张图（${products.length} 产品 × ${sceneTotal} 场景变体），约花费 ¥${estCostCny.toFixed(2)}。\n\n确认提交？`,
       );
       if (!ok) return;
     }
@@ -227,8 +252,10 @@ export default function SceneToolsPage() {
         fd.append(`product_image_${i}`, p.file, p.file.name);
       });
       const scenesPayload = scenes.map((s) => {
-        if (s.type === "text") return { type: "text", text: s.text.trim() };
-        return { type: "image", scene_id: s.scene_id };
+        const count = Math.max(1, Math.min(5, s.count || 1));
+        if (s.type === "text")
+          return { type: "text", text: s.text.trim(), count };
+        return { type: "image", scene_id: s.scene_id, count };
       });
       fd.append("scenes", JSON.stringify(scenesPayload));
       fd.append("aspect_ratio", aspectRatio);
@@ -397,6 +424,7 @@ export default function SceneToolsPage() {
                   index={idx + 1}
                   onRemove={() => removeScene(s.id)}
                   onUpdateText={(t) => updateTextScene(s.id, t)}
+                  onUpdateCount={(n) => updateSceneCount(s.id, n)}
                   scenesLib={scenesLib}
                 />
               ))}
@@ -520,8 +548,11 @@ export default function SceneToolsPage() {
               >
                 {showWarning && "⚠️ "}
                 共出 <strong>{totalCount}</strong> 张图（{products.length}{" "}
-                产品 × {scenes.length} 场景）· 预计约{" "}
-                <strong>¥{estCostCny.toFixed(2)}</strong>
+                产品 × {sceneTotal} 场景变体
+                {sceneTotal !== scenes.length
+                  ? `，${scenes.length} 个场景`
+                  : ""}
+                ）· 预计约 <strong>¥{estCostCny.toFixed(2)}</strong>
                 {showWarning && " · 数量较大，建议确认后再提交"}
               </div>
             )}
@@ -691,14 +722,40 @@ function SceneEntryCard({
   index,
   onRemove,
   onUpdateText,
+  onUpdateCount,
   scenesLib,
 }: {
   entry: SceneEntry;
   index: number;
   onRemove: () => void;
   onUpdateText: (text: string) => void;
+  onUpdateCount: (count: number) => void;
   scenesLib: Scene[];
 }) {
+  // 数量选择子组件（1-5），文字 + 图片场景共用
+  const CountPicker = (
+    <div className="flex items-center gap-1.5">
+      <span className="text-[10px] text-fg-tertiary">出图</span>
+      <div className="flex gap-0.5">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <button
+            key={n}
+            type="button"
+            onClick={() => onUpdateCount(n)}
+            className={
+              entry.count === n
+                ? "w-5 h-5 rounded text-[10px] bg-brand-500 text-white font-medium"
+                : "w-5 h-5 rounded text-[10px] bg-bg-base text-fg-secondary border border-border-subtle hover:bg-brand-50 hover:text-brand-600"
+            }
+            title={`这个场景出 ${n} 张图`}
+          >
+            {n}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
   if (entry.type === "text") {
     return (
       <div className="p-2 bg-bg-tertiary rounded border border-border-subtle">
@@ -707,13 +764,16 @@ function SceneEntryCard({
             <PenLine size={12} strokeWidth={2.2} />
             场景 {index} · 文字
           </div>
-          <button
-            onClick={onRemove}
-            className="text-fg-muted hover:text-danger"
-            title="移除"
-          >
-            <X size={12} />
-          </button>
+          <div className="flex items-center gap-2">
+            {CountPicker}
+            <button
+              onClick={onRemove}
+              className="text-fg-muted hover:text-danger"
+              title="移除"
+            >
+              <X size={12} />
+            </button>
+          </div>
         </div>
         <textarea
           value={entry.text}
@@ -722,8 +782,9 @@ function SceneEntryCard({
           rows={3}
           className="input text-xs w-full resize-none"
         />
-        <div className="text-[10px] text-fg-muted mt-0.5 text-right">
-          {entry.text.length}/500
+        <div className="text-[10px] text-fg-muted mt-0.5 flex justify-between">
+          <span>姿势由模型按场景描述自然生成</span>
+          <span>{entry.text.length}/500</span>
         </div>
       </div>
     );
@@ -749,10 +810,11 @@ function SceneEntryCard({
         <div className="text-sm font-medium text-fg-primary truncate">
           {entry.scene_name}
         </div>
+        <div className="mt-0.5">{CountPicker}</div>
       </div>
       <button
         onClick={onRemove}
-        className="text-fg-muted hover:text-danger"
+        className="text-fg-muted hover:text-danger self-start"
         title="移除"
       >
         <X size={14} />
