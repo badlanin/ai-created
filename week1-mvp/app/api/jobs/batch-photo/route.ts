@@ -18,7 +18,10 @@ import { assertWithinBudget, getUserBudgetStatus } from "@/lib/pricing";
 import { createJob } from "@/lib/jobs-db";
 import { startJobWorker, type HandlerContext } from "@/lib/job-runner";
 import { pickShoeSpec } from "@/lib/shoe-spec";
-import { FRAMING_TIGHT_SINGLE } from "@/lib/scene-tools-prompt";
+import {
+  FRAMING_TIGHT_SINGLE,
+  getVariantCameraHint,
+} from "@/lib/scene-tools-prompt";
 import { buildImageManifest } from "@/lib/image-input-manifest";
 
 export const runtime = "nodejs";
@@ -160,6 +163,36 @@ export async function POST(req: NextRequest) {
       }
     } catch {}
     if (extraPairs.length > 2) extraPairs = extraPairs.slice(0, 2);
+
+    // ─── 额外文字场景 + 数量（可选 ≤2 条，每条 1..5 张图）───
+    // 文字场景不绑定 scenes 表，跟图片场景平行另一类。
+    // 后端展开成 extra_text_items，worker 走 buildSceneShootText 路径
+    const extraTextPairsRaw = formData.get("extra_text_scene_pairs");
+    let extraTextPairs: Array<{ text: string; count: number }> = [];
+    try {
+      if (
+        typeof extraTextPairsRaw === "string" &&
+        extraTextPairsRaw.trim()
+      ) {
+        const parsed = JSON.parse(extraTextPairsRaw);
+        if (Array.isArray(parsed)) {
+          extraTextPairs = parsed
+            .filter(
+              (p): p is { text: string; count: number } =>
+                typeof p === "object" &&
+                p !== null &&
+                typeof (p as { text?: unknown }).text === "string" &&
+                (p as { text: string }).text.trim().length > 0 &&
+                Number.isFinite((p as { count?: unknown }).count),
+            )
+            .map((p) => ({
+              text: String(p.text).trim().slice(0, 500),
+              count: Math.min(5, Math.max(1, Number(p.count) || 1)),
+            }));
+        }
+      }
+    } catch {}
+    if (extraTextPairs.length > 2) extraTextPairs = extraTextPairs.slice(0, 2);
 
     const materialIdsRaw = formData.get("material_ids");
     let materialIds: number[] = [];
@@ -344,7 +377,24 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ─── items = N 张纯色姿势 + 所有场景变体 ───
+    // ─── 解析 extra_text_pairs → 按 count 展开成多个文字场景 item ───
+    type ExtraTextItemResolved = {
+      text: string;
+      variant_idx: number;
+      variant_total: number;
+    };
+    const resolvedExtraTextItems: ExtraTextItemResolved[] = [];
+    for (const pair of extraTextPairs) {
+      for (let v = 1; v <= pair.count; v++) {
+        resolvedExtraTextItems.push({
+          text: pair.text,
+          variant_idx: v,
+          variant_total: pair.count,
+        });
+      }
+    }
+
+    // ─── items = N 纯色姿势 + 所有图片场景变体 + 所有文字场景变体 ───
     const solidItems = poses.map((p) => ({
       label: `${p.name} · ${solidColorName}`,
     }));
@@ -354,7 +404,17 @@ export async function POST(req: NextRequest) {
           ? `${it.scene_name} · 变体 ${it.variant_idx}/${it.variant_total}`
           : it.scene_name,
     }));
-    const allItems = [...solidItems, ...extraItems];
+    const extraTextItemsForJob = resolvedExtraTextItems.map((it) => {
+      const shortText =
+        it.text.length > 14 ? it.text.slice(0, 14) + "…" : it.text;
+      return {
+        label:
+          it.variant_total > 1
+            ? `文字场景"${shortText}" · 变体 ${it.variant_idx}/${it.variant_total}`
+            : `文字场景"${shortText}"`,
+      };
+    });
+    const allItems = [...solidItems, ...extraItems, ...extraTextItemsForJob];
 
     // ─── 创建 job ───
     const job = createJob({
@@ -372,13 +432,16 @@ export async function POST(req: NextRequest) {
           name: identity.name,
           image_path: identity.image_path,
         },
-        // 纯色背景配置（idx < solid_pose_count 的 item 走纯色，无 scene image）
+        // item 分三段（按 idx 顺序）：
+        //   0..solid_pose_count: 纯色姿势（poses 表对应）
+        //   solid_pose_count..solid+image_scene: 图片场景变体（extra_items[i]）
+        //   solid+image_scene..end: 文字场景变体（extra_text_items[i]）
         solid_pose_count: poses.length,
+        image_scene_count: resolvedExtraItems.length,
         solid_color_hex: solidColorHex,
         solid_color_name: solidColorName,
-        // idx >= solid_pose_count 的 item 用 extra_items[idx - solid_pose_count]
-        // 每个 extra item 是一个"场景 + 变体 idx"，姿势由 prompt 让模型自由生成
         extra_items: resolvedExtraItems,
+        extra_text_items: resolvedExtraTextItems,
         template: {
           id: template.id,
           name: template.name,
@@ -508,6 +571,7 @@ async function batchPhotoItemHandler(
     batch_seed?: number;
     identity: { id: number; name: string; image_path: string };
     solid_pose_count: number;
+    image_scene_count?: number; // 新增：图片场景变体数量（用于分段 idx）
     solid_color_hex: string;
     solid_color_name: string;
     // 新版：每个 extra item 是"场景 + 变体 idx"，没有绑定 pose
@@ -515,6 +579,12 @@ async function batchPhotoItemHandler(
       scene_id: number;
       scene_name: string;
       scene_image_path: string;
+      variant_idx: number;
+      variant_total: number;
+    }>;
+    // 文字场景 items（与 extra_items 平行，走 buildSceneShootText 路径）
+    extra_text_items?: Array<{
+      text: string;
       variant_idx: number;
       variant_total: number;
     }>;
@@ -544,7 +614,11 @@ async function batchPhotoItemHandler(
 
   // ── 分支：纯色 vs 场景 ──
   const idx = ctx.item.idx;
-  const isSolid = idx < p.solid_pose_count;
+  const solidCount = p.solid_pose_count;
+  const imageSceneCount =
+    p.image_scene_count ?? (p.extra_items?.length ?? 0);
+  const isSolid = idx < solidCount;
+  const isImageScene = !isSolid && idx < solidCount + imageSceneCount;
   let pose: { id: number; name: string; text: string; type: string };
   let sceneNameForPrompt: string;
   let sceneImagePath: string | null;
@@ -557,8 +631,8 @@ async function batchPhotoItemHandler(
     sceneNameForPrompt = `纯色背景（${p.solid_color_name}，${p.solid_color_hex}）`;
     sceneImagePath = null;
     framingBlock = buildSolidBgInstruction(p.solid_color_name, p.solid_color_hex);
-  } else {
-    const extraIdx = idx - p.solid_pose_count;
+  } else if (isImageScene) {
+    const extraIdx = idx - solidCount;
     // 优先用新版 extra_items；老 job 的 params 走 extra_pairs 兜底
     const extraItems = p.extra_items;
     const extraPairs = p.extra_pairs;
@@ -567,15 +641,16 @@ async function batchPhotoItemHandler(
       sceneNameForPrompt = it.scene_name;
       sceneImagePath = it.scene_image_path;
       // 新版自由互动姿势：不绑定 poses 表，让模型按场景物件互动
-      // 多张变体时 prompt 里附"变体 X/N 跟其他变体差异化"hint
-      const variantHint =
-        it.variant_total > 1
-          ? `这是该场景的第 ${it.variant_idx}/${it.variant_total} 张变体——跟同场景的其他变体要明显不同的互动物件、动作或取景角度。`
-          : "";
+      // 多张变体用 getVariantCameraHint 给每张钉死镜头预设（角度 / 朝向 / 距离 /
+      // 构图），让模型在该预设下变姿势，不能偷懒回退到默认正面全身
+      const cameraHint = getVariantCameraHint(
+        it.variant_idx,
+        it.variant_total,
+      );
       pose = {
         id: 0,
         name: it.variant_total > 1 ? `变体 ${it.variant_idx}/${it.variant_total}` : "自由互动",
-        text: `按场景图（IMAGE 4）里的家具 / 门 / 桌子 / 道具自然互动，挑 1-2 个物件发生动作（坐 / 倚 / 撑 / 拿 / 触摸 / 走过）。姿势从场景里"长出来"，不要站正中央 + 双手垂直。${variantHint}`,
+        text: `按场景图（IMAGE 4）里的家具 / 门 / 桌子 / 道具自然互动，挑 1-2 个物件发生动作（坐 / 倚 / 撑 / 拿 / 触摸 / 走过）。姿势从场景里"长出来"，不要站正中央 + 双手垂直。${cameraHint}`,
         type: "full",
       };
     } else if (extraPairs && extraPairs[extraIdx]) {
@@ -593,6 +668,44 @@ async function batchPhotoItemHandler(
       throw new Error(`extra item[${extraIdx}] 丢失`);
     }
     framingBlock = FRAMING_TIGHT_SINGLE;
+  } else {
+    // 文字场景：没有 scene image，文字描述塞进 framing block
+    const textIdx = idx - solidCount - imageSceneCount;
+    const textItems = p.extra_text_items;
+    if (!textItems || !textItems[textIdx]) {
+      throw new Error(`text scene item[${textIdx}] 丢失`);
+    }
+    const it = textItems[textIdx];
+    sceneImagePath = null;
+    const shortText =
+      it.text.length > 20 ? it.text.slice(0, 20) + "…" : it.text;
+    sceneNameForPrompt = `文字场景"${shortText}"`;
+    const cameraHint = getVariantCameraHint(
+      it.variant_idx,
+      it.variant_total,
+    );
+    pose = {
+      id: 0,
+      name:
+        it.variant_total > 1
+          ? `文字场景 · 变体 ${it.variant_idx}/${it.variant_total}`
+          : "文字场景 · 自由互动",
+      text: `按下方场景文字描述里出现的物件（家具 / 门 / 桌子 / 楼梯 / 栏杆 / 道具）自然互动，挑 1-2 个发生动作（坐 / 倚 / 撑 / 拿 / 触摸 / 走过）。${cameraHint}`,
+      type: "full",
+    };
+    framingBlock = `══════════════════════════════════════════════════════════
+🎬 SCENE — described in text below (no scene image provided)
+══════════════════════════════════════════════════════════
+
+The background scene is fully described by the text below. Render the
+model into this scene as if photographed on location. Read the description
+carefully — identify the furniture / doors / surfaces / props mentioned —
+and have the model interact naturally with one or two of them.
+
+【场景文字描述】
+${it.text}
+
+${FRAMING_TIGHT_SINGLE}`;
   }
 
   // 预算兜底

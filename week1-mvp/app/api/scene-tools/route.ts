@@ -14,6 +14,7 @@ import {
   buildSceneShootText,
   buildSceneShootImage,
 } from "@/lib/scene-prompt";
+import { getVariantCameraHint } from "@/lib/scene-tools-prompt";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -393,11 +394,9 @@ async function sceneToolsItemHandler(
   if (!scene) throw new Error(`scene[${itemMeta.scene_idx}] 丢失`);
 
   // 多变体（同一场景出多张）时附差异化 hint 到 user_hint 里
-  // 让模型对每一张变体选不同的互动物件 / 角度 / 距离
-  const variantHint =
-    variantTotal > 1
-      ? `这是该场景的第 ${variantIdx}/${variantTotal} 张变体——跟同场景的其他变体要明显不同的互动物件、动作或取景角度。`
-      : "";
+  // 用 getVariantCameraHint 给每张变体钉死一个镜头预设（角度 / 朝向 / 距离 / 构图），
+  // 让模型在该预设下变姿势 / 互动，但不能回退到"正面眼平居中全身"的默认偷懒
+  const variantHint = getVariantCameraHint(variantIdx, variantTotal);
   const composedHint = [p.user_hint, variantHint]
     .filter((s): s is string => Boolean(s && s.trim()))
     .join("\n");

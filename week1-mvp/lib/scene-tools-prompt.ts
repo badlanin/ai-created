@@ -1,83 +1,160 @@
 /**
- * Scene Tools — Shared FRAMING block（v3 主动互动版）
+ * Scene Tools — Shared FRAMING block（v4 主图导向 + 镜头多样化 + 强一致性）
  *
- * 历史背景：
- *   - v1：强制 anchor 倚靠 + 85mm + f/2.0 + anti-panorama，硬约束太多，
- *         开放场景翻车
- *   - v2（2026-05）：删掉所有硬约束，"让场景决定"。结果模型默认"站中间
- *         + 不互动"的保守姿势 —— 等于浪费了场景里的家具/门/桌子/道具
- *   - v3（2026-05）：硬约束依然不要，但**主动指令模型读场景里的物件并
- *         发生互动**。互动是必须，不是选项。
+ * 版本演进：
+ *   v1: 强 anchor 倚靠 + 85mm 锁定（开放场景翻车）
+ *   v2: 全放权（模型偏向"站中间不互动"的保守姿势）
+ *   v3: 主动指令读场景物件互动（但多变体之间镜头 / 角度 / 焦距重复）
+ *   v4 (2026-05)：实测多变体出图正面同焦距同角度太重复。
  *
- * 设计原则：
- *   1. 让模型先做一步"场景物件清单"的思考（读图，识别椅子/门/桌/灯
- *      /楼梯/窗框/栏杆/植物/扶手 等可交互对象）
- *   2. 从清单里选 1-2 个发生自然互动：坐 / 倚 / 撑 / 拿 / 触摸
- *   3. 姿势是"从场景里长出来"的，不是"放到场景里"的
- *   4. 镜头 / 景深 / 取景仍由模型按场景自由判断
+ * v4 改造三件事：
+ *   1. 一致性最高优先级提到顶部（脸 / 服装 / 光线在多变体间必须一致）
+ *   2. 显式声明"这是商品主图"——主体是服装，要全身或 3/4 身，不要局部特写
+ *   3. 多变体场景下强制镜头多样化：角度 / 朝向 / 距离 / 构图 / 动态状态都要变
  *
- * 注意：变量名 FRAMING_TIGHT_SINGLE 历史遗留，语义已经从"紧凑取景"
- *      变成"自然互动"。为了避免到处改 import 不改名。
+ * 变量名 FRAMING_TIGHT_SINGLE 历史遗留不动，避免到处改 import。
  */
 
 export const FRAMING_TIGHT_SINGLE = `══════════════════════════════════════════════════════════
-🎬 SCENE INTERACTION — pose grows from what's in the scene
+🔒 PRIORITY #1 — IDENTITY & GARMENT CONSISTENCY
 ══════════════════════════════════════════════════════════
 
-STEP 1 — Read IMAGE 2 carefully and mentally list every interactive
-object visible in the scene. This includes (but is not limited to):
-  • Furniture: chairs, sofas, benches, ottomans, beds, stools, daybeds
-  • Surfaces: tables, desks, countertops, windowsills, mantels, consoles
-  • Architecture: door frames, archways, columns, railings, banisters,
-    window frames, wall corners, stair edges, alcoves
-  • Props on surfaces: cups, vases, books, fruit, lamps, mirrors, flowers
-  • Plants / curtains / textiles that can be touched or held
-
-STEP 2 — Choose ONE or TWO of these objects and pose the subject in
-NATURAL ACTIVE INTERACTION with them. Examples (pick what fits the
-specific scene in IMAGE 2):
-  • Sitting on the chair / sofa / stairs, with the dress draped naturally
-  • Leaning a shoulder against the door frame / wall / archway
-  • Standing with one hand resting on the table / mantel / railing
-  • Holding a cup / book / flower from the surface, mid-motion
-  • Crossing through a doorway, one hand on the frame
-  • Sitting on stairs, looking off to the side
-  • Standing close to a window, one hand brushing the curtain
-
-The pose must read as a candid moment IN that location — not a model
-parachuted into the scene.
-
-❌ AVOID:
-  • Standing dead-center, arms at sides, no contact with anything
-  • "Pasted in" feel — body floats, doesn't relate to scene geometry
-  • Same generic standing pose across different scenes (each scene
-    has different furniture / props → different natural interactions)
-  • Interacting with objects that are NOT visible in IMAGE 2
+These must NEVER change, regardless of pose / angle / variant:
+- Model's face: identity, features, skin tone, makeup baseline
+- Model's hair: color, length, style
+- Garment: color, fabric, fit, length, neckline, sleeves, ALL details
+  (the dress in IMAGE 1 is final — do NOT redesign to fit the scene)
+- Lighting mood across variants (so multiple variants look like one
+  cohesive photo shoot, not random unrelated photos)
 
 ══════════════════════════════════════════════════════════
-🎬 CAMERA & FRAMING — let the scene decide
+📐 PRIORITY #2 — THIS IS A FASHION PRODUCT MAIN IMAGE
 ══════════════════════════════════════════════════════════
 
-Choose the pose, framing, camera distance, lens feel, and depth of
-field that fit THIS specific scene + interaction naturally. A real
-on-location photographer would adapt per scene. Don't force a single
-"correct" composition.
+The output is a clothing product photo. The DRESS is the protagonist;
+the scene is the backdrop. Therefore:
+
+✅ ALWAYS frame to show the garment clearly:
+   - Full-body shots OR 3/4-length shots (waist + dress visible)
+   - Garment must occupy at least 50% of the vertical frame
+   - Hem of the dress visible in most variants (not always cropped)
+
+❌ AVOID main-image-killer crops:
+   - NO extreme close-ups of face only / hand only / fabric detail only
+   - NO crops above the waist that hide the silhouette of the dress
+   - NO behind-the-back shots that hide the front of the garment
+   - NO super-tight 50mm-macro detail shots
+
+It is OK to have ONE variant that's a 3/4-body or "torso + waist + part
+of skirt" shot, but the rest must show the full silhouette.
+
+══════════════════════════════════════════════════════════
+🎬 PRIORITY #3 — READ THE SCENE, INTERACT NATURALLY
+══════════════════════════════════════════════════════════
+
+Read IMAGE 2 (the scene). Mentally list the interactive objects visible:
+furniture (chairs, sofas, benches, stairs, ottomans), surfaces (tables,
+mantels, windowsills), architecture (doorframes, archways, columns,
+railings, banisters, wall corners), props (cups, books, flowers, plants,
+curtains).
+
+For each generated variant, the model should naturally interact with
+ONE or TWO of these objects — sitting / leaning / hand-on / mid-step /
+holding — to break the "standing dead center" default.
+
+══════════════════════════════════════════════════════════
+🎥 PRIORITY #4 — MULTI-VARIANT CAMERA & POSE DIVERSITY
+══════════════════════════════════════════════════════════
+
+When the user requests MULTIPLE variants of the same scene
+(variant N of M), each variant MUST differ across MULTIPLE dimensions,
+not just "different interaction object". Pick a combination of:
+
+▸ CAMERA ANGLE:
+   - eye-level (default)
+   - slight low-angle (camera at chest height, looking up)
+   - slight high-angle (camera slightly above, looking down)
+   - dynamic angle (35° tilt, dutch / casual editorial)
+
+▸ BODY ORIENTATION (relative to camera):
+   - frontal facing the lens
+   - 3/4 turn (one shoulder forward)
+   - full profile / side view
+   - back with glance over shoulder
+   - walking-by / moving away
+
+▸ CAMERA DISTANCE:
+   - full body (head to feet, with floor)
+   - long full body (head to floor with some space above/below)
+   - 3/4 body (knees up)
+   - waist-up editorial (mid-thigh up, but ONLY for 1 of M variants)
+
+▸ FRAMING POSITION (subject in frame):
+   - centered
+   - rule-of-thirds right
+   - rule-of-thirds left
+   - off-center with environment context
+
+▸ DYNAMIC STATE:
+   - still standing
+   - mid-step / walking
+   - turning / pivoting
+   - sitting / leaning / resting
+
+▸ FOCAL LENGTH FEEL:
+   - 50mm natural perspective
+   - 85mm portrait compression
+   - 35mm slight wide for editorial environment context
+
+For variant N out of M total, pick a combination that is OBVIOUSLY
+DIFFERENT from a "1/M standing centered frontal eye-level full body
+85mm" baseline. Across M variants, span at least 3 different camera
+angles and 3 different body orientations.
 
 ══════════════════════════════════════════════════════════
 🔒 HARD CONSTRAINTS
 ══════════════════════════════════════════════════════════
 
-- Body proportions must read as a real human at correct scale relative
-  to the furniture / architecture in IMAGE 2 (a chair is ~85cm tall,
-  a doorway ~210cm, a table ~75cm high — body scales must agree).
-- Lighting on the subject must match the scene's color temperature,
-  direction, and intensity. No "studio-lit subject pasted into dim
-  scene" effect.
-- The garment from IMAGE 1 is fully preserved (color, fabric, cut,
-  details) — never redesign the dress to fit the scene's color palette.
-- Subject's face is the same person from IMAGE 1.
-- Contact points must be physically believable: hand on table = hand
-  actually resting on the surface with realistic touch; sitting on
-  chair = body weight visibly settled into the cushion with natural
-  fabric folds where the dress meets the seat.
+- Body proportions read as real human at correct scale (chair ~85cm
+  tall, doorway ~210cm, table ~75cm — body must agree)
+- Lighting on subject matches scene's color temperature & direction
+  (no "studio-lit subject pasted into dim scene")
+- Subject is the SAME PERSON from IMAGE 1, garment is IDENTICAL
+- Contact points must be physically believable (hand on table = real
+  weight on the surface; sitting = body weight sunk into the seat)
 `;
+
+/**
+ * 多变体镜头预设（5 套），按 variant idx 循环分配。
+ *
+ * 实测如果只让模型自己选"跟前一张不同的角度"，它出图还是偏向重复（同焦距同正面）。
+ * 显式给每张变体钉死一个镜头基础设定，再让模型在该设定下自由发挥具体姿势 / 互动，
+ * 出图差异性立刻拉开。
+ *
+ * 用法（route 里）：
+ *   const cameraHint = getVariantCameraHint(variantIdx, variantTotal);
+ *   const composedHint = [userHint, cameraHint, otherHint].filter(Boolean).join("\n");
+ */
+const VARIANT_CAMERA_PRESETS: string[] = [
+  "镜头预设：眼平视角 · 正面朝向 · 居中构图 · 全身站姿（基准版）",
+  "镜头预设：3/4 侧转身（一肩前倾） · 偏右三分构图 · 全身 · 一手倚靠场景里的物件（栏杆 / 门框 / 桌沿）",
+  "镜头预设：侧面 profile · 偏左三分构图 · 长全身（含地面留白） · 走动中或刚停下的瞬间",
+  "镜头预设：略低位仰拍（相机在胸口高度） · 居中 · 3/4 身（膝盖以上） · 半坐或斜倚",
+  "镜头预设：略高位俯拍（相机微微高于人头） · 偏右 · 全身 · 转身回眸或背身侧首",
+];
+
+/**
+ * 按 variant idx（1-based）拿对应的镜头预设描述。
+ * 当 total <= 1 时返回空（单张不需要分镜头）。
+ */
+export function getVariantCameraHint(
+  variantIdx: number,
+  variantTotal: number,
+): string {
+  if (variantTotal <= 1) return "";
+  const preset = VARIANT_CAMERA_PRESETS[
+    (variantIdx - 1) % VARIANT_CAMERA_PRESETS.length
+  ];
+  return `本张是第 ${variantIdx}/${variantTotal} 张变体。${preset}。在这个镜头基础上让模特按场景物件自由互动（坐 / 倚 / 撑 / 拿 / 走），但镜头角度 / 朝向 / 距离 / 构图必须严格按上面预设走，不要回退到"正面眼平居中全身"基准。`;
+}
+

@@ -26,6 +26,7 @@ import {
   useTaskStore,
   type TabsApi,
 } from "@/lib/stores/task-store";
+import { TEXT_SCENE_PRESETS } from "@/lib/text-scene-presets";
 
 /* ─────────── 类型 ─────────── */
 type AiModel = {
@@ -252,6 +253,11 @@ function BatchPhotoTab({
   const [extraScenePairs, setExtraScenePairs] = useState<
     Array<{ scene_id: number; count: number }>
   >([]);
+  // 额外文字场景（可选 ≤ 2 条，每条配 1-5 count）。跟图片场景平行的另一种额外场景。
+  // 提交时序列化成 extra_text_scene_pairs 给后端，worker 按文字场景路径出图。
+  const [extraTextScenes, setExtraTextScenes] = useState<
+    Array<{ text: string; count: number }>
+  >([]);
   const [templateId, setTemplateId] = useState<number | null>(null);
   const [photographyId, setPhotographyId] = useState<number | null>(null);
   const [realismId, setRealismId] = useState<number | null>(null);
@@ -379,6 +385,22 @@ function BatchPhotoTab({
     if (savedMatIds) setSelectedMaterialIds(savedMatIds);
     const savedDressType = slotStore.get<string>("dressType");
     if (savedDressType) setDressType(savedDressType);
+    const savedExtraText = slotStore.get<
+      Array<{ text: string; count?: number }>
+    >("extraTextScenes");
+    if (Array.isArray(savedExtraText)) {
+      const cleaned = savedExtraText
+        .filter((t) => typeof t.text === "string" && t.text.trim())
+        .map((t) => ({
+          text: t.text.trim(),
+          count:
+            typeof t.count === "number" && t.count >= 1
+              ? Math.min(5, t.count)
+              : 1,
+        }))
+        .slice(0, 2);
+      setExtraTextScenes(cleaned);
+    }
 
     fetch("/api/jobs/active")
       .then((r) => (r.ok ? r.json() : { count: 0 }))
@@ -405,6 +427,7 @@ function BatchPhotoTab({
       garmentAttrs,
       selectedMaterialIds,
       dressType,
+      extraTextScenes,
       selectedPoseIds: Array.from(selectedPoseIds),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -424,6 +447,7 @@ function BatchPhotoTab({
     garmentAttrs,
     selectedMaterialIds,
     dressType,
+    extraTextScenes,
     selectedPoseIds,
   ]);
 
@@ -447,13 +471,17 @@ function BatchPhotoTab({
     });
   }, []);
 
-  /* ─── 估价（N 纯色 + M 场景图）─── */
-  // 场景部分图数 = 所有 extra pair 的 count 之和
+  /* ─── 估价（N 纯色 + M 图片场景变体 + K 文字场景变体）─── */
   const validExtraCount = extraScenePairs.reduce(
     (sum, p) => sum + (p.count || 0),
     0,
   );
-  const totalImageCount = selectedPoseIds.size + validExtraCount;
+  const validExtraTextCount = extraTextScenes.reduce(
+    (sum, t) => sum + (t.count || 0),
+    0,
+  );
+  const totalImageCount =
+    selectedPoseIds.size + validExtraCount + validExtraTextCount;
   useEffect(() => {
     if (totalImageCount === 0 || !modelId) {
       setEstimate(null);
@@ -783,6 +811,17 @@ function BatchPhotoTab({
         .filter((p) => p.count > 0)
         .map((p) => ({ scene_id: p.scene_id, count: p.count }));
       fd.append("extra_scene_count_pairs", JSON.stringify(validPairs));
+      // 文字场景（与图片场景平行的另一类额外场景，按 text + count 后端展开）
+      const validTextScenes = extraTextScenes
+        .filter((t) => t.text.trim() && t.count > 0)
+        .map((t) => ({
+          text: t.text.trim().slice(0, 500),
+          count: Math.min(5, Math.max(1, t.count)),
+        }));
+      fd.append(
+        "extra_text_scene_pairs",
+        JSON.stringify(validTextScenes),
+      );
       if (photographyId) fd.append("photography_id", String(photographyId));
       if (realismId) fd.append("realism_id", String(realismId));
       if (expressionId) fd.append("expression_id", String(expressionId));
@@ -1408,6 +1447,152 @@ function BatchPhotoTab({
                         </div>
                       )}
                     </CollapsibleSection>
+                  )}
+                </div>
+
+                {/* 4.3 额外文字场景（可选 ≤ 2 条），跟图片场景平行 */}
+                <div className="mt-4">
+                  <div className="text-[12px] text-fg-secondary mb-2 font-medium">
+                    📝 额外文字场景（可选 ≤ 2 条）
+                    <span className="ml-2 text-[11px] text-fg-muted font-normal">
+                      文字描述场景 + 数量，姿势由模型按场景自由生成
+                    </span>
+                  </div>
+
+                  {extraTextScenes.length > 0 && (
+                    <div className="space-y-2 mb-3">
+                      {extraTextScenes.map((entry, idx) => (
+                        <div
+                          key={idx}
+                          className="p-2 bg-bg-secondary rounded border border-border-subtle"
+                        >
+                          <div className="flex items-start gap-2 mb-1.5">
+                            <span className="text-[11px] text-fg-tertiary font-medium shrink-0 mt-1">
+                              场景 {idx + 1}
+                            </span>
+                            <div className="flex-1 flex items-center gap-1.5">
+                              <span className="text-[10px] text-fg-tertiary">
+                                出图
+                              </span>
+                              <div className="flex gap-0.5">
+                                {[1, 2, 3, 4, 5].map((n) => (
+                                  <button
+                                    key={n}
+                                    type="button"
+                                    onClick={() =>
+                                      setExtraTextScenes((prev) =>
+                                        prev.map((p, i) =>
+                                          i === idx ? { ...p, count: n } : p,
+                                        ),
+                                      )
+                                    }
+                                    className={
+                                      entry.count === n
+                                        ? "w-5 h-5 rounded text-[10px] bg-brand-500 text-white font-medium"
+                                        : "w-5 h-5 rounded text-[10px] bg-bg-base text-fg-secondary border border-border-subtle hover:bg-brand-50 hover:text-brand-600"
+                                    }
+                                  >
+                                    {n}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                            <button
+                              onClick={() =>
+                                setExtraTextScenes((prev) =>
+                                  prev.filter((_, i) => i !== idx),
+                                )
+                              }
+                              className="text-fg-muted hover:text-danger"
+                              title="移除"
+                            >
+                              <X size={12} />
+                            </button>
+                          </div>
+                          <textarea
+                            value={entry.text}
+                            onChange={(e) =>
+                              setExtraTextScenes((prev) =>
+                                prev.map((p, i) =>
+                                  i === idx
+                                    ? {
+                                        ...p,
+                                        text: e.target.value.slice(0, 500),
+                                      }
+                                    : p,
+                                ),
+                              )
+                            }
+                            placeholder="例如：玫瑰粉法式门厅，两扇高大粉色木门，旁边一张大理石小桌..."
+                            rows={3}
+                            className="input text-xs w-full resize-none"
+                          />
+                          <div className="text-[10px] text-fg-muted mt-0.5 text-right">
+                            {entry.text.length}/500
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {extraTextScenes.length < 2 && (
+                    <div className="flex flex-wrap gap-1.5 items-center">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExtraTextScenes((prev) =>
+                            prev.length < 2
+                              ? [...prev, { text: "", count: 1 }]
+                              : prev,
+                          )
+                        }
+                        className="text-[11px] px-2 py-1 rounded bg-bg-base text-fg-secondary border border-border-subtle hover:bg-brand-50 hover:text-brand-600 inline-flex items-center gap-1"
+                      >
+                        ＋ 加文字场景（{extraTextScenes.length}/2）
+                      </button>
+                      <span className="text-[10px] text-fg-muted">
+                        或从预设里选 →
+                      </span>
+                      <select
+                        value=""
+                        onChange={(e) => {
+                          const preset = TEXT_SCENE_PRESETS.find(
+                            (p) => p.name === e.target.value,
+                          );
+                          if (!preset) return;
+                          if (extraTextScenes.length >= 2) return;
+                          setExtraTextScenes((prev) => [
+                            ...prev,
+                            { text: preset.text, count: 1 },
+                          ]);
+                          e.target.value = "";
+                        }}
+                        className="input select text-[11px] h-7 max-w-[200px]"
+                      >
+                        <option value="">— 选预设 —</option>
+                        {(() => {
+                          const groups = new Map<
+                            string,
+                            typeof TEXT_SCENE_PRESETS
+                          >();
+                          for (const p of TEXT_SCENE_PRESETS) {
+                            if (!groups.has(p.group)) groups.set(p.group, []);
+                            groups.get(p.group)!.push(p);
+                          }
+                          return Array.from(groups.entries()).map(
+                            ([g, list]) => (
+                              <optgroup key={g} label={g}>
+                                {list.map((p) => (
+                                  <option key={p.name} value={p.name}>
+                                    {p.name}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            ),
+                          );
+                        })()}
+                      </select>
+                    </div>
                   )}
                 </div>
               </div>
