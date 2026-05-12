@@ -414,6 +414,8 @@ function migrate(db: Database.Database) {
   migrateInsertNewPoses(db);
   // 老库的新装饰材质补种（亮片 / 珠子 / 3D花朵 等，按 name 幂等，flag v2）
   migrateInsertNewMaterials(db);
+  // 老库色卡 v2 全量替换（用户 XLS 提供的 50 个新色，flag v2）
+  migrateReplaceColorsV2(db);
 }
 
 /**
@@ -2559,4 +2561,134 @@ function migrateInsertNewMaterials(db: Database.Database) {
   if (inserted > 0) {
     console.log(`[db] migrateInsertNewMaterials: 补种 ${inserted} 个新材质（已标记 ${FLAG}=done）`);
   }
+}
+
+/**
+ * 老库色卡 v2 全量替换（2026-05 用户提供新 XLS 色卡 50 种）
+ *
+ * 跟其他 migrate* 函数不一样：这个是"全删 + 全新插入"，因为新色卡是
+ * 用户精选的整套调色板，不需要保留老库里的杂色。
+ *
+ * 安全性：
+ *   - colors 表没有 FK 被其他表硬引用（recolor job 在创建时把 {id, name, hex}
+ *     快照进 params JSON）。删 colors.id 不破坏历史 job 显示。
+ *   - usage_records.notes 是 JSON 文本，已经存了 name + hex，不依赖现 row。
+ *
+ * FLAG=migrated_colors_v2，幂等：跑过一次后不再动。
+ * 想推 v3 新一轮色卡？换一个 FLAG（migrated_colors_v3）即可。
+ */
+function migrateReplaceColorsV2(db: Database.Database) {
+  const FLAG = "migrated_colors_v2";
+  const flag = db
+    .prepare(`SELECT value FROM settings WHERE key = ?`)
+    .get(FLAG) as { value: string } | undefined;
+  if (flag?.value === "done") return;
+
+  type ColorSeed = {
+    name: string;
+    hex: string;
+    color_group: string; // 英文 plural 统一（Yellows / Purples / Pinks / Oranges / Neutrals / Greens / Darks / Blues / Reds）
+    is_popular: 0 | 1;
+    sort_order: number;
+  };
+
+  // 9 大色系，按用户 XLS 顺序排：Yellow → Purples → Pink → orange → Neutrals → Greens → Darks → Blue → Red
+  // sort_order 设计：色系 base 数 + 段内序号，方便 UI 按色系折叠时顺序稳定
+  const NEW_COLORS: ColorSeed[] = [
+    // ===== Yellows =====
+    { name: "Lemon",         hex: "#FFF27B", color_group: "Yellows",  is_popular: 0, sort_order: 100 },
+    { name: "Daffodil",      hex: "#FFE9A1", color_group: "Yellows",  is_popular: 1, sort_order: 110 },
+    { name: "Butter",        hex: "#FCDDAE", color_group: "Yellows",  is_popular: 1, sort_order: 120 },
+
+    // ===== Purples =====
+    { name: "Lilac",         hex: "#E5D6DF", color_group: "Purples",  is_popular: 1, sort_order: 200 },
+    { name: "Lavender",      hex: "#B59EB0", color_group: "Purples",  is_popular: 1, sort_order: 210 },
+    { name: "Wisteria",      hex: "#C9A0DC", color_group: "Purples",  is_popular: 0, sort_order: 220 },
+    { name: "Mauve",         hex: "#9289BC", color_group: "Purples",  is_popular: 0, sort_order: 230 },
+    { name: "Mulberry",      hex: "#772C54", color_group: "Purples",  is_popular: 0, sort_order: 240 },
+    { name: "Plum",          hex: "#3D0F42", color_group: "Purples",  is_popular: 0, sort_order: 250 },
+
+    // ===== Pinks =====
+    { name: "Blushing Pink", hex: "#FDE9E9", color_group: "Pinks",    is_popular: 1, sort_order: 300 },
+    { name: "Petal",         hex: "#FFD6DB", color_group: "Pinks",    is_popular: 1, sort_order: 310 },
+    { name: "Coral",         hex: "#FF777F", color_group: "Pinks",    is_popular: 0, sort_order: 320 },
+    { name: "Dusty Rose",    hex: "#D3B6B6", color_group: "Pinks",    is_popular: 1, sort_order: 330 },
+    { name: "Rose Gold",     hex: "#B76E79", color_group: "Pinks",    is_popular: 0, sort_order: 340 },
+
+    // ===== Oranges =====
+    { name: "Marigold",      hex: "#D87F03", color_group: "Oranges",  is_popular: 0, sort_order: 400 },
+    { name: "Orange",        hex: "#FF8640", color_group: "Oranges",  is_popular: 0, sort_order: 410 },
+    { name: "Cinnamon",      hex: "#C35D32", color_group: "Oranges",  is_popular: 0, sort_order: 420 },
+    { name: "Terracotta",    hex: "#874329", color_group: "Oranges",  is_popular: 1, sort_order: 430 },
+
+    // ===== Neutrals =====
+    { name: "White",         hex: "#FAFAFA", color_group: "Neutrals", is_popular: 1, sort_order: 500 },
+    { name: "Ivory",         hex: "#F6F5F0", color_group: "Neutrals", is_popular: 1, sort_order: 510 },
+    { name: "Sand",          hex: "#EAE3D6", color_group: "Neutrals", is_popular: 1, sort_order: 520 },
+    { name: "Champagne",     hex: "#F1E9D2", color_group: "Neutrals", is_popular: 1, sort_order: 530 },
+    { name: "Gold",          hex: "#EFCC93", color_group: "Neutrals", is_popular: 0, sort_order: 540 },
+    { name: "Silver",        hex: "#C0C0C0", color_group: "Neutrals", is_popular: 0, sort_order: 550 },
+    { name: "Grey",          hex: "#ADACA9", color_group: "Neutrals", is_popular: 0, sort_order: 560 },
+    { name: "Mocha",         hex: "#3E2A20", color_group: "Neutrals", is_popular: 0, sort_order: 570 },
+
+    // ===== Greens =====
+    { name: "Mint Green",    hex: "#A1D2B4", color_group: "Greens",   is_popular: 0, sort_order: 600 },
+    { name: "Dusty Sage",    hex: "#A3BF9F", color_group: "Greens",   is_popular: 1, sort_order: 610 },
+    { name: "Sage Green",    hex: "#8A9A5B", color_group: "Greens",   is_popular: 1, sort_order: 620 },
+    { name: "Olive Green",   hex: "#556B2F", color_group: "Greens",   is_popular: 0, sort_order: 630 },
+    { name: "Peacock",       hex: "#174D4B", color_group: "Greens",   is_popular: 0, sort_order: 640 },
+    { name: "Forest Green",  hex: "#12392E", color_group: "Greens",   is_popular: 0, sort_order: 650 },
+    { name: "Emerald",       hex: "#134C36", color_group: "Greens",   is_popular: 0, sort_order: 660 },
+
+    // ===== Darks =====
+    { name: "Dark Navy",     hex: "#000046", color_group: "Darks",    is_popular: 0, sort_order: 700 },
+    { name: "Espresso",      hex: "#52443B", color_group: "Darks",    is_popular: 0, sort_order: 710 },
+    { name: "Black",         hex: "#000000", color_group: "Darks",    is_popular: 1, sort_order: 720 },
+
+    // ===== Blues =====
+    { name: "Sky Blue",      hex: "#CEE7F5", color_group: "Blues",    is_popular: 1, sort_order: 800 },
+    { name: "Mist",          hex: "#D6E0EF", color_group: "Blues",    is_popular: 0, sort_order: 810 },
+    { name: "Dusty Blue",    hex: "#8397A6", color_group: "Blues",    is_popular: 1, sort_order: 820 },
+    { name: "Peacock Blue",  hex: "#33A1C9", color_group: "Blues",    is_popular: 0, sort_order: 830 },
+    { name: "Steel Blue",    hex: "#4682B4", color_group: "Blues",    is_popular: 0, sort_order: 840 },
+    { name: "Slate Blue",    hex: "#6A5ACD", color_group: "Blues",    is_popular: 0, sort_order: 850 },
+    { name: "Royal Blue",    hex: "#0F47A9", color_group: "Blues",    is_popular: 0, sort_order: 860 },
+    { name: "Stormy",        hex: "#4F5D75", color_group: "Blues",    is_popular: 0, sort_order: 870 },
+    { name: "Navy Blue",     hex: "#182A55", color_group: "Blues",    is_popular: 1, sort_order: 880 },
+    { name: "Teal",          hex: "#014A5F", color_group: "Blues",    is_popular: 0, sort_order: 890 },
+
+    // ===== Reds =====
+    { name: "Rust",          hex: "#90322A", color_group: "Reds",     is_popular: 1, sort_order: 900 },
+    { name: "Cabernet",      hex: "#722F37", color_group: "Reds",     is_popular: 0, sort_order: 910 },
+    { name: "Burgundy",      hex: "#751E15", color_group: "Reds",     is_popular: 1, sort_order: 920 },
+    { name: "Wine",          hex: "#751E15", color_group: "Reds",     is_popular: 0, sort_order: 930 },
+  ];
+
+  const insert = db.prepare(
+    `INSERT INTO colors (name, hex, color_group, is_popular, sort_order)
+     VALUES (@name, @hex, @color_group, @is_popular, @sort_order)`,
+  );
+
+  let oldCount = 0;
+  let inserted = 0;
+  const tx = db.transaction(() => {
+    const before = db.prepare(`SELECT COUNT(*) AS c FROM colors`).get() as { c: number };
+    oldCount = before.c;
+    // 全删（颜色被 job 用过的话，job 的 params JSON 里有 name+hex 快照不会丢）
+    db.prepare(`DELETE FROM colors`).run();
+    for (const c of NEW_COLORS) {
+      insert.run(c);
+      inserted += 1;
+    }
+    db.prepare(
+      `INSERT OR REPLACE INTO settings (key, value, notes) VALUES (?, 'done', ?)`,
+    ).run(
+      FLAG,
+      `色卡库 v2 替换（删 ${oldCount} 老色，插 ${inserted} 新色：50 种 / 9 色系）`,
+    );
+  });
+  tx();
+  console.log(
+    `[db] migrateReplaceColorsV2: 删 ${oldCount} 老色 → 插 ${inserted} 新色（已标记 ${FLAG}=done）`,
+  );
 }

@@ -12,14 +12,18 @@ type Color = {
   sort_order: number;
 };
 
+// v2 色卡的 9 大色系（跟 lib/db.ts migrateReplaceColorsV2 / api/colors 的 LABEL 一致）
+// 顺序：暖（Yellows→Oranges→Reds）→ 紫粉 → 中性 → 冷（Blues→Greens）→ 深
 const COLOR_GROUP_OPTIONS = [
   { value: "", label: "未分类" },
+  { value: "Yellows", label: "黄色系" },
+  { value: "Oranges", label: "橙色系" },
+  { value: "Pinks", label: "粉色系" },
+  { value: "Reds", label: "红色系" },
+  { value: "Purples", label: "紫色系" },
+  { value: "Neutrals", label: "中性色系" },
   { value: "Blues", label: "蓝色系" },
   { value: "Greens", label: "绿色系" },
-  { value: "Neutrals", label: "中性色系" },
-  { value: "Pinks & Reds", label: "粉/红色系" },
-  { value: "Purples", label: "紫色系" },
-  { value: "Yellow", label: "黄色系" },
   { value: "Darks", label: "深色系" },
 ];
 

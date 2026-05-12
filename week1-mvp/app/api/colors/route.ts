@@ -14,15 +14,20 @@ type ColorRow = {
   created_at: number;
 };
 
-// 7 个核心色系的中文显示名（与 seed-assets/colors.json 保持一致）
+// 9 个核心色系的中文显示名（与 migrateReplaceColorsV2 的 50 色色卡对齐）
+// 兼容历史值："Yellow"（单数 legacy）/ "Pinks & Reds"（v1 合并组）
 const COLOR_GROUP_LABELS: Record<string, string> = {
-  Blues: "蓝色系",
-  Greens: "绿色系",
-  Neutrals: "中性色系",
-  "Pinks & Reds": "粉/红色系",
+  Yellows: "黄色系",
+  Yellow: "黄色系", // legacy
   Purples: "紫色系",
-  Yellow: "黄色系",
+  Pinks: "粉色系",
+  Oranges: "橙色系",
+  Neutrals: "中性色系",
+  Greens: "绿色系",
   Darks: "深色系",
+  Blues: "蓝色系",
+  Reds: "红色系",
+  "Pinks & Reds": "粉/红色系", // legacy v1 合并组
 };
 
 function withGroupLabel<T extends { color_group: string | null }>(row: T) {
