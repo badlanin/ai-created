@@ -309,7 +309,7 @@ function TaskCard({
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={it.result_image_url || ""}
-                alt={it.label}
+                alt={it.label || ""}
                 className="w-full h-full object-cover"
               />
             </a>
