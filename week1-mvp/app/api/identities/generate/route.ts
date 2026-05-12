@@ -21,11 +21,12 @@ import {
 export const runtime = "nodejs";
 export const maxDuration = 600;
 
-// identity 出图默认用 Pro Image 4K（最强档），但允许调用方传 model 覆盖
-// 实测 OpenAI gpt-image-2 一次 30-60 秒慢且 Tier 1 限速；Gemini Pro Image 一次 30-90 秒但成功率稳
+// identity 出图默认用 Pro Image 2K（平衡质量与速度），可被调用方覆盖
+// 4K 太烧时间（OpenAI 经常 60s+），2K 在大多数场景已够清晰
+// 实测 OpenAI gpt-image-2 4K 一次 60-120 秒慢且 Tier 1 限速；Gemini Pro Image 一次 30-90 秒但成功率稳
 const DEFAULT_IDENTITY_MODEL = "gemini-3-pro-image-preview";
 const IDENTITY_ASPECT = "3:4" as const;
-const IDENTITY_SIZE = "4K" as const;
+const DEFAULT_IDENTITY_SIZE: "1K" | "2K" | "4K" = "2K";
 // 温度低一点，prompt 写得这么死，不要让模型自由发挥（OpenAI 路径忽略此字段）
 const IDENTITY_TEMP = 0.3;
 
@@ -89,6 +90,16 @@ export async function POST(req: NextRequest) {
       ? resolveModelId("image_gen", requestedModel)
       : DEFAULT_IDENTITY_MODEL;
 
+    // 画质可选：默认 2K，可选 1K（HD，最快最便宜）/ 2K（推荐）/ 4K（最佳但 OpenAI 路径慢）
+    const requestedSize =
+      typeof body.imageSize === "string" ? body.imageSize : "";
+    const imageSize: "1K" | "2K" | "4K" =
+      requestedSize === "1K" ||
+      requestedSize === "2K" ||
+      requestedSize === "4K"
+        ? requestedSize
+        : DEFAULT_IDENTITY_SIZE;
+
     const prompt = buildIdentityPrompt(params);
 
     // ─── 调出图（dispatcher 按 modelId 前缀分发到 Gemini / OpenAI） ───
@@ -97,7 +108,7 @@ export async function POST(req: NextRequest) {
       prompt,
       modelId,
       aspectRatio: IDENTITY_ASPECT,
-      imageSize: IDENTITY_SIZE,
+      imageSize,
       temperature: IDENTITY_TEMP, // OpenAI 路径忽略
     });
 
@@ -122,7 +133,7 @@ export async function POST(req: NextRequest) {
         ? estimateImageCostUSD({
             modelId,
             aspectRatio: IDENTITY_ASPECT,
-            imageSize: IDENTITY_SIZE,
+            imageSize,
           })
         : undefined;
 
@@ -140,6 +151,7 @@ export async function POST(req: NextRequest) {
       notes: {
         kind: "identity-generator",
         provider: gen.provider,
+        image_size: imageSize,
         params,
         gen_id: genId,
       },
@@ -151,6 +163,7 @@ export async function POST(req: NextRequest) {
       params,
       model: modelId,
       provider: gen.provider,
+      image_size: imageSize,
       mime_type: gen.mimeType,
       tokens: {
         prompt: gen.usage?.inputTokens ?? 0,

@@ -117,36 +117,49 @@ export async function POST(req: NextRequest) {
         ? solidColorNameRaw.trim().slice(0, 20)
         : "浅米色";
 
-    // ─── 额外场景配姿势（可选 ≤2）───
-    const extraPairsRaw = formData.get("extra_scene_pose_pairs");
-    let extraPairs: Array<{ scene_id: number; pose_id: number }> = [];
+    // ─── 额外场景 + 数量（可选 ≤2 张场景，每张 1..5 张图）───
+    // 新版语义：不再绑定固定 pose，姿势由模型按场景物件自由互动生成。
+    // 兼容旧的 extra_scene_pose_pairs 字段（前端切换前的请求），自动转成 count=1
+    const extraCountPairsRaw = formData.get("extra_scene_count_pairs");
+    const extraPosePairsRaw = formData.get("extra_scene_pose_pairs");
+    let extraPairs: Array<{ scene_id: number; count: number }> = [];
     try {
-      const parsed = JSON.parse(String(extraPairsRaw || "[]"));
-      if (Array.isArray(parsed)) {
-        extraPairs = parsed
-          .filter(
-            (p): p is { scene_id: number; pose_id: number } =>
-              typeof p === "object" &&
-              p !== null &&
-              Number.isFinite((p as { scene_id?: unknown }).scene_id) &&
-              Number.isFinite((p as { pose_id?: unknown }).pose_id),
-          )
-          .map((p) => ({
-            scene_id: Number(p.scene_id),
-            pose_id: Number(p.pose_id),
-          }));
+      if (typeof extraCountPairsRaw === "string" && extraCountPairsRaw.trim()) {
+        const parsed = JSON.parse(extraCountPairsRaw);
+        if (Array.isArray(parsed)) {
+          extraPairs = parsed
+            .filter(
+              (p): p is { scene_id: number; count: number } =>
+                typeof p === "object" &&
+                p !== null &&
+                Number.isFinite((p as { scene_id?: unknown }).scene_id) &&
+                Number.isFinite((p as { count?: unknown }).count),
+            )
+            .map((p) => ({
+              scene_id: Number(p.scene_id),
+              count: Math.min(5, Math.max(1, Number(p.count) || 1)),
+            }));
+        }
+      } else if (
+        typeof extraPosePairsRaw === "string" &&
+        extraPosePairsRaw.trim()
+      ) {
+        // 老前端字段兼容：每张场景算 count=1
+        const parsed = JSON.parse(extraPosePairsRaw);
+        if (Array.isArray(parsed)) {
+          const seen = new Set<number>();
+          for (const p of parsed) {
+            const sid = Number(
+              (p as { scene_id?: unknown })?.scene_id,
+            );
+            if (!Number.isFinite(sid) || seen.has(sid)) continue;
+            seen.add(sid);
+            extraPairs.push({ scene_id: sid, count: 1 });
+          }
+        }
       }
     } catch {}
     if (extraPairs.length > 2) extraPairs = extraPairs.slice(0, 2);
-    // 每张场景配的姿势必须来自已选姿势池
-    for (const pair of extraPairs) {
-      if (!poseIds.includes(pair.pose_id)) {
-        return NextResponse.json(
-          { error: "额外场景配的姿势必须先勾选到姿势池里" },
-          { status: 400 },
-        );
-      }
-    }
 
     const materialIdsRaw = formData.get("material_ids");
     let materialIds: number[] = [];
@@ -307,37 +320,39 @@ export async function POST(req: NextRequest) {
     // 款式 / 跟高 / 材质固定。每张图 prompt 里注入同一份 → 大幅提升鞋的一致性
     const shoeSpec = pickShoeSpec(garmentAttrs);
 
-    // ─── 解析 extra_pairs → 含场景 + 姿势完整信息 ───
-    type ExtraPairResolved = {
+    // ─── 解析 extra_pairs → 按 count 展开成多个 item，姿势字段由 prompt 自由填 ───
+    // 每个 scene_id 出 count 张图。姿势是按场景物件自由互动（不绑定 poses 表里的固定姿势）。
+    type ExtraItemResolved = {
       scene_id: number;
       scene_name: string;
       scene_image_path: string;
-      pose_id: number;
-      pose_name: string;
-      pose_text: string;
-      pose_type: string;
+      variant_idx: number; // 这张场景的第几张变体（1..count）
+      variant_total: number; // 这张场景总共 count 张
     };
-    const resolvedExtraPairs: ExtraPairResolved[] = extraPairs.map((pair) => {
-      const s = extraScenes.get(pair.scene_id)!;
-      const pose = poses.find((po) => po.id === pair.pose_id);
-      if (!pose) throw new Error(`pose ${pair.pose_id} 丢失`);
-      return {
-        scene_id: s.id,
-        scene_name: s.name,
-        scene_image_path: s.image_path,
-        pose_id: pose.id,
-        pose_name: pose.name,
-        pose_text: pose.text,
-        pose_type: pose.type,
-      };
-    });
+    const resolvedExtraItems: ExtraItemResolved[] = [];
+    for (const pair of extraPairs) {
+      const s = extraScenes.get(pair.scene_id);
+      if (!s) continue;
+      for (let v = 1; v <= pair.count; v++) {
+        resolvedExtraItems.push({
+          scene_id: s.id,
+          scene_name: s.name,
+          scene_image_path: s.image_path,
+          variant_idx: v,
+          variant_total: pair.count,
+        });
+      }
+    }
 
-    // ─── items = N 张纯色姿势 + M (≤2) 张场景配姿势 ───
+    // ─── items = N 张纯色姿势 + 所有场景变体 ───
     const solidItems = poses.map((p) => ({
       label: `${p.name} · ${solidColorName}`,
     }));
-    const extraItems = resolvedExtraPairs.map((pair) => ({
-      label: `${pair.scene_name} · ${pair.pose_name}`,
+    const extraItems = resolvedExtraItems.map((it) => ({
+      label:
+        it.variant_total > 1
+          ? `${it.scene_name} · 变体 ${it.variant_idx}/${it.variant_total}`
+          : it.scene_name,
     }));
     const allItems = [...solidItems, ...extraItems];
 
@@ -361,8 +376,9 @@ export async function POST(req: NextRequest) {
         solid_pose_count: poses.length,
         solid_color_hex: solidColorHex,
         solid_color_name: solidColorName,
-        // idx >= solid_pose_count 的 item 用 extra_pairs[idx - solid_pose_count]
-        extra_pairs: resolvedExtraPairs,
+        // idx >= solid_pose_count 的 item 用 extra_items[idx - solid_pose_count]
+        // 每个 extra item 是一个"场景 + 变体 idx"，姿势由 prompt 让模型自由生成
+        extra_items: resolvedExtraItems,
         template: {
           id: template.id,
           name: template.name,
@@ -494,7 +510,16 @@ async function batchPhotoItemHandler(
     solid_pose_count: number;
     solid_color_hex: string;
     solid_color_name: string;
-    extra_pairs: Array<{
+    // 新版：每个 extra item 是"场景 + 变体 idx"，没有绑定 pose
+    extra_items?: Array<{
+      scene_id: number;
+      scene_name: string;
+      scene_image_path: string;
+      variant_idx: number;
+      variant_total: number;
+    }>;
+    // 老版兼容：万一从老 job 恢复出来的 params 还带这字段
+    extra_pairs?: Array<{
       scene_id: number;
       scene_name: string;
       scene_image_path: string;
@@ -534,16 +559,39 @@ async function batchPhotoItemHandler(
     framingBlock = buildSolidBgInstruction(p.solid_color_name, p.solid_color_hex);
   } else {
     const extraIdx = idx - p.solid_pose_count;
-    const pair = p.extra_pairs[extraIdx];
-    if (!pair) throw new Error(`extra_pair[${extraIdx}] 丢失`);
-    pose = {
-      id: pair.pose_id,
-      name: pair.pose_name,
-      text: pair.pose_text,
-      type: pair.pose_type,
-    };
-    sceneNameForPrompt = pair.scene_name;
-    sceneImagePath = pair.scene_image_path;
+    // 优先用新版 extra_items；老 job 的 params 走 extra_pairs 兜底
+    const extraItems = p.extra_items;
+    const extraPairs = p.extra_pairs;
+    if (extraItems && extraItems[extraIdx]) {
+      const it = extraItems[extraIdx];
+      sceneNameForPrompt = it.scene_name;
+      sceneImagePath = it.scene_image_path;
+      // 新版自由互动姿势：不绑定 poses 表，让模型按场景物件互动
+      // 多张变体时 prompt 里附"变体 X/N 跟其他变体差异化"hint
+      const variantHint =
+        it.variant_total > 1
+          ? `这是该场景的第 ${it.variant_idx}/${it.variant_total} 张变体——跟同场景的其他变体要明显不同的互动物件、动作或取景角度。`
+          : "";
+      pose = {
+        id: 0,
+        name: it.variant_total > 1 ? `变体 ${it.variant_idx}/${it.variant_total}` : "自由互动",
+        text: `按场景图（IMAGE 4）里的家具 / 门 / 桌子 / 道具自然互动，挑 1-2 个物件发生动作（坐 / 倚 / 撑 / 拿 / 触摸 / 走过）。姿势从场景里"长出来"，不要站正中央 + 双手垂直。${variantHint}`,
+        type: "full",
+      };
+    } else if (extraPairs && extraPairs[extraIdx]) {
+      // 老 job 兜底：保留原 pose
+      const pair = extraPairs[extraIdx];
+      pose = {
+        id: pair.pose_id,
+        name: pair.pose_name,
+        text: pair.pose_text,
+        type: pair.pose_type,
+      };
+      sceneNameForPrompt = pair.scene_name;
+      sceneImagePath = pair.scene_image_path;
+    } else {
+      throw new Error(`extra item[${extraIdx}] 丢失`);
+    }
     framingBlock = FRAMING_TIGHT_SINGLE;
   }
 

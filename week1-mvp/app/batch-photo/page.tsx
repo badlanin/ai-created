@@ -242,13 +242,15 @@ function BatchPhotoTab({
 
   // ─── 选择 ───
   const [identityId, setIdentityId] = useState<number | null>(null);
-  // Step 4 改造（N 纯色姿势 + 1-2 张场景配姿势的混合输出模式）：
+  // Step 4 改造（N 纯色姿势 + 1-2 张场景的混合输出模式）：
   // - solidColorHex/Name：所有 pose 的纯色背景（必填，默认浅米）
-  // - extraScenePairs：额外场景配姿势（可选 ≤ 2 张）。pose_id 必须来自已选姿势池。
+  // - extraScenePairs：额外场景 + 数量（≤ 2 张场景，每张出 count 张图）
+  //   旧版本：每张场景必须绑定一个固定 pose；新版本改成"选场景 + 选数量"，
+  //   姿势完全交给模型按场景物件自由互动生成（跟 v3 prompt 配合）
   const [solidColorHex, setSolidColorHex] = useState<string>("#F5F1EA");
   const [solidColorName, setSolidColorName] = useState<string>("浅米色");
   const [extraScenePairs, setExtraScenePairs] = useState<
-    Array<{ scene_id: number; pose_id: number | null }>
+    Array<{ scene_id: number; count: number }>
   >([]);
   const [templateId, setTemplateId] = useState<number | null>(null);
   const [photographyId, setPhotographyId] = useState<number | null>(null);
@@ -412,30 +414,32 @@ function BatchPhotoTab({
     selectedPoseIds,
   ]);
 
-  /* ─── extraScenePairs 自洁：当前选中的 pose 集合外的 pair 自动剔除 ─── */
+  /* ─── extraScenePairs 自洁：只限制 ≤ 2 张场景 + count 在 1..5 ─── */
+  // 旧版本依赖 selectedPoseIds 自洁，现在跟姿势池解耦了
   useEffect(() => {
     setExtraScenePairs((prev) => {
       const next = prev
-        .map((p) =>
-          p.pose_id !== null && !selectedPoseIds.has(p.pose_id)
-            ? { ...p, pose_id: null }
-            : p,
-        )
+        .map((p) => ({
+          scene_id: p.scene_id,
+          count: Math.min(5, Math.max(1, p.count || 1)),
+        }))
         .slice(0, 2);
-      // 浅比较：完全没变就不更新
       const same =
         next.length === prev.length &&
         next.every(
           (n, i) =>
-            n.scene_id === prev[i].scene_id && n.pose_id === prev[i].pose_id,
+            n.scene_id === prev[i].scene_id && n.count === prev[i].count,
         );
       return same ? prev : next;
     });
-  }, [selectedPoseIds]);
+  }, []);
 
-  /* ─── 估价（N 纯色 + M 场景配姿势）─── */
-  // 仅统计 pose_id 已绑定的 extra pair（避免未配置完成时误算）
-  const validExtraCount = extraScenePairs.filter((p) => p.pose_id !== null).length;
+  /* ─── 估价（N 纯色 + M 场景图）─── */
+  // 场景部分图数 = 所有 extra pair 的 count 之和
+  const validExtraCount = extraScenePairs.reduce(
+    (sum, p) => sum + (p.count || 0),
+    0,
+  );
   const totalImageCount = selectedPoseIds.size + validExtraCount;
   useEffect(() => {
     if (totalImageCount === 0 || !modelId) {
@@ -713,9 +717,9 @@ function BatchPhotoTab({
     });
   }
 
-  // 校验：每张额外场景必须配 pose（要么删掉 pair、要么挑一个 pose）
+  // 校验：每张额外场景的 count 必须 ≥ 1（默认 1，理论上一直成立）
   const allExtraPairsConfigured = extraScenePairs.every(
-    (p) => p.pose_id !== null,
+    (p) => p.count >= 1 && p.count <= 5,
   );
   const canSubmit =
     !submitting &&
@@ -760,11 +764,12 @@ function BatchPhotoTab({
       fd.append("template_id", String(templateId));
       fd.append("solid_color_hex", solidColorHex);
       fd.append("solid_color_name", solidColorName);
-      // 只发送 pose_id 已配上的 pair
-      const validPairs = extraScenePairs.filter(
-        (p) => p.pose_id !== null,
-      ) as Array<{ scene_id: number; pose_id: number }>;
-      fd.append("extra_scene_pose_pairs", JSON.stringify(validPairs));
+      // 场景 + 数量（新版字段名，跟旧 pose 绑定模式区分）
+      // 后端按 count 把每张场景展开成 N 个 item，每个 item 走"自由互动"姿势
+      const validPairs = extraScenePairs
+        .filter((p) => p.count > 0)
+        .map((p) => ({ scene_id: p.scene_id, count: p.count }));
+      fd.append("extra_scene_count_pairs", JSON.stringify(validPairs));
       if (photographyId) fd.append("photography_id", String(photographyId));
       if (realismId) fd.append("realism_id", String(realismId));
       if (expressionId) fd.append("expression_id", String(expressionId));
@@ -1253,7 +1258,7 @@ function BatchPhotoTab({
                   <div className="text-[12px] text-fg-secondary mb-2 font-medium">
                     🏞️ 额外场景图（可选 ≤ 2 张）
                     <span className="ml-2 text-[11px] text-fg-muted font-normal">
-                      每张场景额外 +1 张，需配 1 个已选姿势
+                      选场景 + 数量；姿势由模型按场景物件自然生成
                     </span>
                   </div>
 
@@ -1262,9 +1267,6 @@ function BatchPhotoTab({
                       {extraScenePairs.map((pair, idx) => {
                         const scene = scenes.find(
                           (s) => s.id === pair.scene_id,
-                        );
-                        const selectedPosesArr = poses.filter((po) =>
-                          selectedPoseIds.has(po.id),
                         );
                         return (
                           <div
@@ -1285,34 +1287,38 @@ function BatchPhotoTab({
                               <div className="text-sm font-medium text-fg-primary truncate">
                                 {scene?.name || "（场景已删除）"}
                               </div>
-                              <select
-                                value={pair.pose_id ?? ""}
-                                onChange={(e) => {
-                                  const v = e.target.value;
-                                  setExtraScenePairs((prev) =>
-                                    prev.map((p, i) =>
-                                      i === idx
-                                        ? {
-                                            ...p,
-                                            pose_id: v ? Number(v) : null,
-                                          }
-                                        : p,
-                                    ),
-                                  );
-                                }}
-                                className="input select text-xs h-7 mt-1 max-w-full"
-                              >
-                                <option value="">
-                                  {selectedPosesArr.length === 0
-                                    ? "（请先去 ⑤ 勾选姿势）"
-                                    : "-- 选一个姿势 --"}
-                                </option>
-                                {selectedPosesArr.map((po) => (
-                                  <option key={po.id} value={po.id}>
-                                    {po.name}
-                                  </option>
-                                ))}
-                              </select>
+                              <div className="mt-1 flex items-center gap-1.5">
+                                <span className="text-[11px] text-fg-tertiary">
+                                  出图数量
+                                </span>
+                                <div className="flex gap-0.5">
+                                  {[1, 2, 3, 4, 5].map((n) => (
+                                    <button
+                                      key={n}
+                                      type="button"
+                                      onClick={() =>
+                                        setExtraScenePairs((prev) =>
+                                          prev.map((p, i) =>
+                                            i === idx
+                                              ? { ...p, count: n }
+                                              : p,
+                                          ),
+                                        )
+                                      }
+                                      className={
+                                        pair.count === n
+                                          ? "w-6 h-6 rounded text-[11px] bg-brand-500 text-white font-medium"
+                                          : "w-6 h-6 rounded text-[11px] bg-bg-base text-fg-secondary border border-border-subtle hover:bg-brand-50 hover:text-brand-600"
+                                      }
+                                    >
+                                      {n}
+                                    </button>
+                                  ))}
+                                </div>
+                                <span className="text-[10px] text-fg-muted ml-1">
+                                  每张姿势由模型按场景互动生成
+                                </span>
+                              </div>
                             </div>
                             <button
                               onClick={() =>
@@ -1370,7 +1376,7 @@ function BatchPhotoTab({
                                         if (extraScenePairs.length >= 2) return;
                                         setExtraScenePairs((prev) => [
                                           ...prev,
-                                          { scene_id: s.id, pose_id: null },
+                                          { scene_id: s.id, count: 1 },
                                         ]);
                                       }}
                                       badge={

@@ -118,6 +118,8 @@ export default function IdentityGeneratorPage() {
   const [modelId, setModelId] = useState<string>(
     "gemini-3-pro-image-preview",
   );
+  // 画质：1K (HD) / 2K (推荐) / 4K (最佳但慢)
+  const [imageSize, setImageSize] = useState<"1K" | "2K" | "4K">("2K");
 
   // 表单
   const [params, setParams] = useState<IdentityParams>({
@@ -182,7 +184,7 @@ export default function IdentityGeneratorPage() {
       const res = await fetch("/api/identities/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...params, model: modelId }),
+        body: JSON.stringify({ ...params, model: modelId, imageSize }),
       });
       if (!res.ok) {
         const body = (await res.json()) as { error?: string };
@@ -306,6 +308,7 @@ export default function IdentityGeneratorPage() {
       fd.append("hairStyle", params.hairStyle);
       fd.append("n", String(variantCount));
       fd.append("model", modelId);
+      fd.append("imageSize", imageSize);
 
       const res = await fetch("/api/identities/generate-variants", {
         method: "POST",
@@ -367,11 +370,11 @@ export default function IdentityGeneratorPage() {
           形象生成器
         </h1>
         <p className="mt-1 text-sm text-fg-tertiary">
-          按 5 个参数生成高质量 identity 参考图（Pro 模型 · 4K · 比例严格 ·
+          按 5 个参数生成高质量 identity 参考图（默认 Pro 2K · 3:4 ·
           毛孔级真实感）。预览满意后保存到形象库，立刻在批量摄影里能选。
         </p>
         <p className="mt-1 text-[11px] text-fg-muted">
-          单张成本约 ¥1.7（Pro + 4K）；不满意可重生成多次再选最好的保存。
+          先用 1K/2K 找对参数方向，再切 4K 出最终版；不满意可重生成多次再选最好的保存。
         </p>
       </header>
 
@@ -491,6 +494,52 @@ export default function IdentityGeneratorPage() {
                     · OpenAI Tier 1 限 5 IPM，慢且可能 429
                   </span>
                 )}
+              </div>
+            </Field>
+
+            {/* 画质（影响出图速度 + 成本） */}
+            <Field label="画质">
+              <div className="flex gap-1.5">
+                {(
+                  [
+                    {
+                      v: "1K" as const,
+                      label: "1K (HD)",
+                      desc: "最快 · ~10-20 秒",
+                    },
+                    {
+                      v: "2K" as const,
+                      label: "2K",
+                      desc: "推荐 · ~30-60 秒",
+                    },
+                    {
+                      v: "4K" as const,
+                      label: "4K",
+                      desc: "最佳但慢 · 60-120 秒，OpenAI 易超时",
+                    },
+                  ]
+                ).map((opt) => (
+                  <button
+                    key={opt.v}
+                    type="button"
+                    onClick={() => setImageSize(opt.v)}
+                    title={opt.desc}
+                    className={
+                      imageSize === opt.v
+                        ? "flex-1 py-1.5 rounded text-sm bg-brand-500 text-white font-medium"
+                        : "flex-1 py-1.5 rounded text-sm bg-bg-base text-fg-secondary border border-border-subtle hover:bg-brand-50 hover:text-brand-600"
+                    }
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-1 text-[10px] text-fg-muted">
+                {imageSize === "1K" &&
+                  "最快档 — 适合先试参数找方向，不满意再升画质"}
+                {imageSize === "2K" && "推荐 — 速度与画质平衡，多数场景够用"}
+                {imageSize === "4K" &&
+                  "最佳画质，但 OpenAI 路径耗时长且 Tier 1 易 429。"}
               </div>
             </Field>
 

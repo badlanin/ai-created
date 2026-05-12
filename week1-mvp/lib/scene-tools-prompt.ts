@@ -1,51 +1,83 @@
 /**
- * Scene Tools — Shared FRAMING block
+ * Scene Tools — Shared FRAMING block（v3 主动互动版）
  *
- * 历史上这个文件曾包含 5 个 scene-tools 子工具的 prompt builder
- * （background-swap / poster / social-snap / replicate / text-shoot），
- * 在收敛重构后这 5 个工具被合并成一个统一的"服饰场景图"，
- * 那 5 个 builder 已删除（见 lib/scene-prompt.ts 是新工具的 builder）。
+ * 历史背景：
+ *   - v1：强制 anchor 倚靠 + 85mm + f/2.0 + anti-panorama，硬约束太多，
+ *         开放场景翻车
+ *   - v2（2026-05）：删掉所有硬约束，"让场景决定"。结果模型默认"站中间
+ *         + 不互动"的保守姿势 —— 等于浪费了场景里的家具/门/桌子/道具
+ *   - v3（2026-05）：硬约束依然不要，但**主动指令模型读场景里的物件并
+ *         发生互动**。互动是必须，不是选项。
  *
- * 此文件唯一保留的是 FRAMING_TIGHT_SINGLE —— batch-photo 的 worker
- * handler 还在用它给场景 item 注入"紧凑取景 + 浅景深"指令。
+ * 设计原则：
+ *   1. 让模型先做一步"场景物件清单"的思考（读图，识别椅子/门/桌/灯
+ *      /楼梯/窗框/栏杆/植物/扶手 等可交互对象）
+ *   2. 从清单里选 1-2 个发生自然互动：坐 / 倚 / 撑 / 拿 / 触摸
+ *   3. 姿势是"从场景里长出来"的，不是"放到场景里"的
+ *   4. 镜头 / 景深 / 取景仍由模型按场景自由判断
+ *
+ * 注意：变量名 FRAMING_TIGHT_SINGLE 历史遗留，语义已经从"紧凑取景"
+ *      变成"自然互动"。为了避免到处改 import 不改名。
  */
 
-/** 单人紧凑构图（85mm 长焦感 + 浅景深）。export 给 batch-photo / scene-tools 复用。 */
 export const FRAMING_TIGHT_SINGLE = `══════════════════════════════════════════════════════════
-🎯 FRAMING & SCALE — the scene plate is ATMOSPHERE REFERENCE, not a canvas to fill
+🎬 SCENE INTERACTION — pose grows from what's in the scene
 ══════════════════════════════════════════════════════════
 
-CRITICAL: the scene plate (IMAGE 2) is a reference for atmosphere, light,
-materials, palette — NOT a canvas you must reproduce edge-to-edge.
+STEP 1 — Read IMAGE 2 carefully and mentally list every interactive
+object visible in the scene. This includes (but is not limited to):
+  • Furniture: chairs, sofas, benches, ottomans, beds, stools, daybeds
+  • Surfaces: tables, desks, countertops, windowsills, mantels, consoles
+  • Architecture: door frames, archways, columns, railings, banisters,
+    window frames, wall corners, stair edges, alcoves
+  • Props on surfaces: cups, vases, books, fruit, lamps, mirrors, flowers
+  • Plants / curtains / textiles that can be touched or held
 
-▸ MENTALLY CROP a tight local region of the scene around the subject.
-  Place her near ONE tangible anchor object she can lean on / stand
-  beside (a column base, a railing section, a window ledge, a planter,
-  a stair edge, a wall corner, a doorway frame). Show only that local
-  fragment in the output — NOT the whole corridor, NOT the whole
-  building, NOT the whole garden.
+STEP 2 — Choose ONE or TWO of these objects and pose the subject in
+NATURAL ACTIVE INTERACTION with them. Examples (pick what fits the
+specific scene in IMAGE 2):
+  • Sitting on the chair / sofa / stairs, with the dress draped naturally
+  • Leaning a shoulder against the door frame / wall / archway
+  • Standing with one hand resting on the table / mantel / railing
+  • Holding a cup / book / flower from the surface, mid-motion
+  • Crossing through a doorway, one hand on the frame
+  • Sitting on stairs, looking off to the side
+  • Standing close to a window, one hand brushing the curtain
 
-▸ BODY-TO-OBJECT SCALE — body height MUST read as a real human relative
-  to visible reference objects:
-    • a Doric column is ~80cm wide  → torso similar width
-    • a baluster railing is ~90cm tall → at hip-to-waist height
-    • a window ledge is ~95cm high → at hip height
-    • a doorway is ~210cm tall → head reaches ~80% of the doorway
-  Avoid the "tiny doll in giant architecture" mistake.
+The pose must read as a candid moment IN that location — not a model
+parachuted into the scene.
 
-▸ LENS — 85mm portrait telephoto feel. NOT wide-angle. NO 24mm
-  architectural-vista distortion. Compressed front-to-back perspective,
-  intimate not panoramic.
+❌ AVOID:
+  • Standing dead-center, arms at sides, no contact with anything
+  • "Pasted in" feel — body floats, doesn't relate to scene geometry
+  • Same generic standing pose across different scenes (each scene
+    has different furniture / props → different natural interactions)
+  • Interacting with objects that are NOT visible in IMAGE 2
 
-▸ DEPTH OF FIELD — shallow (f/2.0–f/2.8 feel). Subject + immediate
-  anchor stay tack-sharp. Background recedes into smooth creamy bokeh
-  (color blocks and soft shapes), NOT crisp architectural detail.
+══════════════════════════════════════════════════════════
+🎬 CAMERA & FRAMING — let the scene decide
+══════════════════════════════════════════════════════════
 
-▸ ALLOW ARCHITECTURE TO EXTEND OUT OF FRAME — one column may go off
-  the top edge, one wall may go off the side. Out-of-frame signals
-  intimacy. A clean fully-bounded establishing shot is WRONG here.
+Choose the pose, framing, camera distance, lens feel, and depth of
+field that fit THIS specific scene + interaction naturally. A real
+on-location photographer would adapt per scene. Don't force a single
+"correct" composition.
 
-❌ DO NOT recreate the entire scene plate. NO panorama. NO full corridor
-   view. NO sweeping vista. NO full-building reveal. NO 6-7-people-wide
-   ground area. The plate is a mood board, not a blueprint.
+══════════════════════════════════════════════════════════
+🔒 HARD CONSTRAINTS
+══════════════════════════════════════════════════════════
+
+- Body proportions must read as a real human at correct scale relative
+  to the furniture / architecture in IMAGE 2 (a chair is ~85cm tall,
+  a doorway ~210cm, a table ~75cm high — body scales must agree).
+- Lighting on the subject must match the scene's color temperature,
+  direction, and intensity. No "studio-lit subject pasted into dim
+  scene" effect.
+- The garment from IMAGE 1 is fully preserved (color, fabric, cut,
+  details) — never redesign the dress to fit the scene's color palette.
+- Subject's face is the same person from IMAGE 1.
+- Contact points must be physically believable: hand on table = hand
+  actually resting on the surface with realistic touch; sitting on
+  chair = body weight visibly settled into the cushion with natural
+  fabric folds where the dress meets the seat.
 `;
