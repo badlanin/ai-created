@@ -416,6 +416,10 @@ function migrate(db: Database.Database) {
   migrateInsertNewMaterials(db);
   // 老库色卡 v2 全量替换（用户 XLS 提供的 50 个新色，flag v2）
   migrateReplaceColorsV2(db);
+  // 老库通用模特 v2 重置（删旧 universal 除"通用 12"外 + 加 11 张新形象）
+  migrateResetUniversalIdentitiesV2(db);
+  // 老库新主图场景 v3 补种（28 张 OpenAI Playground 生成的纯场景图）
+  migrateInsertNewScenesV3(db);
 }
 
 /**
@@ -2691,4 +2695,187 @@ function migrateReplaceColorsV2(db: Database.Database) {
   console.log(
     `[db] migrateReplaceColorsV2: 删 ${oldCount} 老色 → 插 ${inserted} 新色（已标记 ${FLAG}=done）`,
   );
+}
+
+/**
+ * 老库通用模特 v2 重置（2026-05 用户提供新 11 张原型变体形象）
+ *
+ * 行为：
+ *   1. 删除所有 category='universal' 的 identity，但保留 name='通用 12' 的那条
+ *   2. 把 seed-assets/identities/universal/universal_new_01..11.* 拷到 DATA_DIR 并入库
+ *      name 用 "通用新 01".."通用新 11"
+ *
+ * 安全性：historical batch-photo job 在创建时 snapshot 了 {id, name, image_path}
+ * 进 params JSON，删 models 表的行不破坏历史 job 显示（图片文件还在 DATA_DIR）。
+ *
+ * FLAG=migrated_identities_universal_v2 一次性。
+ */
+function migrateResetUniversalIdentitiesV2(db: Database.Database) {
+  const FLAG = "migrated_identities_universal_v2";
+  const flag = db
+    .prepare(`SELECT value FROM settings WHERE key = ?`)
+    .get(FLAG) as { value: string } | undefined;
+  if (flag?.value === "done") return;
+
+  let copySeedAsset: typeof import("./seed-assets").copySeedAsset;
+  try {
+    const seedAssets = require("./seed-assets") as typeof import("./seed-assets");
+    if (!seedAssets.hasSeedAssets()) {
+      console.log("[db] seed-assets/ not found, 跳过 migrateResetUniversalIdentitiesV2");
+      return;
+    }
+    copySeedAsset = seedAssets.copySeedAsset;
+  } catch (err) {
+    console.warn("[db] migrateResetUniversalIdentitiesV2 加载 seed-assets 失败:", err);
+    return;
+  }
+
+  // 11 张新模特图（拷贝时第一张 sabrine 是 .jpg，其他 10 张是 .png）
+  type NewIdSeed = { file: string; name: string; sort_order: number };
+  const NEW_UNIVERSAL: NewIdSeed[] = [
+    { file: "identities/universal/universal_new_01.jpg", name: "通用新 01", sort_order: 1101 },
+    { file: "identities/universal/universal_new_02.png", name: "通用新 02", sort_order: 1102 },
+    { file: "identities/universal/universal_new_03.png", name: "通用新 03", sort_order: 1103 },
+    { file: "identities/universal/universal_new_04.png", name: "通用新 04", sort_order: 1104 },
+    { file: "identities/universal/universal_new_05.png", name: "通用新 05", sort_order: 1105 },
+    { file: "identities/universal/universal_new_06.png", name: "通用新 06", sort_order: 1106 },
+    { file: "identities/universal/universal_new_07.png", name: "通用新 07", sort_order: 1107 },
+    { file: "identities/universal/universal_new_08.png", name: "通用新 08", sort_order: 1108 },
+    { file: "identities/universal/universal_new_09.png", name: "通用新 09", sort_order: 1109 },
+    { file: "identities/universal/universal_new_10.png", name: "通用新 10", sort_order: 1110 },
+    { file: "identities/universal/universal_new_11.png", name: "通用新 11", sort_order: 1111 },
+  ];
+
+  let deleted = 0;
+  let inserted = 0;
+  const insert = db.prepare(
+    `INSERT INTO models (kind, name, image_path, tags, category, sort_order)
+     VALUES ('identity', @name, @image_path, '通用', 'universal', @sort_order)`,
+  );
+
+  const tx = db.transaction(() => {
+    // 删除 universal 除"通用 12"外的所有 identity
+    const res = db
+      .prepare(
+        `DELETE FROM models
+         WHERE kind = 'identity' AND category = 'universal' AND name <> '通用 12'`,
+      )
+      .run();
+    deleted = res.changes;
+
+    // 拷贝并入库 11 张新图
+    for (const seed of NEW_UNIVERSAL) {
+      try {
+        const { relPath } = copySeedAsset(seed.file, "identities");
+        insert.run({
+          name: seed.name,
+          image_path: relPath,
+          sort_order: seed.sort_order,
+        });
+        inserted += 1;
+      } catch (err) {
+        console.warn(
+          `[db] migrateResetUniversalIdentitiesV2 拷贝失败 (${seed.file}):`,
+          err,
+        );
+      }
+    }
+
+    db.prepare(
+      `INSERT OR REPLACE INTO settings (key, value, notes) VALUES (?, 'done', ?)`,
+    ).run(
+      FLAG,
+      `通用模特 v2 重置（删 ${deleted} 旧 universal，保留"通用 12"，插 ${inserted} 张新形象）`,
+    );
+  });
+  tx();
+  console.log(
+    `[db] migrateResetUniversalIdentitiesV2: 删 ${deleted} → 插 ${inserted}（已标记 ${FLAG}=done）`,
+  );
+}
+
+/**
+ * 老库新主图场景 v3 补种（2026-05 用户提供 28 张 OpenAI Playground 生成的纯场景图）
+ *
+ * 这一批和 v2 不同：v2 是大场景（廊柱、外景全景），用户已经清掉了。
+ * v3 全是"小场景 / 易摆姿势"的纯场景图（无人、有家具/门/桌/楼梯/栏杆等可互动物件）。
+ * 跟新的场景 prompt v3"读场景物件自由互动"配合最好。
+ *
+ * 按 name 幂等：之前如果已经手动入过同名场景，跳过不重复插。
+ * 不删除老库的现有场景（保留用户已挑过的，让用户在 admin 里自己清理无用的）。
+ *
+ * FLAG=migrated_scenes_v3 一次性。
+ */
+function migrateInsertNewScenesV3(db: Database.Database) {
+  const FLAG = "migrated_scenes_v3";
+  const flag = db
+    .prepare(`SELECT value FROM settings WHERE key = ?`)
+    .get(FLAG) as { value: string } | undefined;
+  if (flag?.value === "done") return;
+
+  let copySeedAsset: typeof import("./seed-assets").copySeedAsset;
+  try {
+    const seedAssets = require("./seed-assets") as typeof import("./seed-assets");
+    if (!seedAssets.hasSeedAssets()) {
+      console.log("[db] seed-assets/ not found, 跳过 migrateInsertNewScenesV3");
+      return;
+    }
+    copySeedAsset = seedAssets.copySeedAsset;
+  } catch (err) {
+    console.warn("[db] migrateInsertNewScenesV3 加载 seed-assets 失败:", err);
+    return;
+  }
+
+  // 28 张：第 1 张是 .jpg（Scene (10).jpg 改名而来），其他 27 张是 .png
+  // category 全标 null（未分类），用户后续在 admin 里改
+  type NewSceneSeed = { file: string; name: string; sort_order: number };
+  const NEW_SCENES: NewSceneSeed[] = Array.from({ length: 28 }, (_, i) => {
+    const idx = i + 1;
+    const ext = idx === 1 ? "jpg" : "png";
+    return {
+      file: `scenes/single/scene_new_${String(idx).padStart(2, "0")}.${ext}`,
+      name: `新场景 ${String(idx).padStart(2, "0")}`,
+      sort_order: 3000 + idx,
+    };
+  });
+
+  let inserted = 0;
+  const insert = db.prepare(
+    `INSERT INTO scenes (name, image_path, tags, category, usage, sort_order)
+     VALUES (@name, @image_path, NULL, NULL, 'single', @sort_order)`,
+  );
+  const exists = db.prepare(`SELECT id FROM scenes WHERE name = ?`);
+
+  const tx = db.transaction(() => {
+    for (const seed of NEW_SCENES) {
+      if (exists.get(seed.name)) continue;
+      try {
+        const { relPath } = copySeedAsset(seed.file, "scenes");
+        insert.run({
+          name: seed.name,
+          image_path: relPath,
+          sort_order: seed.sort_order,
+        });
+        inserted += 1;
+      } catch (err) {
+        console.warn(
+          `[db] migrateInsertNewScenesV3 拷贝失败 (${seed.file}):`,
+          err,
+        );
+      }
+    }
+
+    db.prepare(
+      `INSERT OR REPLACE INTO settings (key, value, notes) VALUES (?, 'done', ?)`,
+    ).run(
+      FLAG,
+      `新主图场景 v3 补种（OpenAI Playground 生成的 28 张纯场景图 / 小场景 / 易摆姿势）`,
+    );
+  });
+  tx();
+  if (inserted > 0) {
+    console.log(
+      `[db] migrateInsertNewScenesV3: 补种 ${inserted} 张新场景（已标记 ${FLAG}=done）`,
+    );
+  }
 }
