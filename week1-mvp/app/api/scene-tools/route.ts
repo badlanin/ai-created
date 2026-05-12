@@ -135,7 +135,10 @@ export async function POST(req: NextRequest) {
     type ImageSceneMeta = { id: number; name: string; image_path: string };
     const imageScenes: Map<number, ImageSceneMeta> = new Map();
     const imageSceneIds = scenes
-      .filter((s): s is { type: "image"; scene_id: number } => s.type === "image")
+      .filter(
+        (s): s is { type: "image"; scene_id: number; count: number } =>
+          s.type === "image",
+      )
       .map((s) => s.scene_id);
     if (imageSceneIds.length > 0) {
       const ph = imageSceneIds.map(() => "?").join(",");
