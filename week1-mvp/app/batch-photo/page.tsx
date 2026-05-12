@@ -26,7 +26,10 @@ import {
   useTaskStore,
   type TabsApi,
 } from "@/lib/stores/task-store";
-import { TEXT_SCENE_PRESETS } from "@/lib/text-scene-presets";
+import {
+  TEXT_SCENE_PRESETS as STATIC_PRESETS,
+  type TextScenePreset,
+} from "@/lib/text-scene-presets";
 
 /* ─────────── 类型 ─────────── */
 type AiModel = {
@@ -258,6 +261,10 @@ function BatchPhotoTab({
   const [extraTextScenes, setExtraTextScenes] = useState<
     Array<{ text: string; count: number }>
   >([]);
+  // 文字场景预设（从 /api/text-scenes 拉，admin 可编辑）
+  const [textScenePresets, setTextScenePresets] = useState<TextScenePreset[]>(
+    STATIC_PRESETS,
+  );
   const [templateId, setTemplateId] = useState<number | null>(null);
   const [photographyId, setPhotographyId] = useState<number | null>(null);
   const [realismId, setRealismId] = useState<number | null>(null);
@@ -284,6 +291,15 @@ function BatchPhotoTab({
   useEffect(() => {
     const load = async (url: string) =>
       fetch(url).then((r) => (r.ok ? r.json() : []));
+
+    // 拉文字场景预设（fire-and-forget，拉不到就用 STATIC_PRESETS）
+    load("/api/text-scenes")
+      .then((data) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setTextScenePresets(data as TextScenePreset[]);
+        }
+      })
+      .catch(() => {});
 
     Promise.all([
       load("/api/identities"),
@@ -1536,63 +1552,81 @@ function BatchPhotoTab({
                   )}
 
                   {extraTextScenes.length < 2 && (
-                    <div className="flex flex-wrap gap-1.5 items-center">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setExtraTextScenes((prev) =>
-                            prev.length < 2
-                              ? [...prev, { text: "", count: 1 }]
-                              : prev,
-                          )
-                        }
-                        className="text-[11px] px-2 py-1 rounded bg-bg-base text-fg-secondary border border-border-subtle hover:bg-brand-50 hover:text-brand-600 inline-flex items-center gap-1"
-                      >
-                        ＋ 加文字场景（{extraTextScenes.length}/2）
-                      </button>
-                      <span className="text-[10px] text-fg-muted">
-                        或从预设里选 →
-                      </span>
-                      <select
-                        value=""
-                        onChange={(e) => {
-                          const preset = TEXT_SCENE_PRESETS.find(
-                            (p) => p.name === e.target.value,
-                          );
-                          if (!preset) return;
-                          if (extraTextScenes.length >= 2) return;
-                          setExtraTextScenes((prev) => [
-                            ...prev,
-                            { text: preset.text, count: 1 },
-                          ]);
-                          e.target.value = "";
-                        }}
-                        className="input select text-[11px] h-7 max-w-[200px]"
-                      >
-                        <option value="">— 选预设 —</option>
+                    <>
+                      <div className="flex flex-wrap gap-1.5 items-center mb-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExtraTextScenes((prev) =>
+                              prev.length < 2
+                                ? [...prev, { text: "", count: 1 }]
+                                : prev,
+                            )
+                          }
+                          className="text-[11px] px-2 py-1 rounded bg-bg-base text-fg-secondary border border-border-subtle hover:bg-brand-50 hover:text-brand-600 inline-flex items-center gap-1"
+                        >
+                          ＋ 加空文字场景（{extraTextScenes.length}/2）
+                        </button>
+                        <span className="text-[10px] text-fg-muted">
+                          或从预设挑（点缩略图直接追加）：
+                        </span>
+                      </div>
+                      {/* 预设网格 — 按 group 折叠 + 缩略图 + 名字 */}
+                      <div className="space-y-1.5 max-h-[420px] overflow-y-auto pr-1">
                         {(() => {
-                          const groups = new Map<
-                            string,
-                            typeof TEXT_SCENE_PRESETS
-                          >();
-                          for (const p of TEXT_SCENE_PRESETS) {
+                          const groups = new Map<string, TextScenePreset[]>();
+                          for (const p of textScenePresets) {
                             if (!groups.has(p.group)) groups.set(p.group, []);
                             groups.get(p.group)!.push(p);
                           }
                           return Array.from(groups.entries()).map(
                             ([g, list]) => (
-                              <optgroup key={g} label={g}>
-                                {list.map((p) => (
-                                  <option key={p.name} value={p.name}>
-                                    {p.name}
-                                  </option>
-                                ))}
-                              </optgroup>
+                              <div key={g}>
+                                <div className="text-[10px] text-fg-muted mb-1">
+                                  {g}
+                                </div>
+                                <div className="grid grid-cols-4 gap-1">
+                                  {list.map((p) => (
+                                    <button
+                                      key={p.name}
+                                      type="button"
+                                      onClick={() => {
+                                        if (extraTextScenes.length >= 2) return;
+                                        setExtraTextScenes((prev) => [
+                                          ...prev,
+                                          { text: p.text, count: 1 },
+                                        ]);
+                                      }}
+                                      className="group relative aspect-[3/4] rounded overflow-hidden border border-border-subtle hover:border-brand-400 hover:shadow-md transition-all bg-bg-tertiary"
+                                      title={p.text.slice(0, 100)}
+                                    >
+                                      {p.thumb ? (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img
+                                          src={p.thumb}
+                                          alt={p.name}
+                                          className="w-full h-full object-cover"
+                                          loading="lazy"
+                                        />
+                                      ) : (
+                                        <div className="w-full h-full flex items-center justify-center text-[9px] text-fg-muted">
+                                          无图
+                                        </div>
+                                      )}
+                                      <div className="absolute inset-x-0 bottom-0 px-1 py-0.5 bg-gradient-to-t from-black/80 to-transparent">
+                                        <div className="text-[9px] font-medium text-white truncate leading-tight">
+                                          {p.name}
+                                        </div>
+                                      </div>
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
                             ),
                           );
                         })()}
-                      </select>
-                    </div>
+                      </div>
+                    </>
                   )}
                 </div>
               </div>

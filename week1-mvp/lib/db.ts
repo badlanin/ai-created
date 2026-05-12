@@ -110,11 +110,26 @@ function migrate(db: Database.Database) {
       created_at    INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
+    -- 文字场景预设（lib/text-scene-presets.ts 的 28 条会通过 migration 种进来；
+    -- admin 也能通过 /admin/scenes 的"新增文字场景" tab 上传参考图 + AI 解析新增）
+    CREATE TABLE IF NOT EXISTS text_scenes (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT NOT NULL UNIQUE,            -- 显示名（不可重）
+      group_name  TEXT,                            -- 调性分组（法式门厅 / 古典宫廷 等）
+      text_prompt TEXT NOT NULL,                   -- 完整场景描述（喂给模型）
+      thumb_path  TEXT,                            -- 缩略图相对路径，UI 选择用，不参与 prompt
+      notes       TEXT,                            -- 备注
+      sort_order  INTEGER NOT NULL DEFAULT 0,
+      created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
+      created_by  INTEGER REFERENCES users(id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_generations_user ON generations(user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_models_kind ON models(kind, sort_order);
     CREATE INDEX IF NOT EXISTS idx_colors_sort ON colors(sort_order);
     CREATE INDEX IF NOT EXISTS idx_scenes_sort ON scenes(sort_order);
     CREATE INDEX IF NOT EXISTS idx_prompts_kind ON prompt_templates(kind, sort_order);
+    CREATE INDEX IF NOT EXISTS idx_text_scenes_group ON text_scenes(group_name, sort_order);
 
     -- ==========================================
     -- M2: 姿势库（纯文字）
@@ -420,6 +435,8 @@ function migrate(db: Database.Database) {
   migrateResetUniversalIdentitiesV2(db);
   // 老库新主图场景 v3 补种（28 张 OpenAI Playground 生成的纯场景图）
   migrateInsertNewScenesV3(db);
+  // 文字场景预设 v1 种子（把 lib/text-scene-presets.ts 的 28 条种进 text_scenes 表）
+  migrateSeedTextScenesV1(db);
 }
 
 /**
@@ -2878,4 +2895,76 @@ function migrateInsertNewScenesV3(db: Database.Database) {
       `[db] migrateInsertNewScenesV3: 补种 ${inserted} 张新场景（已标记 ${FLAG}=done）`,
     );
   }
+}
+
+/**
+ * 文字场景预设 v1 种子（2026-05-12）
+ *
+ * 把 lib/text-scene-presets.ts 里硬编码的 28 条预设种进 text_scenes 表。
+ * 之后 admin/scenes 的"新增文字场景" tab 可以继续往里加自定义条目。
+ *
+ * 按 name 幂等（UNIQUE 约束兜底）。FLAG=migrated_text_scenes_v1 防重复跑。
+ */
+function migrateSeedTextScenesV1(db: Database.Database) {
+  const FLAG = "migrated_text_scenes_v1";
+  const flag = db
+    .prepare(`SELECT value FROM settings WHERE key = ?`)
+    .get(FLAG) as { value: string } | undefined;
+  if (flag?.value === "done") return;
+
+  // 动态 import 避免循环依赖（text-scene-presets.ts 不依赖 db）
+  let presets: Array<{
+    name: string;
+    text: string;
+    group: string;
+    thumb?: string;
+  }>;
+  try {
+    const mod = require("./text-scene-presets") as {
+      TEXT_SCENE_PRESETS: Array<{
+        name: string;
+        text: string;
+        group: string;
+        thumb?: string;
+      }>;
+    };
+    presets = mod.TEXT_SCENE_PRESETS;
+  } catch (err) {
+    console.warn(
+      "[db] migrateSeedTextScenesV1 加载 text-scene-presets 失败:",
+      err,
+    );
+    return;
+  }
+
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO text_scenes
+       (name, group_name, text_prompt, thumb_path, sort_order)
+     VALUES (@name, @group_name, @text_prompt, @thumb_path, @sort_order)`,
+  );
+  let inserted = 0;
+  const tx = db.transaction(() => {
+    presets.forEach((p, i) => {
+      const result = insert.run({
+        name: p.name,
+        group_name: p.group,
+        text_prompt: p.text,
+        // thumb 字段 lib 那边是 /assets/uploads/scenes/scene_new_NN.{jpg|png}
+        // 截掉前缀 /assets/ 存相对路径，跟 scenes 表 image_path 的约定一致
+        thumb_path: p.thumb?.replace(/^\/assets\//, "") ?? null,
+        sort_order: (i + 1) * 10,
+      });
+      if (result.changes > 0) inserted += 1;
+    });
+    db.prepare(
+      `INSERT OR REPLACE INTO settings (key, value, notes) VALUES (?, 'done', ?)`,
+    ).run(
+      FLAG,
+      `文字场景预设 v1 种子（${presets.length} 条预设，新插 ${inserted} 条；其余已存在跳过）`,
+    );
+  });
+  tx();
+  console.log(
+    `[db] migrateSeedTextScenesV1: 种 ${inserted}/${presets.length} 条文字场景预设（已标记 ${FLAG}=done）`,
+  );
 }

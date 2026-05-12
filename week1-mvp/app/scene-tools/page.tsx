@@ -12,7 +12,11 @@ import {
 import { useCurrentUser } from "@/lib/hooks/use-current-user";
 import { useJobPolling } from "@/lib/hooks/use-job-polling";
 import { Dropzone } from "@/app/_components/ui";
-import { TEXT_SCENE_PRESETS } from "@/lib/text-scene-presets";
+import { TaskViewport } from "@/app/_components/task-viewport";
+import {
+  TEXT_SCENE_PRESETS as STATIC_PRESETS,
+  type TextScenePreset,
+} from "@/lib/text-scene-presets";
 
 /* ─────────────────────────────────────────────────────────
  *  类型
@@ -200,7 +204,7 @@ export default function SceneToolsPage() {
   const [aspectRatio, setAspectRatio] = useState("3:4");
   const [userHint, setUserHint] = useState("");
   const [modelId, setModelId] = useState("gemini-3-pro-image-preview");
-  const [imageSize, setImageSize] = useState<"1K" | "2K" | "4K">("4K");
+  const [imageSize, setImageSize] = useState<"1K" | "2K" | "4K">("2K");
 
   // 提交
   const [submitting, setSubmitting] = useState(false);
@@ -210,8 +214,24 @@ export default function SceneToolsPage() {
   // 场景图选择面板（显示 / 隐藏）
   const [scenePickerOpen, setScenePickerOpen] = useState(false);
 
-  // 加载场景库 + 模型列表
+  // 文字场景预设（从 /api/text-scenes 拉，admin 可在 admin/scenes 里编辑）
+  // API 拉不到则回退到 lib 里 hardcoded 的 28 条（提供首次部署兜底）
+  const [textScenePresets, setTextScenePresets] = useState<TextScenePreset[]>(
+    STATIC_PRESETS,
+  );
+
+  // 加载场景库 + 模型列表 + 文字场景预设
   useEffect(() => {
+    fetch("/api/text-scenes")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: TextScenePreset[] | null) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setTextScenePresets(data);
+        }
+      })
+      .catch(() => {
+        /* 拉不到就用 STATIC_PRESETS */
+      });
     fetch("/api/scenes")
       .then((r) => (r.ok ? r.json() : []))
       .then((data: Scene[]) => setScenesLib(data))
@@ -398,6 +418,25 @@ export default function SceneToolsPage() {
 
   if (!user) return null;
 
+  // 任务进行 / 完成时全屏切换到 TaskViewport，跟 batch-photo 一致
+  // 用户可以"返回配置"重新看表单，或"开始新任务"清空 active job
+  if (activeJobId && polled.data) {
+    return (
+      <TaskViewport
+        job={polled.data.job}
+        items={polled.data.items}
+        nextTokenReadyAtMs={polled.data.next_token_ready_at_ms}
+        serverTimeMs={polled.data.server_time_ms}
+        onBackToForm={() => setActiveJobId(null)}
+        onStartNew={() => {
+          // 不清空已选场景 / 产品图，只是回到表单准备下一次提交
+          setActiveJobId(null);
+        }}
+        zipPrefix="scene_tools"
+      />
+    );
+  }
+
   return (
     <main className="max-w-7xl mx-auto p-4 md:p-8">
       <header className="mb-6">
@@ -529,26 +568,55 @@ export default function SceneToolsPage() {
             </div>
           )}
 
-          {/* 文字场景预设按钮 */}
-          {scenes.some((s) => s.type === "text") && (
-            <div className="mt-3 pt-3 border-t border-border-subtle">
-              <div className="text-[11px] text-fg-tertiary mb-1.5">
-                文字预设（点一下追加为新文字场景）：
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {TEXT_SCENE_PRESETS.map((p) => (
-                  <button
-                    key={p.name}
-                    onClick={() => addTextScene(p.text)}
-                    className="px-2 py-1 text-[11px] rounded border border-border-subtle bg-bg-tertiary text-fg-secondary hover:border-brand-400 hover:text-brand-400 transition-colors"
-                    title={p.text.slice(0, 80)}
-                  >
-                    {p.name}
-                  </button>
-                ))}
-              </div>
+          {/* 文字场景预设网格（按 group 折叠 + 缩略图 + 名字） */}
+          <div className="mt-3 pt-3 border-t border-border-subtle">
+            <div className="text-[11px] text-fg-tertiary mb-2">
+              文字场景预设（点缩略图直接追加为新文字场景）
             </div>
-          )}
+            {(() => {
+              const groups = new Map<string, TextScenePreset[]>();
+              for (const p of textScenePresets) {
+                if (!groups.has(p.group)) groups.set(p.group, []);
+                groups.get(p.group)!.push(p);
+              }
+              return Array.from(groups.entries()).map(([groupName, list]) => (
+                <div key={groupName} className="mb-2">
+                  <div className="text-[10px] text-fg-muted mb-1">
+                    {groupName}
+                  </div>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {list.map((p) => (
+                      <button
+                        key={p.name}
+                        onClick={() => addTextScene(p.text)}
+                        className="group relative aspect-[3/4] rounded overflow-hidden border border-border-subtle hover:border-brand-400 hover:shadow-md transition-all bg-bg-tertiary"
+                        title={p.text.slice(0, 100)}
+                      >
+                        {p.thumb ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={p.thumb}
+                            alt={p.name}
+                            className="w-full h-full object-cover"
+                            loading="lazy"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-[10px] text-fg-muted">
+                            无图
+                          </div>
+                        )}
+                        <div className="absolute inset-x-0 bottom-0 px-1 py-1 bg-gradient-to-t from-black/80 to-transparent">
+                          <div className="text-[10px] font-medium text-white truncate leading-tight">
+                            {p.name}
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ));
+            })()}
+          </div>
         </section>
 
         {/* ③ 参数 + 提交 + 进度 */}

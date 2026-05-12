@@ -134,22 +134,34 @@ export function LeftNav({
           <Sparkles size={16} strokeWidth={2.2} />
         </div>
 
-        {/* 进行中任务 */}
-        {activeJobCount > 0 ? (
-          <Link
-            href="/history?status=active"
-            title={`${activeJobCount} 个任务进行中 · 点击查看`}
-            className="relative w-9 h-9 rounded-md flex items-center justify-center mb-2 bg-[var(--brand-50-bg)] text-brand-400 hover:bg-[var(--brand-100-bg)]"
-          >
-            <Loader2 size={16} strokeWidth={2.2} className="animate-spin" />
+        {/* 任务管理（常驻）—— 有任务时高亮 + 计数徽标，无任务时灰色入口 */}
+        <Link
+          href="/tasks"
+          title={
+            activeJobCount > 0
+              ? `${activeJobCount} 个任务进行中 · 点击查看`
+              : "任务管理"
+          }
+          className={
+            activeJobCount > 0
+              ? "relative w-9 h-9 rounded-md flex items-center justify-center mb-2 bg-[var(--brand-50-bg)] text-brand-400 hover:bg-[var(--brand-100-bg)]"
+              : "relative w-9 h-9 rounded-md flex items-center justify-center mb-2 text-fg-tertiary hover:bg-bg-hover hover:text-fg-primary"
+          }
+        >
+          <Loader2
+            size={16}
+            strokeWidth={2.2}
+            className={activeJobCount > 0 ? "animate-spin" : ""}
+          />
+          {activeJobCount > 0 && (
             <span
               className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full text-white text-[10px] font-semibold flex items-center justify-center"
               style={{ background: "var(--brand-600)" }}
             >
               {activeJobCount}
             </span>
-          </Link>
-        ) : null}
+          )}
+        </Link>
 
         <CollapsedIcon href="/" label="首页" Icon={Home} active={isActive("/")} />
         <CollapsedIcon
@@ -215,26 +227,58 @@ export function LeftNav({
       </div>
 
       <nav className="flex-1 overflow-y-auto py-3">
-        {/* 进行中任务 —— 有任务时顶部脉冲 */}
-        {activeJobCount > 0 ? (
-          <div className="px-3 mb-3">
-            <Link
-              href="/history?status=active"
-              className="flex items-center gap-2.5 px-3 py-2 rounded-md transition-colors hover:brightness-110"
-              style={{
-                background: "var(--brand-50-bg)",
-                border: "1px solid rgba(59, 130, 246, 0.3)",
-              }}
-              title="查看所有进行中任务"
+        {/* 任务管理（常驻入口）—— 有任务时高亮 + 脉冲 + 计数；无任务时灰色入口 */}
+        <div className="px-3 mb-3">
+          <Link
+            href="/tasks"
+            className={
+              activeJobCount > 0
+                ? "flex items-center gap-2.5 px-3 py-2 rounded-md transition-colors hover:brightness-110"
+                : "flex items-center gap-2.5 px-3 py-2 rounded-md transition-colors hover:bg-bg-hover"
+            }
+            style={
+              activeJobCount > 0
+                ? {
+                    background: "var(--brand-50-bg)",
+                    border: "1px solid rgba(59, 130, 246, 0.3)",
+                  }
+                : { border: "1px solid var(--border-subtle)" }
+            }
+            title={
+              activeJobCount > 0
+                ? "查看所有进行中任务"
+                : "任务管理（实时查看跑批进度）"
+            }
+          >
+            <Loader2
+              size={16}
+              strokeWidth={2.2}
+              className={
+                activeJobCount > 0
+                  ? "text-brand-400 animate-spin"
+                  : "text-fg-tertiary"
+              }
+            />
+            <span
+              className={
+                activeJobCount > 0
+                  ? "flex-1 text-[12.5px] font-medium text-brand-400 truncate"
+                  : "flex-1 text-[12.5px] font-medium text-fg-secondary truncate"
+              }
             >
-              <Loader2 size={16} strokeWidth={2.2} className="text-brand-400 animate-spin" />
-              <span className="flex-1 text-[12.5px] font-medium text-brand-400 truncate">
-                {activeJobCount} 个任务进行中
-              </span>
-              <ChevronRight size={14} strokeWidth={2} className="text-brand-400" />
-            </Link>
-          </div>
-        ) : null}
+              {activeJobCount > 0
+                ? `${activeJobCount} 个任务进行中`
+                : "任务管理"}
+            </span>
+            <ChevronRight
+              size={14}
+              strokeWidth={2}
+              className={
+                activeJobCount > 0 ? "text-brand-400" : "text-fg-tertiary"
+              }
+            />
+          </Link>
+        </div>
 
         {/* 工作台 */}
         <SectionHeader>工作台</SectionHeader>

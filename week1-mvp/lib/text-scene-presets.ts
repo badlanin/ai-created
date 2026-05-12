@@ -19,9 +19,27 @@ export interface TextScenePreset {
   text: string;
   /** 调性分组（折叠显示用） */
   group: string;
+  /**
+   * 缩略图 URL（不参与 prompt，仅 UI 选择用）。
+   * 复用 scenes 表里的 scene_new_NN 图片，按 sort_order 顺序映射。
+   * 后续 Task 9 admin 重构后可在管理页改成任意 URL。
+   */
+  thumb?: string;
 }
 
-export const TEXT_SCENE_PRESETS: TextScenePreset[] = [
+/**
+ * scene_new_NN 文件扩展名映射（01 是 jpg，其他是 png）。
+ * 28 张图都通过 migrateInsertNewScenesV3 拷到 DATA_DIR/uploads/scenes/，
+ * 浏览器走 /assets/uploads/scenes/scene_new_NN.{jpg|png}。
+ */
+function thumbUrl(idx: number): string {
+  const padded = String(idx).padStart(2, "0");
+  const ext = idx === 1 ? "jpg" : "png";
+  return `/assets/uploads/scenes/scene_new_${padded}.${ext}`;
+}
+
+// 原始预设数据（不含 thumb 字段，下方 map 时按 idx 自动生成 thumb URL）
+const RAW_PRESETS: Array<Omit<TextScenePreset, "thumb">> = [
   // ───── 法式门厅类（轻盈浪漫） ─────
   {
     group: "法式门厅",
@@ -176,3 +194,17 @@ export const TEXT_SCENE_PRESETS: TextScenePreset[] = [
     text: "极简室内：纯净白色 stucco 灰泥墙 + 一扇高大的落地窗（米色厚窗帘半开），柔和午后的窗光斜射进来；地板是浅色橡木拼花；墙根靠一盆翠绿散尾葵。色调白 + 浅木 + 一点植物绿。",
   },
 ];
+
+/**
+ * 自动给每个预设附 thumb URL（按 sort_order 顺序映射到 scene_new_NN）。
+ * 缩略图复用 migrateInsertNewScenesV3 拷到 DATA_DIR 的 28 张原始场景图。
+ * 注意：缩略图跟预设描述的内容不严格 1:1 对应（28 张图的内容顺序跟我写预设的
+ * 调性分组顺序不一致），但同一组调性相近，用户在 UI 网格里能视觉浏览选择。
+ * 后续 Task 9 admin 重构后用户可自己改 thumb 字段精准匹配。
+ */
+export const TEXT_SCENE_PRESETS: TextScenePreset[] = RAW_PRESETS.map(
+  (p, i) => ({
+    ...p,
+    thumb: thumbUrl(i + 1),
+  }),
+);
