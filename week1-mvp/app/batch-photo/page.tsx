@@ -347,11 +347,24 @@ function BatchPhotoTab({
       setSolidColorHex(savedSolidHex);
     const savedSolidName = slotStore.get<string>("solidColorName");
     if (savedSolidName) setSolidColorName(savedSolidName);
-    const savedExtra =
-      slotStore.get<Array<{ scene_id: number; pose_id: number | null }>>(
-        "extraScenePairs",
-      );
-    if (Array.isArray(savedExtra)) setExtraScenePairs(savedExtra.slice(0, 2));
+    // slot 数据可能是老 shape（{scene_id, pose_id}）也可能是新 shape（{scene_id, count}）
+    // 老数据自动迁移：pose_id → count=1（用户之前选过的场景保留，姿势绑定丢掉走自由互动）
+    const savedExtra = slotStore.get<
+      Array<{ scene_id: number; pose_id?: number | null; count?: number }>
+    >("extraScenePairs");
+    if (Array.isArray(savedExtra)) {
+      const migrated = savedExtra
+        .filter((p) => Number.isFinite(p.scene_id))
+        .map((p) => ({
+          scene_id: Number(p.scene_id),
+          count:
+            typeof p.count === "number" && p.count >= 1
+              ? Math.min(5, p.count)
+              : 1,
+        }))
+        .slice(0, 2);
+      setExtraScenePairs(migrated);
+    }
     const savedPoses = slotStore.get<number[]>("selectedPoseIds");
     if (savedPoses) setSelectedPoseIds(new Set(savedPoses));
     const savedAspect = slotStore.get<string>("aspectRatio");
