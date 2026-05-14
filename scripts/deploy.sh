@@ -136,9 +136,14 @@ TOTAL=${#TGT_INSTANCES[@]}
 # 成功 exit 0；失败 exit 1
 deploy_one() {
   local project="$1" zone="$2" instance="$3" dir="$4" log="$5"
+  # 注：Caddyfile 是 mounted volume（:ro），改了配置 docker compose up --build 不会
+  # 自动 reload caddy；这里加一条 `caddy reload`（失败就 fallback 到 restart），
+  # 避免改 Caddyfile 之后部署完线上还在用旧配置
   local REMOTE_CMD="cd $dir \
     && git pull --ff-only \
     && docker compose up -d --build \
+    && (docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile 2>/dev/null \
+        || docker compose restart caddy) \
     && docker image prune -f \
     && echo '  当前 commit: '\$(git rev-parse --short HEAD)"
   if $DRY_RUN; then

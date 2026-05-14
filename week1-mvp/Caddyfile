@@ -32,9 +32,12 @@
 
     encode gzip zstd
 
-    # 客户端上传大小限制（压缩后应该很小，这里给 20M 余量）
+    # 客户端上传大小限制
+    # scene-tools / batch-photo 可能一次传多张产品图（route 限单张 20MB × 最多 30 张），
+    # 给 200MB 余量；之前给 20MB 会卡住多图上传 → 前端报 "Unexpected end of JSON input"
+    # （Caddy 413 截断连接，没回 JSON body，浏览器 res.json() 解析失败）
     request_body {
-        max_size 20MB
+        max_size 200MB
     }
 
     log {

@@ -460,9 +460,24 @@ export default function SceneToolsPage() {
         method: "POST",
         body: fd,
       });
-      const body = (await res.json()) as { job_id?: string; error?: string };
+      // 兜底：体大被 Caddy 截断（413）时 body 是空的，res.json() 会爆
+      // "Unexpected end of JSON input"。这里先 text() 再尝试 parse，给出友好提示
+      const raw = await res.text();
+      let body: { job_id?: string; error?: string } = {};
+      try {
+        if (raw) body = JSON.parse(raw);
+      } catch {
+        if (res.status === 413) {
+          throw new Error(
+            "上传内容超过服务器限制（200MB）。请减少产品图数量或压缩后重试。",
+          );
+        }
+        throw new Error(
+          `服务器返回异常（${res.status} ${res.statusText}）：${raw.slice(0, 200) || "(空响应)"}`,
+        );
+      }
       if (!res.ok || !body.job_id) {
-        throw new Error(body.error || res.statusText);
+        throw new Error(body.error || res.statusText || `HTTP ${res.status}`);
       }
       setActiveJobId(body.job_id);
     } catch (e) {
