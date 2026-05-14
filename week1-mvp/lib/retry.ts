@@ -28,6 +28,11 @@ export function defaultShouldRetry(error: unknown): boolean {
     /RESOURCE_EXHAUSTED/i.test(msg) ||
     /503/.test(msg) ||
     /UNAVAILABLE/i.test(msg) ||
+    // Gemini 服务端偶发 500 INTERNAL（"Internal error encountered."），
+    // 通常机房/负载均衡/内部超时引起，是 transient，retry 一般能过
+    /500.*INTERNAL/i.test(msg) ||
+    /\bINTERNAL\b/.test(msg) ||
+    /Internal error encountered/i.test(msg) ||
     /fetch failed/i.test(msg) ||
     /ECONNRESET/i.test(msg) ||
     /ETIMEDOUT/i.test(msg) ||
