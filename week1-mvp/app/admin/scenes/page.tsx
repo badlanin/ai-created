@@ -598,6 +598,37 @@ function TextSceneNewPanel({ onSaved }: { onSaved?: () => void }) {
   const [err, setErr] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState<string | null>(null);
 
+  // 批量重建默认预设
+  const [rebuilding, setRebuilding] = useState(false);
+  const [rebuildResult, setRebuildResult] = useState<string | null>(null);
+  async function handleRebuildDefaults() {
+    if (
+      !confirm(
+        "用 Gemini Vision 批量重新解析全部 28 条默认预设（基于已有缩略图生成新文字）？\n\n现有文字会被覆盖。约 30-60 秒跑完，期间别关页面。\n\n用途：解决默认 28 条预设文字跟缩略图对不上的问题。",
+      )
+    )
+      return;
+    setRebuilding(true);
+    setRebuildResult(null);
+    try {
+      const res = await fetch("/api/text-scenes/rebuild-defaults", {
+        method: "POST",
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || res.statusText);
+      setRebuildResult(
+        `✓ 批量重建完成：成功 ${body.ok} / 失败 ${body.failed} / 共 ${body.total}（耗时 ${(body.elapsed_ms / 1000).toFixed(1)}s）`,
+      );
+      onSaved?.();
+    } catch (e) {
+      setRebuildResult(
+        "重建失败：" + (e instanceof Error ? e.message : String(e)),
+      );
+    } finally {
+      setRebuilding(false);
+    }
+  }
+
   function onPickRef(files: File[]) {
     const f = files[0];
     if (!f) return;
@@ -692,6 +723,42 @@ function TextSceneNewPanel({ onSaved }: { onSaved?: () => void }) {
 
   return (
     <div className="space-y-4">
+      {/* 批量重建默认预设入口 — 修复默认 28 条文字跟缩略图对不上的问题 */}
+      <div className="p-3 bg-[var(--brand-50-bg)] border border-brand-200 rounded-lg flex items-center justify-between gap-3">
+        <div className="text-[12px] text-fg-secondary">
+          <strong className="text-brand-600">⚡ 一键修复</strong>：用 Gemini
+          Vision 批量重新解析全部 28 条默认预设的缩略图，让文字描述跟图对得上（解决默认预设图文错乱）。
+        </div>
+        <button
+          onClick={handleRebuildDefaults}
+          disabled={rebuilding}
+          className="btn btn-primary btn-sm shrink-0"
+        >
+          {rebuilding ? (
+            <>
+              <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              重建中…（约 30-60s）
+            </>
+          ) : (
+            <>
+              <Sparkles size={12} strokeWidth={2.2} />
+              批量重建默认预设
+            </>
+          )}
+        </button>
+      </div>
+      {rebuildResult && (
+        <div
+          className={
+            rebuildResult.startsWith("✓")
+              ? "p-2 rounded text-[12px] bg-[var(--success-bg)] border border-[rgba(34,197,94,0.3)] text-success"
+              : "p-2 rounded text-[12px] bg-[var(--danger-bg)] border border-[rgba(239,68,68,0.3)] text-danger"
+          }
+        >
+          {rebuildResult}
+        </div>
+      )}
+
       <div className="p-4 bg-bg-secondary border border-border-subtle rounded-lg">
         <h3 className="text-sm font-semibold text-fg-primary mb-3">
           ① 上传参考场景图（AI 会解析提取场景信息）
@@ -905,6 +972,27 @@ function SceneManagePanel({
   const [loadingText, setLoadingText] = useState(true);
   // 编辑中的文字场景（null = 不在编辑态）
   const [editing, setEditing] = useState<TextScenePresetRow | null>(null);
+  // 正在 reanalyze 的场景 id（用于 UI 禁用按钮）
+  const [reanalyzingId, setReanalyzingId] = useState<number | null>(null);
+
+  async function handleReanalyze(id: number, name: string) {
+    if (!confirm(`用 Gemini Vision 重新解析"${name}"的缩略图生成新文字？\n现有文字会被覆盖（如果想保留可以先点编辑复制出来）。`))
+      return;
+    setReanalyzingId(id);
+    try {
+      const res = await fetch(`/api/text-scenes/${id}/reanalyze?full=1`, {
+        method: "POST",
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || res.statusText);
+      await loadText();
+      alert(`✓ 已重新解析"${body.name}"`);
+    } catch (e) {
+      alert("重新解析失败：" + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setReanalyzingId(null);
+    }
+  }
 
   const loadText = async () => {
     setLoadingText(true);
@@ -973,12 +1061,20 @@ function SceneManagePanel({
                 <div className="text-[10px] text-fg-muted line-clamp-2 mb-1.5">
                   {t.text}
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                   <button
                     onClick={() => setEditing(t)}
                     className="text-[10px] text-brand-400 hover:underline"
                   >
                     编辑
+                  </button>
+                  <button
+                    onClick={() => handleReanalyze(t.id, t.name)}
+                    disabled={reanalyzingId === t.id}
+                    className="text-[10px] text-purple-500 hover:underline disabled:opacity-50"
+                    title="用此缩略图调 Gemini 重新解析生成文字描述（解决文字跟图对不上的问题）"
+                  >
+                    {reanalyzingId === t.id ? "解析中…" : "AI 重新解析"}
                   </button>
                   <button
                     onClick={() => handleDeleteText(t.id, t.name)}

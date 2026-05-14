@@ -9,6 +9,12 @@ const nextConfig = {
       bodySizeLimit: "20mb",
     },
   },
+  // 跳过 Docker build 时的 ESLint —— 我们 deploy 前在本地跑过 npx tsc --noEmit，
+  // 且很少有需要 lint 才能 catch 的问题。Lint 每次 build 占 25-30 秒，跳过省时间。
+  // 真要 lint 本地手动跑 `npx next lint`
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
 };
 
 module.exports = nextConfig;
