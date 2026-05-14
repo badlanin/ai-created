@@ -259,6 +259,16 @@ function TaskCard({
           >
             查看详情 →
           </Link>
+          {/* 再编辑：跳功能页 + 预填该 job 的参数，用户改完再跑（兼"重试"和"修改参数"两种用例） */}
+          {meta.href && meta.href !== "/" && (
+            <Link
+              href={`${meta.href}?prefill_job=${job.id}`}
+              className="text-[11px] text-brand-400 hover:underline"
+              title="跳回功能页，把这个任务的参数预填回表单，可以改一改再跑"
+            >
+              再编辑
+            </Link>
+          )}
           {isActive && (
             <button
               onClick={handleCancel}

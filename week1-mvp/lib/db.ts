@@ -110,6 +110,16 @@ function migrate(db: Database.Database) {
       created_at    INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
+    -- 场景分类（之前硬写在 lib/scene-categories.ts，2026-05-12 搬到 DB）
+    -- admin/scenes tab 4 可以 CRUD；前端 lib 里保留 hardcoded fallback
+    CREATE TABLE IF NOT EXISTS scene_categories (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      key_id      TEXT NOT NULL UNIQUE,            -- 英文 key（wedding / outdoor 等，存进 scenes.category）
+      label       TEXT NOT NULL,                   -- 中文显示名
+      sort_order  INTEGER NOT NULL DEFAULT 0,
+      created_at  INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
     -- 文字场景预设（lib/text-scene-presets.ts 的 28 条会通过 migration 种进来；
     -- admin 也能通过 /admin/scenes 的"新增文字场景" tab 上传参考图 + AI 解析新增）
     CREATE TABLE IF NOT EXISTS text_scenes (
@@ -437,6 +447,8 @@ function migrate(db: Database.Database) {
   migrateInsertNewScenesV3(db);
   // 文字场景预设 v1 种子（把 lib/text-scene-presets.ts 的 28 条种进 text_scenes 表）
   migrateSeedTextScenesV1(db);
+  // 场景分类 v1 种子（把 lib/scene-categories.ts 的 6 条种进 scene_categories 表）
+  migrateSeedSceneCategoriesV1(db);
 }
 
 /**
@@ -2966,5 +2978,53 @@ function migrateSeedTextScenesV1(db: Database.Database) {
   tx();
   console.log(
     `[db] migrateSeedTextScenesV1: 种 ${inserted}/${presets.length} 条文字场景预设（已标记 ${FLAG}=done）`,
+  );
+}
+
+/**
+ * 场景分类 v1 种子（2026-05-12）
+ *
+ * 把 lib/scene-categories.ts 的 6 个分类种进 scene_categories 表。
+ * 之后 admin/scenes tab 4 能在 DB 里增删改。
+ *
+ * FLAG=migrated_scene_categories_v1，按 key 幂等。
+ */
+function migrateSeedSceneCategoriesV1(db: Database.Database) {
+  const FLAG = "migrated_scene_categories_v1";
+  const flag = db
+    .prepare(`SELECT value FROM settings WHERE key = ?`)
+    .get(FLAG) as { value: string } | undefined;
+  if (flag?.value === "done") return;
+
+  // 跟 lib/scene-categories.ts 的 SCENE_CATEGORY_ORDER + LABELS 对齐
+  const SEED: Array<{ key_id: string; label: string; sort_order: number }> = [
+    { key_id: "wedding", label: "婚礼", sort_order: 10 },
+    { key_id: "outdoor", label: "户外", sort_order: 20 },
+    { key_id: "studio", label: "影棚", sort_order: 30 },
+    { key_id: "street", label: "街拍", sort_order: 40 },
+    { key_id: "indoor", label: "室内", sort_order: 50 },
+    { key_id: "garden", label: "花园", sort_order: 60 },
+  ];
+
+  let inserted = 0;
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO scene_categories (key_id, label, sort_order)
+     VALUES (@key_id, @label, @sort_order)`,
+  );
+  const tx = db.transaction(() => {
+    for (const s of SEED) {
+      const r = insert.run(s);
+      if (r.changes > 0) inserted += 1;
+    }
+    db.prepare(
+      `INSERT OR REPLACE INTO settings (key, value, notes) VALUES (?, 'done', ?)`,
+    ).run(
+      FLAG,
+      `场景分类 v1 种子（共 ${SEED.length} 条，新插 ${inserted} 条；其余已存在跳过）`,
+    );
+  });
+  tx();
+  console.log(
+    `[db] migrateSeedSceneCategoriesV1: 种 ${inserted}/${SEED.length} 个分类（已标记 ${FLAG}=done）`,
   );
 }

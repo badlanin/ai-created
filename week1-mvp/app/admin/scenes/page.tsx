@@ -209,15 +209,7 @@ export default function ScenesAdminPage() {
       {/* tab 内容：文字场景 / 场景管理 / 分类管理（图片场景的内容在下方 conditional 渲染） */}
       {tab === "text" && <TextSceneNewPanel onSaved={load} />}
       {tab === "manage" && <SceneManagePanel imageScenes={items} onChanged={load} />}
-      {tab === "categories" && (
-        <div className="p-8 border border-dashed border-border-default rounded text-center text-sm text-fg-tertiary">
-          分类管理 tab 还没做完 — 当前 6 个分类（婚礼 / 户外 / 影棚 / 街拍 / 室内 / 花园）写在
-          <code className="px-1 mx-1 bg-bg-tertiary rounded text-[11px]">
-            lib/scene-categories.ts
-          </code>
-          ，要增删请直接改代码后 deploy。下一轮迭代会做 DB 版分类管理。
-        </div>
-      )}
+      {tab === "categories" && <SceneCategoriesPanel />}
 
       {tab === "image" && error && (
         <div
@@ -911,6 +903,8 @@ function SceneManagePanel({
 }) {
   const [textScenes, setTextScenes] = useState<TextScenePresetRow[]>([]);
   const [loadingText, setLoadingText] = useState(true);
+  // 编辑中的文字场景（null = 不在编辑态）
+  const [editing, setEditing] = useState<TextScenePresetRow | null>(null);
 
   const loadText = async () => {
     setLoadingText(true);
@@ -979,17 +973,36 @@ function SceneManagePanel({
                 <div className="text-[10px] text-fg-muted line-clamp-2 mb-1.5">
                   {t.text}
                 </div>
-                <button
-                  onClick={() => handleDeleteText(t.id, t.name)}
-                  className="text-[10px] text-danger hover:underline"
-                >
-                  删除
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setEditing(t)}
+                    className="text-[10px] text-brand-400 hover:underline"
+                  >
+                    编辑
+                  </button>
+                  <button
+                    onClick={() => handleDeleteText(t.id, t.name)}
+                    className="text-[10px] text-danger hover:underline"
+                  >
+                    删除
+                  </button>
+                </div>
               </div>
             ))}
           </div>
         )}
       </div>
+
+      {editing && (
+        <TextSceneEditModal
+          row={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            loadText();
+          }}
+        />
+      )}
 
       {/* 图片场景列表（只读链接到 tab 1） */}
       <div>
@@ -1017,6 +1030,425 @@ function SceneManagePanel({
             </div>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────── Tab 4：分类管理（scene_categories CRUD） ─────────── */
+
+interface SceneCategoryRow {
+  id: number;
+  key_id: string;
+  label: string;
+  sort_order: number;
+}
+
+function SceneCategoriesPanel() {
+  const [rows, setRows] = useState<SceneCategoryRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [newKey, setNewKey] = useState("");
+  const [newLabel, setNewLabel] = useState("");
+  const [newSort, setNewSort] = useState<number>(999);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/scene-categories");
+      if (res.ok) setRows(await res.json());
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  async function handleCreate() {
+    if (!newKey.trim() || !newLabel.trim()) {
+      setErr("key_id 和 label 都要填");
+      return;
+    }
+    setErr(null);
+    setBusy(true);
+    try {
+      const res = await fetch("/api/scene-categories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          key_id: newKey.trim(),
+          label: newLabel.trim(),
+          sort_order: newSort,
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || res.statusText);
+      setNewKey("");
+      setNewLabel("");
+      setNewSort(999);
+      load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handlePatch(id: number, patch: Partial<SceneCategoryRow>) {
+    const res = await fetch(`/api/scene-categories/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    if (res.ok) load();
+    else {
+      const body = await res.json();
+      alert(body.error || "更新失败");
+    }
+  }
+
+  async function handleDelete(id: number, label: string) {
+    if (!confirm(`确认删除分类"${label}"？（仅在没场景引用它时才能删）`)) return;
+    const res = await fetch(`/api/scene-categories/${id}`, {
+      method: "DELETE",
+    });
+    if (res.ok) load();
+    else {
+      const body = await res.json();
+      alert(body.error || "删除失败");
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* 新增 */}
+      <div className="p-3 bg-bg-secondary border border-border-subtle rounded-lg">
+        <h3 className="text-sm font-semibold text-fg-primary mb-2">
+          新增分类
+        </h3>
+        <div className="grid grid-cols-12 gap-2 items-end">
+          <div className="col-span-4">
+            <label className="block text-[11px] text-fg-tertiary mb-1">
+              key_id（英文小写 / 数字 / 下划线）
+            </label>
+            <input
+              type="text"
+              value={newKey}
+              onChange={(e) => setNewKey(e.target.value.slice(0, 30))}
+              placeholder="如：rooftop / café"
+              className="input text-sm h-9"
+            />
+          </div>
+          <div className="col-span-4">
+            <label className="block text-[11px] text-fg-tertiary mb-1">
+              中文 label
+            </label>
+            <input
+              type="text"
+              value={newLabel}
+              onChange={(e) => setNewLabel(e.target.value.slice(0, 20))}
+              placeholder="如：屋顶"
+              className="input text-sm h-9"
+            />
+          </div>
+          <div className="col-span-2">
+            <label className="block text-[11px] text-fg-tertiary mb-1">
+              排序
+            </label>
+            <input
+              type="number"
+              value={newSort}
+              onChange={(e) => setNewSort(Number(e.target.value) || 0)}
+              className="input text-sm h-9"
+            />
+          </div>
+          <div className="col-span-2">
+            <button
+              onClick={handleCreate}
+              disabled={busy || !newKey.trim() || !newLabel.trim()}
+              className="btn btn-primary btn-sm w-full"
+            >
+              {busy ? "保存中…" : "新增"}
+            </button>
+          </div>
+        </div>
+        {err && (
+          <div className="mt-2 p-2 rounded text-[12px] bg-[var(--danger-bg)] border border-[rgba(239,68,68,0.3)] text-danger">
+            {err}
+          </div>
+        )}
+      </div>
+
+      {/* 列表 */}
+      <div className="p-3 bg-bg-secondary border border-border-subtle rounded-lg">
+        <h3 className="text-sm font-semibold text-fg-primary mb-2">
+          当前分类（{rows.length}）
+        </h3>
+        {loading ? (
+          <div className="text-sm text-fg-tertiary">加载中…</div>
+        ) : rows.length === 0 ? (
+          <div className="text-sm text-fg-tertiary">还没有分类</div>
+        ) : (
+          <table className="w-full text-[12px]">
+            <thead>
+              <tr className="text-fg-tertiary border-b border-border-subtle">
+                <th className="text-left p-2">key_id</th>
+                <th className="text-left p-2">label</th>
+                <th className="text-left p-2">排序</th>
+                <th className="text-right p-2">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className="border-b border-border-subtle">
+                  <td className="p-2 font-mono text-fg-secondary">
+                    {r.key_id}
+                  </td>
+                  <td className="p-2">
+                    <input
+                      type="text"
+                      defaultValue={r.label}
+                      onBlur={(e) => {
+                        const v = e.target.value.trim();
+                        if (v && v !== r.label) handlePatch(r.id, { label: v });
+                      }}
+                      className="input text-[12px] h-7 w-full"
+                    />
+                  </td>
+                  <td className="p-2">
+                    <input
+                      type="number"
+                      defaultValue={r.sort_order}
+                      onBlur={(e) => {
+                        const v = Number(e.target.value);
+                        if (Number.isFinite(v) && v !== r.sort_order)
+                          handlePatch(r.id, { sort_order: v });
+                      }}
+                      className="input text-[12px] h-7 w-20"
+                    />
+                  </td>
+                  <td className="p-2 text-right">
+                    <button
+                      onClick={() => handleDelete(r.id, r.label)}
+                      className="text-[11px] text-danger hover:underline"
+                    >
+                      删除
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <p className="mt-2 text-[11px] text-fg-muted">
+          注：key_id 不可改（被 scenes.category 字段引用）。要换 key 请先新增 +
+          手动迁移引用 + 再删旧的。前端的 lib/scene-categories.ts 暂时仍保留
+          hardcoded fallback，下一轮统一切换 API 拉取。
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────── 文字场景编辑 modal ─────────── */
+function TextSceneEditModal({
+  row,
+  onClose,
+  onSaved,
+}: {
+  row: TextScenePresetRow;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(row.name);
+  const [group, setGroup] = useState(row.group || "");
+  const [text, setText] = useState(row.text);
+  const [notes, setNotes] = useState(row.notes || "");
+  const [sortOrder, setSortOrder] = useState<number>(row.sort_order);
+  const [thumbFile, setThumbFile] = useState<File | null>(null);
+  const [thumbPreview, setThumbPreview] = useState<string | null>(row.thumb);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  function onPickThumb(files: File[]) {
+    const f = files[0];
+    if (!f) return;
+    setThumbFile(f);
+    if (thumbPreview && thumbPreview.startsWith("blob:"))
+      URL.revokeObjectURL(thumbPreview);
+    setThumbPreview(URL.createObjectURL(f));
+  }
+
+  async function handleSave() {
+    if (!name.trim() || !text.trim()) {
+      setErr("name 和 text 都必填");
+      return;
+    }
+    setErr(null);
+    setSaving(true);
+    try {
+      const fd = new FormData();
+      fd.append("name", name.trim());
+      fd.append("group", group.trim());
+      fd.append("text", text.trim());
+      fd.append("notes", notes.trim());
+      fd.append("sort_order", String(sortOrder));
+      if (thumbFile) fd.append("thumb", thumbFile, thumbFile.name);
+      const res = await fetch(`/api/text-scenes/${row.id}`, {
+        method: "PATCH",
+        body: fd,
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || res.statusText);
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-bg-card rounded-lg border border-border-default w-full max-w-2xl max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <header className="px-4 py-3 border-b border-border-subtle flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-fg-primary">
+            编辑文字场景 #{row.id}
+          </h3>
+          <button
+            onClick={onClose}
+            className="text-fg-muted hover:text-fg-primary"
+          >
+            <X size={16} />
+          </button>
+        </header>
+
+        <div className="p-4 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[11px] text-fg-tertiary mb-1">
+                短名（必填）
+              </label>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value.slice(0, 30))}
+                className="input text-sm h-9"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] text-fg-tertiary mb-1">
+                调性分组
+              </label>
+              <input
+                type="text"
+                value={group}
+                onChange={(e) => setGroup(e.target.value.slice(0, 20))}
+                list="known-groups-edit"
+                className="input text-sm h-9"
+              />
+              <datalist id="known-groups-edit">
+                {KNOWN_GROUPS.map((g) => (
+                  <option key={g} value={g} />
+                ))}
+              </datalist>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[11px] text-fg-tertiary mb-1">
+              完整场景描述
+            </label>
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value.slice(0, 1000))}
+              rows={6}
+              className="input text-sm w-full resize-none"
+            />
+            <div className="text-[10px] text-fg-muted mt-0.5 text-right">
+              {text.length}/1000
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[11px] text-fg-tertiary mb-1">
+                排序值
+              </label>
+              <input
+                type="number"
+                value={sortOrder}
+                onChange={(e) => setSortOrder(Number(e.target.value) || 0)}
+                className="input text-sm h-9"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] text-fg-tertiary mb-1">
+                备注
+              </label>
+              <input
+                type="text"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value.slice(0, 200))}
+                className="input text-sm h-9"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[11px] text-fg-tertiary mb-1">
+              缩略图（留空则保留原图，上传则替换）
+            </label>
+            <div className="flex items-center gap-3">
+              {thumbPreview && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={thumbPreview}
+                  alt="thumb"
+                  className="w-16 h-20 object-cover rounded border border-border-subtle"
+                />
+              )}
+              <div className="flex-1">
+                <Dropzone
+                  accept="image/*"
+                  onFiles={onPickThumb}
+                  icon={<ImageIcon size={14} strokeWidth={1.6} />}
+                  title={thumbFile ? thumbFile.name : "拖入新缩略图替换"}
+                  description="建议 3:4 比例"
+                  compact
+                />
+              </div>
+            </div>
+          </div>
+
+          {err && (
+            <div className="p-2 rounded text-[12px] bg-[var(--danger-bg)] border border-[rgba(239,68,68,0.3)] text-danger">
+              {err}
+            </div>
+          )}
+        </div>
+
+        <footer className="px-4 py-3 border-t border-border-subtle flex justify-end gap-2">
+          <button onClick={onClose} className="btn btn-ghost btn-sm">
+            取消
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving || !name.trim() || !text.trim()}
+            className="btn btn-primary btn-sm"
+          >
+            {saving ? "保存中…" : "保存"}
+          </button>
+        </footer>
       </div>
     </div>
   );

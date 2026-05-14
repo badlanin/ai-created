@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Camera, Sparkles, Upload, ImageIcon, Crop as CropIcon, X } from "lucide-react";
 import { ImageCropper } from "@/app/_components/image-cropper";
 import { AppShell } from "@/app/_components/app-shell";
@@ -286,6 +287,98 @@ function BatchPhotoTab({
   const [viewMode, setViewMode] = useState<"form" | "task">(
     () => (slotStore.get<string>("activeJobId") ? "task" : "form"),
   );
+
+  /* ─── prefill：从 /tasks 跳过来时 ?prefill_job=xxx 反填该 job 的 params ─── */
+  const searchParams = useSearchParams();
+  const prefillJobId = searchParams?.get("prefill_job");
+  const [prefillBanner, setPrefillBanner] = useState<string | null>(null);
+  useEffect(() => {
+    if (!prefillJobId) return;
+    fetch(`/api/jobs/${prefillJobId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data?.job) return;
+        let params: Record<string, unknown> = {};
+        try {
+          params =
+            typeof data.job.params === "string"
+              ? JSON.parse(data.job.params)
+              : data.job.params || {};
+        } catch {
+          return;
+        }
+        if (typeof params.aspect_ratio === "string")
+          setAspectRatio(params.aspect_ratio);
+        if (
+          params.quality_level === "hd" ||
+          params.quality_level === "2k" ||
+          params.quality_level === "4k"
+        )
+          setQualityLevel(params.quality_level);
+        if (typeof data.job.model === "string") setModelId(data.job.model);
+        if (typeof params.user_seed === "string")
+          setUserSeed(params.user_seed || "");
+        if (typeof params.solid_color_hex === "string")
+          setSolidColorHex(params.solid_color_hex);
+        if (typeof params.solid_color_name === "string")
+          setSolidColorName(params.solid_color_name);
+        // 模特、模板、摄影参数、真实感、表情：直接拿 id
+        const identity = params.identity as { id?: number } | undefined;
+        if (identity?.id) setIdentityId(identity.id);
+        const template = params.template as { id?: number } | undefined;
+        if (template?.id) setTemplateId(template.id);
+        if (Number.isFinite(params.photography_id as number))
+          setPhotographyId(params.photography_id as number);
+        if (Number.isFinite(params.realism_id as number))
+          setRealismId(params.realism_id as number);
+        if (Number.isFinite(params.expression_id as number))
+          setExpressionId(params.expression_id as number);
+        // 姿势 / 材质（list 类型）
+        const poses = params.poses as Array<{ id: number }> | undefined;
+        if (Array.isArray(poses) && poses.length > 0) {
+          setSelectedPoseIds(
+            new Set(poses.map((p) => p.id).filter((x) => Number.isFinite(x))),
+          );
+        }
+        const materialIds = params.material_ids as number[] | undefined;
+        if (Array.isArray(materialIds) && materialIds.length > 0) {
+          setSelectedMaterialIds(materialIds);
+        }
+        // 图片场景 + 文字场景：从 extra_items / extra_text_items 推 count
+        const extraItems = params.extra_items as
+          | Array<{ scene_id: number; variant_total?: number }>
+          | undefined;
+        if (Array.isArray(extraItems)) {
+          const map = new Map<number, number>();
+          for (const it of extraItems) {
+            map.set(it.scene_id, it.variant_total ?? 1);
+          }
+          const pairs = Array.from(map.entries()).map(([scene_id, count]) => ({
+            scene_id,
+            count,
+          }));
+          if (pairs.length > 0) setExtraScenePairs(pairs);
+        }
+        const extraTextItems = params.extra_text_items as
+          | Array<{ text: string; variant_total?: number }>
+          | undefined;
+        if (Array.isArray(extraTextItems)) {
+          const map = new Map<string, number>();
+          for (const it of extraTextItems) {
+            map.set(it.text, it.variant_total ?? 1);
+          }
+          const texts = Array.from(map.entries()).map(([text, count]) => ({
+            text,
+            count,
+          }));
+          if (texts.length > 0) setExtraTextScenes(texts);
+        }
+        setPrefillBanner(
+          `已从老任务 #${prefillJobId.slice(0, 8)} 预填基础参数（模型 / 比例 / 画质 / 姿势 / 场景）。产品图请重新上传；款式 / 礼服类型请重新解析或挑选。`,
+        );
+      })
+      .catch(() => {});
+  }, [prefillJobId]);
 
   /* ─── 初始加载 + slot 恢复 ─── */
   useEffect(() => {
@@ -1033,6 +1126,18 @@ function BatchPhotoTab({
               </p>
             </div>
           </header>
+
+          {prefillBanner && (
+            <div className="mb-4 p-3 rounded text-[12px] bg-[var(--brand-50-bg)] border border-brand-200 text-brand-700 flex items-start justify-between gap-3">
+              <span>📥 {prefillBanner}</span>
+              <button
+                onClick={() => setPrefillBanner(null)}
+                className="text-brand-500 hover:text-brand-700 shrink-0"
+              >
+                ✕
+              </button>
+            </div>
+          )}
 
           {/* 任务看板 —— 持久化展示我的最近任务 */}
           <TaskDock feature="batch_photo" />

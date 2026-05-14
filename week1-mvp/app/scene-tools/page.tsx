@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Sparkles,
   Upload,
@@ -255,6 +256,80 @@ export default function SceneToolsPage() {
       .catch(() => {});
   }, []);
 
+  // ─── prefill：从 /tasks 跳过来时 ?prefill_job=xxx 反填该 job 的 params ───
+  const searchParams = useSearchParams();
+  const prefillJobId = searchParams?.get("prefill_job");
+  const [prefillBanner, setPrefillBanner] = useState<string | null>(null);
+  useEffect(() => {
+    if (!prefillJobId) return;
+    fetch(`/api/jobs/${prefillJobId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data?.job) return;
+        let params: Record<string, unknown> = {};
+        try {
+          params =
+            typeof data.job.params === "string"
+              ? JSON.parse(data.job.params)
+              : data.job.params || {};
+        } catch {
+          return;
+        }
+        // aspect / imageSize / userHint
+        if (typeof params.aspect_ratio === "string")
+          setAspectRatio(params.aspect_ratio);
+        if (
+          params.image_size === "1K" ||
+          params.image_size === "2K" ||
+          params.image_size === "4K"
+        )
+          setImageSize(params.image_size);
+        if (typeof params.user_hint === "string")
+          setUserHint(params.user_hint || "");
+        if (typeof data.job.model === "string") setModelId(data.job.model);
+        // scenes 反填：从 items 里推每个 scene 的 count（variant_total）
+        type ItemMeta = {
+          scene_idx: number;
+          variant_total?: number;
+        };
+        const items = (params.items as ItemMeta[]) || [];
+        const sceneCountMap = new Map<number, number>();
+        for (const it of items) {
+          if (typeof it.scene_idx === "number") {
+            sceneCountMap.set(it.scene_idx, it.variant_total ?? 1);
+          }
+        }
+        type ScenePayload =
+          | { type: "text"; text: string }
+          | {
+              type: "image";
+              scene_id: number;
+              scene_name?: string;
+              scene_image_path?: string;
+            };
+        const scenesRaw = (params.scenes as ScenePayload[]) || [];
+        const prefilled: SceneEntry[] = scenesRaw.map((s, idx) => {
+          const count = sceneCountMap.get(idx) ?? 1;
+          const id = `prefill-${idx}-${Date.now()}`;
+          if (s.type === "image") {
+            return {
+              id,
+              type: "image",
+              scene_id: s.scene_id,
+              scene_name: s.scene_name || `场景#${s.scene_id}`,
+              count,
+            };
+          }
+          return { id, type: "text", text: s.text, count };
+        });
+        if (prefilled.length > 0) setScenes(prefilled);
+        setPrefillBanner(
+          `已从老任务 #${prefillJobId.slice(0, 8)} 预填参数（场景 / 比例 / 画质 / 模型 / 追加指令）。产品图请重新上传后再提交。`,
+        );
+      })
+      .catch(() => {});
+  }, [prefillJobId]);
+
   // 产品图本地预览 URL 管理
   const productUrlsRef = useRef<Map<string, string>>(new Map());
   useEffect(() => {
@@ -449,6 +524,18 @@ export default function SceneToolsPage() {
           每张产品图都会和每个场景配出一张图。
         </p>
       </header>
+
+      {prefillBanner && (
+        <div className="mb-4 p-3 rounded text-[12px] bg-[var(--brand-50-bg)] border border-brand-200 text-brand-700 flex items-start justify-between gap-3">
+          <span>📥 {prefillBanner}</span>
+          <button
+            onClick={() => setPrefillBanner(null)}
+            className="text-brand-500 hover:text-brand-700 shrink-0"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 p-3 bg-[var(--danger-bg)] border border-[rgba(239,68,68,0.3)] text-danger text-sm rounded">

@@ -138,23 +138,50 @@ class TokenBucket {
 /* ─────────── 模块级单例 ─────────── */
 
 const buckets = new Map<string, TokenBucket>();
-let cachedRate: { capacity: number; refillPerSecond: number } | null = null;
+// 按 provider 类型缓存费率（gemini / openai 两类不同的 settings 字段）
+const cachedRate = new Map<
+  "gemini" | "openai",
+  { capacity: number; refillPerSecond: number }
+>();
 
 /**
- * 从 settings 表读当前费率配置
+ * 按 modelId 前缀决定 provider 类别。OpenAI 走自己的 settings 字段（openai_ipm_limit），
+ * 其他全部归 Gemini（image_rate_limit_per_min）。
  */
-function readRateFromSettings(): {
+function getProviderClass(model: string): "gemini" | "openai" {
+  return model.startsWith("gpt-image") ? "openai" : "gemini";
+}
+
+/**
+ * 从 settings 表读对应 provider 的费率配置
+ */
+function readRateFromSettings(
+  provider: "gemini" | "openai",
+): {
   capacity: number;
   refillPerSecond: number;
 } {
   try {
     const db = getDb();
-    const row = db
+    if (provider === "openai") {
+      // OpenAI Tier 1 默认 5 IPM。capacity = ratePerMin（burst 不单独配，让 5 张/分钟也能瞬时发出）
+      const row = db
+        .prepare(`SELECT value FROM settings WHERE key = 'openai_ipm_limit'`)
+        .get() as { value: string } | undefined;
+      const ipm = Number(row?.value ?? "5");
+      const ratePerMin = Number.isFinite(ipm) && ipm > 0 ? ipm : 5;
+      return {
+        capacity: ratePerMin,
+        refillPerSecond: ratePerMin / 60,
+      };
+    }
+    // Gemini
+    const rows = db
       .prepare(
         `SELECT key, value FROM settings WHERE key IN ('image_rate_limit_per_min', 'image_rate_burst')`,
       )
       .all() as Array<{ key: string; value: string }>;
-    const map = new Map(row.map((r) => [r.key, r.value]));
+    const map = new Map(rows.map((r) => [r.key, r.value]));
     const perMin = Number(map.get("image_rate_limit_per_min") ?? "2");
     const burst = Number(map.get("image_rate_burst") ?? "2");
     const ratePerMin = Number.isFinite(perMin) && perMin > 0 ? perMin : 2;
@@ -164,38 +191,48 @@ function readRateFromSettings(): {
       refillPerSecond: ratePerMin / 60,
     };
   } catch {
-    // DB 还没起或出错时用默认值，不阻塞
-    return { capacity: 2, refillPerSecond: 2 / 60 };
+    // DB 还没起或出错时用安全默认值
+    return provider === "openai"
+      ? { capacity: 5, refillPerSecond: 5 / 60 }
+      : { capacity: 2, refillPerSecond: 2 / 60 };
   }
 }
 
 /**
- * 获取某模型的 bucket。首次访问时懒加载。
+ * 获取某模型的 bucket。首次访问时懒加载，按 provider 选对应费率。
  */
 export function getBucket(model: string): TokenBucket {
   let b = buckets.get(model);
   if (!b) {
-    if (!cachedRate) cachedRate = readRateFromSettings();
-    b = new TokenBucket(cachedRate.capacity, cachedRate.refillPerSecond);
+    const provider = getProviderClass(model);
+    let rate = cachedRate.get(provider);
+    if (!rate) {
+      rate = readRateFromSettings(provider);
+      cachedRate.set(provider, rate);
+    }
+    b = new TokenBucket(rate.capacity, rate.refillPerSecond);
     buckets.set(model, b);
   }
   return b;
 }
 
 /**
- * 从 DB 热加载费率并应用到所有已创建的 bucket
- *
- * admin 在管理页修改 image_rate_limit_per_min 后调用一次即可。
+ * 从 DB 热加载费率并应用到所有已创建的 bucket。
+ * admin 改完 image_rate_limit_per_min 或 openai_ipm_limit 后调一次。
  */
 export function refreshRateFromSettings(): {
-  capacity: number;
-  refillPerSecond: number;
+  gemini: { capacity: number; refillPerSecond: number };
+  openai: { capacity: number; refillPerSecond: number };
 } {
-  cachedRate = readRateFromSettings();
-  for (const b of buckets.values()) {
-    b.reconfigure(cachedRate.capacity, cachedRate.refillPerSecond);
+  const gem = readRateFromSettings("gemini");
+  const oai = readRateFromSettings("openai");
+  cachedRate.set("gemini", gem);
+  cachedRate.set("openai", oai);
+  for (const [model, b] of buckets.entries()) {
+    const r = getProviderClass(model) === "openai" ? oai : gem;
+    b.reconfigure(r.capacity, r.refillPerSecond);
   }
-  return cachedRate;
+  return { gemini: gem, openai: oai };
 }
 
 /**
