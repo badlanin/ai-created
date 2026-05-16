@@ -19,6 +19,8 @@ interface ProviderInfo {
 }
 
 // 限流相关 key 的推荐值（仅 Gemini API 直连模式，按 Tier 分档）
+// Tier 3 上限：Nano Banana Pro = 2000 RPM，Nano Banana 2 (Flash) = 5000 RPM
+// 我们 rate limiter 是单一全局费率，按 Pro（默认主模型）算瓶颈
 const RECOMMENDED = {
   gemini_api_tier1: { rate: 10, burst: 10, concurrency: 4 },
   // Tier 2 单站独享：可以打满（500 RPM 上限的 80%）
@@ -27,6 +29,12 @@ const RECOMMENDED = {
   gemini_api_tier2_3sites: { rate: 150, burst: 150, concurrency: 12 },
   // Tier 2 单站激进：单站满速版（仅适用于一个 site 用一个 Google 项目）
   gemini_api_tier2_aggressive: { rate: 200, burst: 200, concurrency: 16 },
+  // Tier 3 · 3 站共享：每站 500 RPM × 3 = 1500 ≈ 75% of 2000 Pro 上限
+  gemini_api_tier3_3sites: { rate: 500, burst: 500, concurrency: 30 },
+  // Tier 3 · 3 站满速：每站 600 RPM × 3 = 1800 ≈ 90% of 2000 Pro 上限
+  gemini_api_tier3_3sites_aggressive: { rate: 600, burst: 600, concurrency: 40 },
+  // Tier 3 · 单站独享：仅当独占整个 Google 项目时用（不推荐多站时用此档）
+  gemini_api_tier3_solo: { rate: 1800, burst: 1800, concurrency: 60 },
 };
 
 export default function SettingsAdminPage() {
@@ -458,6 +466,30 @@ export default function SettingsAdminPage() {
             >
               Tier 2 · 单站满速 (200 / 16)
             </button>
+            <button
+              type="button"
+              onClick={() => applyRecommended("gemini_api_tier3_3sites")}
+              className="px-2.5 py-1 text-xs border border-[rgba(34,197,94,0.4)] rounded text-success hover:bg-[var(--success-bg)]"
+              title="Tier 3 · 3 站共享（推荐）：每站 500 RPM × 3 = 1500 ≈ 75% of 2000 Pro 上限"
+            >
+              🚀 Tier 3 · 3 站共享 (500 / 30)
+            </button>
+            <button
+              type="button"
+              onClick={() => applyRecommended("gemini_api_tier3_3sites_aggressive")}
+              className="px-2.5 py-1 text-xs border border-[rgba(34,197,94,0.4)] rounded text-success hover:bg-[var(--success-bg)]"
+              title="Tier 3 · 3 站满速：每站 600 RPM × 3 = 1800 ≈ 90% of 2000 Pro 上限（接近极限，偶尔可能 429）"
+            >
+              Tier 3 · 3 站满速 (600 / 40)
+            </button>
+            <button
+              type="button"
+              onClick={() => applyRecommended("gemini_api_tier3_solo")}
+              className="px-2.5 py-1 text-xs border border-[rgba(34,197,94,0.4)] rounded text-success hover:bg-[var(--success-bg)]"
+              title="Tier 3 · 单站独享：1800 RPM ≈ 90% of 2000 Pro 上限。仅当本站独占整个 Google 项目时使用"
+            >
+              Tier 3 · 单站独享 (1800 / 60)
+            </button>
           </div>
           <p className="mt-2 text-[10px] text-fg-muted leading-relaxed">
             说明：rate limits 是<strong className="text-fg-secondary"> 按 Google 项目 </strong>
@@ -474,7 +506,7 @@ export default function SettingsAdminPage() {
               <input
                 type="number"
                 min={1}
-                max={1000}
+                max={5000}
                 value={rateForm.image_rate_limit_per_min}
                 onChange={(e) =>
                   setRateForm({
@@ -495,7 +527,7 @@ export default function SettingsAdminPage() {
               <input
                 type="number"
                 min={1}
-                max={1000}
+                max={5000}
                 value={rateForm.image_rate_burst}
                 onChange={(e) =>
                   setRateForm({ ...rateForm, image_rate_burst: e.target.value })
