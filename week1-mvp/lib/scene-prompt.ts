@@ -1,17 +1,12 @@
 /**
  * Scene Tools — 服饰场景图（统一工具）· v3 加焦点开关 + 特写 + 材质词库
+ * v6: 加 hasBackReference + IMAGE 3（背部参考）
  *
  *   产品图（含模特+服装）+ 场景描述 → 把模特放到该场景里重新拍
  *
  * 场景有两种描述方式：
  *   1. 文字场景（free text）—— 模型自由发挥取景 / 光线 / 构图
  *   2. 图片场景（plate）—— 模型把 plate 当氛围参考
- *
- * v3（2026-05）：
- *   - 接 FocusMode 开关（model_first 默认，balanced，environmental）
- *   - 接 closeup 镜头预设（5 套）
- *   - 接材质词库（lib/materials.ts → formatMaterialDetails）
- *   - 加"同一场景多变体背景一致"约束
  */
 
 import {
@@ -30,6 +25,8 @@ export interface SceneShootOpts {
   closeupKey?: CloseupKey;
   materialDetailsText?: string;
   sceneTotalItems?: number;
+  /** 背部参考图（IMAGE 3）是否随请求附带。kind=closeup + isBack 时才有意义 */
+  hasBackReference?: boolean;
 }
 
 export function buildSceneShootText(
@@ -53,6 +50,7 @@ ${userHint.trim()}\n`
     variantTotal: opts.variantTotal,
     closeupKey: opts.closeupKey,
     materialDetailsText: opts.materialDetailsText,
+    hasBackReference: opts.hasBackReference,
   });
 
   const sceneConsistencyBlock =
@@ -66,10 +64,26 @@ ${userHint.trim()}\n`
 都来自同一次拍摄，不允许换日时段、换天气、换背景。\n`
       : "";
 
-  return `You will receive ONE image:
+  // 文字场景 + 特写 + 有背部参考图 → IMAGE 2 是背部图（无场景 plate 时）
+  const inputImagesIntro = opts.hasBackReference
+    ? `You will receive TWO images:
+
+▸ IMAGE 1 — A photograph of a model wearing a specific garment (front).
+   THAT BACKGROUND WILL BE COMPLETELY DISCARDED.
+▸ IMAGE 2 — BACK VIEW reference of the same garment (for back closeup).`
+    : `You will receive ONE image:
 
 ▸ IMAGE 1 — A photograph of a model wearing a specific garment in some
-   prior background. THAT BACKGROUND WILL BE COMPLETELY DISCARDED.
+   prior background. THAT BACKGROUND WILL BE COMPLETELY DISCARDED.`;
+
+  // 文字模式下没有场景 plate，所以背部参考图占用 IMAGE 2 的位置；
+  // 在 framingBlock 内提到的 IMAGE 3 在文字模式下其实是 IMAGE 2，
+  // 这里加一句说明让模型不要混淆。
+  const indexRemap = opts.hasBackReference
+    ? `\n（注：本请求只有 2 张图。framing block 里提到的 IMAGE 3「背部参考」在本请求中是 IMAGE 2，对应规则不变。）\n`
+    : "";
+
+  return `${inputImagesIntro}
 
 ══════════════════════════════════════════════════════════
 🚨 TASK — Re-shoot the same model + same garment at a new scene
@@ -107,6 +121,7 @@ ${sceneClean}
   a "cut-out / pasted-on" composite feel.
 
 ${framingBlock}
+${indexRemap}
 ${sceneConsistencyBlock}
 ══════════════════════════════════════════════════════════
 ❌ FORBIDDEN
@@ -151,6 +166,7 @@ ${userHint.trim()}\n`
     variantTotal: opts.variantTotal,
     closeupKey: opts.closeupKey,
     materialDetailsText: opts.materialDetailsText,
+    hasBackReference: opts.hasBackReference,
   });
 
   const sceneConsistencyBlock =
@@ -165,12 +181,23 @@ ${userHint.trim()}\n`
 绝不允许换天气、换日时段、换不同的房间。\n`
       : "";
 
-  return `You will receive TWO images:
+  // 图片场景模式：IMAGE 2 永远是场景 plate；背部参考图在 IMAGE 3
+  const inputImagesIntro = opts.hasBackReference
+    ? `You will receive THREE images:
+
+▸ IMAGE 1 — A photograph of a model wearing a specific garment (front)
+   (her face / hair / dress are what we keep; the original background
+   is to be DISCARDED).
+▸ IMAGE 2 — The new location / scene where to put her.${sceneHint}
+▸ IMAGE 3 — BACK VIEW reference of the same garment (for back closeup).`
+    : `You will receive TWO images:
 
 ▸ IMAGE 1 — A photograph of a model wearing a specific garment
    (her face / hair / dress are what we keep; the original background
    is to be DISCARDED).
-▸ IMAGE 2 — The new location / scene where to put her.${sceneHint}
+▸ IMAGE 2 — The new location / scene where to put her.${sceneHint}`;
+
+  return `${inputImagesIntro}
 
 ══════════════════════════════════════════════════════════
 🚨 TASK — Place the model from IMAGE 1 into IMAGE 2's location,

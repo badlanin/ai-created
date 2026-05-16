@@ -54,6 +54,9 @@ type ProductFile = {
   id: string;
   file: File;
   url: string; // local preview
+  // v6: 该产品的背部参考图（可选）
+  backFile?: File;
+  backUrl?: string;
 };
 
 // 单场景输出 = count（常规变体）+ closeup_presets.length（特写多选）
@@ -472,12 +475,38 @@ export default function SceneToolsPage() {
   }
 
   function removeProduct(id: string) {
-    setProducts((prev) => prev.filter((p) => p.id !== id));
+    setProducts((prev) => {
+      const p = prev.find((x) => x.id === id);
+      if (p?.backUrl) URL.revokeObjectURL(p.backUrl);
+      return prev.filter((x) => x.id !== id);
+    });
     const url = productUrlsRef.current.get(id);
     if (url) {
       URL.revokeObjectURL(url);
       productUrlsRef.current.delete(id);
     }
+  }
+
+  // v6: 给某个产品添加 / 替换 / 移除背部参考图
+  function setProductBackRef(productId: string, file: File) {
+    setProducts((prev) =>
+      prev.map((p) => {
+        if (p.id !== productId) return p;
+        if (p.backUrl) URL.revokeObjectURL(p.backUrl);
+        const backUrl = URL.createObjectURL(file);
+        return { ...p, backFile: file, backUrl };
+      }),
+    );
+  }
+
+  function removeProductBackRef(productId: string) {
+    setProducts((prev) =>
+      prev.map((p) => {
+        if (p.id !== productId) return p;
+        if (p.backUrl) URL.revokeObjectURL(p.backUrl);
+        return { ...p, backFile: undefined, backUrl: undefined };
+      }),
+    );
   }
 
   // 添加文字场景
@@ -557,6 +586,16 @@ export default function SceneToolsPage() {
   const estCostCny = totalCount * 1.7; // Pro 4K 约 ¥1.7/张
   const showWarning = totalCount > 20;
 
+  // v6: 任意场景勾选了"背面"系特写时，提示用户上传背部参考图
+  const BACK_KEYS = new Set<string>([
+    "back",
+    "hand_on_hip_back",
+    "arms_overhead_back",
+  ]);
+  const needsBackRef = scenes.some((s) =>
+    s.closeup_presets.some((k) => BACK_KEYS.has(k)),
+  );
+
   const canSubmit =
     !submitting && products.length > 0 && scenes.length > 0 && !activeJobId;
 
@@ -588,6 +627,10 @@ export default function SceneToolsPage() {
       const fd = new FormData();
       products.forEach((p, i) => {
         fd.append(`product_image_${i}`, p.file, p.file.name);
+        // v6: 该产品如果上传了背部参考图，跟着同一个 idx 传
+        if (p.backFile) {
+          fd.append(`back_reference_image_${i}`, p.backFile, p.backFile.name);
+        }
       });
       const scenesPayload = scenes.map((s) => {
         const count = Math.max(0, Math.min(5, s.count || 0));
@@ -747,8 +790,13 @@ export default function SceneToolsPage() {
             />
           ) : (
             <>
+              {needsBackRef && (
+                <div className="mb-2 p-2 rounded text-[10px] bg-[var(--brand-50-bg)] border border-brand-200 text-brand-700">
+                  📷 检测到你选了背面相关的特写镜头（后背 / 抚臀回眸 / 举臂背身）。建议给每件产品上传一张「背部参考图」——模型会根据它精准还原背部细节（露背、绑带、刺绣）。不传也能跑，但背部细节模型会猜。
+                </div>
+              )}
               <div className="grid grid-cols-3 gap-2 max-h-[480px] overflow-y-auto pr-1">
-                {products.map((p) => (
+                {products.map((p, idx) => (
                   <div key={p.id} className="relative group">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
@@ -756,6 +804,10 @@ export default function SceneToolsPage() {
                       alt={p.file.name}
                       className="w-full aspect-[3/4] object-cover rounded border border-border-subtle"
                     />
+                    {/* 产品编号角标 */}
+                    <div className="absolute top-1 left-1 px-1 py-0.5 text-[9px] bg-black/60 text-white rounded">
+                      P{idx + 1}
+                    </div>
                     <button
                       onClick={() => removeProduct(p.id)}
                       className="absolute top-1 right-1 p-1 bg-black/60 text-white rounded hover:bg-black/80 opacity-0 group-hover:opacity-100 transition-opacity"
@@ -763,6 +815,45 @@ export default function SceneToolsPage() {
                     >
                       <X size={12} />
                     </button>
+                    {/* v6: 背部参考图小角标（仅当任意场景勾选了背面特写时显示） */}
+                    {needsBackRef && (
+                      <div className="absolute bottom-1 left-1 right-1">
+                        {p.backUrl ? (
+                          <div className="relative group/back">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={p.backUrl}
+                              alt="back ref"
+                              className="w-full h-8 object-cover rounded border-2 border-brand-400"
+                              title="背部参考图（已上传）"
+                            />
+                            <button
+                              onClick={() => removeProductBackRef(p.id)}
+                              className="absolute -top-1 -right-1 p-0.5 bg-danger text-white rounded-full opacity-0 group-hover/back:opacity-100"
+                              title="移除背部参考图"
+                            >
+                              <X size={10} />
+                            </button>
+                          </div>
+                        ) : (
+                          <label
+                            className="block w-full px-1 py-1 text-[9px] text-center bg-black/70 text-white rounded cursor-pointer hover:bg-black/90 border border-brand-300/50"
+                            title="上传该产品的背部参考图"
+                          >
+                            + 背部参考图
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const f = e.target.files?.[0];
+                                if (f) setProductBackRef(p.id, f);
+                              }}
+                            />
+                          </label>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1275,6 +1366,8 @@ function SceneEntryCard({
       <div className="flex flex-wrap gap-0.5 flex-1">
         {CLOSEUP_PRESETS.map((p) => {
           const on = entry.closeup_presets.includes(p.key as CloseupKey);
+          const isRecommended = (p as { recommended?: boolean }).recommended;
+          const isBack = (p as { isBack?: boolean }).isBack;
           return (
             <button
               key={p.key}
@@ -1282,12 +1375,21 @@ function SceneEntryCard({
               onClick={() => onToggleCloseup(p.key as CloseupKey)}
               className={
                 on
-                  ? "px-1.5 py-0.5 rounded text-[10px] bg-brand-500 text-white"
-                  : "px-1.5 py-0.5 rounded text-[10px] bg-bg-base text-fg-secondary border border-border-subtle hover:bg-brand-50 hover:text-brand-600"
+                  ? "px-1.5 py-0.5 rounded text-[10px] bg-brand-500 text-white inline-flex items-center gap-0.5"
+                  : "px-1.5 py-0.5 rounded text-[10px] bg-bg-base text-fg-secondary border border-border-subtle hover:bg-brand-50 hover:text-brand-600 inline-flex items-center gap-0.5"
               }
-              title={p.description.slice(0, 80)}
+              title={
+                p.description.slice(0, 80) +
+                (isBack ? "（背面镜头，建议上传背部参考图）" : "")
+              }
             >
               {p.label}
+              {isRecommended && (
+                <span className="text-[8px] opacity-80">★</span>
+              )}
+              {isBack && (
+                <span className="text-[8px] opacity-70">🔁</span>
+              )}
             </button>
           );
         })}

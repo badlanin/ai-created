@@ -1,12 +1,18 @@
 /**
- * Scene Tools — Framing prompt 词库（v5 加焦点开关 + 特写预设 + 材质词库注入）
+ * Scene Tools — Framing prompt 词库（v6 加姿势型特写 + 背部参考图支持）
  *
- * v5 (2026-05)：
- *   - 占比改 70-80%（之前 50%），删 long full body / floor space 远景档
- *   - 加 FocusMode：model_first / balanced / environmental
- *   - 加 5 套 CLOSEUP 镜头预设（与常规变体并列、可多选）
- *   - 接入材质词库（lib/materials.ts）—— 特写时按 visual_traits /
- *     light_behavior / texture_rules / dont_confuse_with 自动拼 prompt
+ * v6 (2026-05)：
+ *   - CLOSEUP_PRESETS 从 5 增到 9：
+ *     - 原有：后背 / 侧腰 / 胸腿 / 下半身 / 颈肩
+ *     - 新增（标 recommended）：抚腰 / 抚臀回眸 / 举臂背身 / 提裙侧步
+ *   - 每个预设加 isBack 字段，标记"涉及背面"的预设
+ *     —— 用户选了 isBack 时，前端会弹出背部参考图上传 UI
+ *   - buildFramingBlock 加 hasBackReference 参数 + 背面专项 prompt 块
+ *
+ * v5 历史：
+ *   - 占比 70-80%（之前 50%），删 long full body / floor space 远景档
+ *   - FocusMode 三档：model_first / balanced / environmental
+ *   - 接入材质词库（lib/materials.ts）
  */
 
 export type FocusMode = "model_first" | "balanced" | "environmental";
@@ -20,39 +26,89 @@ const REGULAR_VARIANT_PRESETS: string[] = [
 ];
 
 export const CLOSEUP_PRESETS = [
+  // ─── 原 5 个（按裁切区域分） ───
   {
     key: "back" as const,
     label: "后背特写",
+    isBack: true,
+    recommended: false,
     description:
       "后背特写镜头：相机正后方约 1.5m。构图框定上肩→腰部/上臀（半身），如果服装是长尾设计则可框到大腿。重点呈现：露背设计 / 后裙身褶皱走向 / 后腰剪裁 / 后颈线 / 拉链或绑带细节。模特的脸只露出后脑或被发遮，不入正脸。",
   },
   {
     key: "side_waist" as const,
     label: "侧腰特写",
+    isBack: false,
+    recommended: false,
     description:
-      "侧腰特写镜头：相机偏侧位 ~80°。构图框定胸→大腿上段（半身侧面）。重点呈现：束腰剪裁 / 腰线曲线 / 侧身面料垂坠 / 高光走向沿身体侧面流淌。脸最多露下半（下巴+嘴），不强调正脸识别。",
+      "侧腰特写镜头：相机偏侧位 ~80°。构图框定胸→大腿上段（半身侧面）。重点呈现:束腰剪裁 / 腰线曲线 / 侧身面料垂坠 / 高光走向沿身体侧面流淌。脸最多露下半（下巴+嘴），不强调正脸识别。",
   },
   {
     key: "chest_to_thigh" as const,
     label: "胸口至大腿特写",
+    isBack: false,
+    recommended: false,
     description:
       "胸口至大腿特写镜头：相机正前方约 1.2m。构图框定锁骨/胸口→大腿上段（半身正面）。重点呈现：颈线设计 / 胸口面料 / 腰部剪裁 / 腰部至大腿处面料垂坠和褶皱。脸只露下颌或不入镜，整个画面被服装填充。",
   },
   {
     key: "lower_body_motion" as const,
     label: "下半身动态",
+    isBack: false,
+    recommended: false,
     description:
       "下半身动态特写镜头：相机俯视约 30°或正面腰部高度。构图框定腰→脚（裙摆下半身）。重点呈现：裙摆飘逸 / 走动产生的褶皱与气流 / 一只手提裙的手部细节 / 开衩处的腿部线条 / 鞋面与裙摆的互动。模特身体只露下半，无脸无肩。",
   },
   {
     key: "neckline_shoulder" as const,
     label: "领口至肩特写",
+    isBack: false,
+    recommended: false,
     description:
       "领口至肩特写镜头：相机正前方约 0.8m，略略仰角。构图框定下颌→胸口上方（领口和肩部区域）。重点呈现：颈线设计 / 锁骨曲线 / 肩带 / 一字肩或抹胸边缘 / 领口的褶皱或装饰 / 配饰（项链、耳环）与领口的呼应。脸只露下半（嘴和下巴），不强调眼神。",
+  },
+  // ─── v6 新增 4 个（按姿势分，全部标 recommended） ───
+  {
+    key: "hand_on_waist" as const,
+    label: "抚腰",
+    isBack: false,
+    recommended: true,
+    description:
+      "抚腰姿势特写：相机正前方或 3/4 侧，腰部高度。构图框定胸→大腿上段（半身）。姿势：模特单手或双手轻按腰侧（不是用力夹腰，是放松地搭着），手指自然分开，手腕略外翻露出腕骨线条。重点呈现：束腰剪裁 / 腰线曲线 / 手腕和腰部的几何关系 / 腰部面料褶皱被手部轻压形成的细微肌理变化。脸最多露下半。",
+  },
+  {
+    key: "hand_on_hip_back" as const,
+    label: "抚臀回眸",
+    isBack: true,
+    recommended: true,
+    description:
+      "抚臀回眸姿势特写：相机正后方约 1.5m 或 3/4 后位。构图框定上肩→上臀（半身背身）。姿势：模特单手或双手轻按腰侧/上臀，手肘自然外展，头部回眸侧首露出 1/3 侧脸或仅下颌轮廓。重点呈现：后背露背设计 / 后腰曲线 / 上臀廓型 / 手部在身体后侧的几何线条 / 头发自然散落至肩或半盘起。",
+  },
+  {
+    key: "arms_overhead_back" as const,
+    label: "举臂背身",
+    isBack: true,
+    recommended: true,
+    description:
+      "举臂背身姿势特写：相机正后方约 1.5m 或 3/4 后位。构图框定头顶→腰部（半身背身，举手时构图允许包含手臂）。姿势：模特双手或单手举过头/搭在后颈/扶后脑，手臂自然弯曲，肩胛骨打开，整片后背展露。重点呈现：露背设计的完整剪裁 / 后颈线 / 肩胛区域 / 抬臂时的腰线侧拉曲线 / 头发被举起或散落。脸只露后脑或侧轮廓。",
+  },
+  {
+    key: "lift_skirt_step" as const,
+    label: "提裙侧步",
+    isBack: false,
+    recommended: true,
+    description:
+      "提裙侧步姿势特写：相机偏侧位 ~70° 或正面，腰至脚高度。构图框定腰→脚（下半身侧面或半正面）。姿势：模特单手提起裙摆侧边（不是兜住，是用指尖轻捏裙边自然提起），同时侧迈一步，前脚踩稳后脚轻点。重点呈现：裙摆被提起后的褶皱走向 / 侧迈步产生的开衩或下摆飘动 / 提裙手部的指节细节 / 鞋面与裙摆边缘的关系。无脸无肩。",
   },
 ];
 
 export type CloseupKey = (typeof CLOSEUP_PRESETS)[number]["key"];
+
+/** 工具：判断某个 closeupKey 是否需要"背部参考图" */
+export function isBackCloseupKey(key: CloseupKey | undefined): boolean {
+  if (!key) return false;
+  return CLOSEUP_PRESETS.find((p) => p.key === key)?.isBack === true;
+}
 
 function getFramingByFocus(focus: FocusMode): string {
   switch (focus) {
@@ -83,6 +139,8 @@ export interface FramingOpts {
   variantTotal?: number;
   closeupKey?: CloseupKey;
   materialDetailsText?: string;
+  /** 背部参考图（IMAGE 3）是否已附在请求里。kind=closeup + isBack 时才生效 */
+  hasBackReference?: boolean;
 }
 
 export function buildFramingBlock(opts: FramingOpts): string {
@@ -93,6 +151,7 @@ export function buildFramingBlock(opts: FramingOpts): string {
     variantTotal,
     closeupKey,
     materialDetailsText,
+    hasBackReference,
   } = opts;
 
   let cameraBlock = "";
@@ -140,13 +199,46 @@ export function buildFramingBlock(opts: FramingOpts): string {
 
 - 大光圈 f/1.4 ~ f/2.0 浅景深
 - 背景纯虚化（bokeh）：场景仅作色调氛围和环境光提示，物体形状彻底糊掉
-- 主体面料质感清晰锐利（focus plane 在服装本身）
+- 主体面料质感清晰锐利（focus plane 在服装本身)
 - 光打到服装关键面料区域，呈现该面料应有的光感（缎面看高光、蕾丝看镂空、雪纺看半透 etc.）
 
 ⚠️ 重要：背景虚化但仍来自原场景。同一个场景的常规变体 + 特写镜头必须是
 "同一地点、同一时段、同一光线方向"，特写只是镜头拉近 + 加大光圈虚化，
 不是换场景或换光线。`
       : "";
+
+  // 背部参考图专项约束（仅当 kind=closeup + isBack + hasBackReference 时启用）
+  const isBack =
+    kind === "closeup" && closeupKey
+      ? CLOSEUP_PRESETS.find((p) => p.key === closeupKey)?.isBack === true
+      : false;
+  const backReferenceBlock =
+    isBack && hasBackReference
+      ? `\n══════════════════════════════════════════════════════════
+🔁 背部参考图（IMAGE 3）专项约束
+══════════════════════════════════════════════════════════
+
+请求中第 3 张图（IMAGE 3）是这件服装的官方背部参考图。本张特写是背面取向，
+所有背部细节必须严格按 IMAGE 3 还原：
+
+- 露背设计（U 型 / V 型 / 方型 / 全开 / 镂空形状）100% 按 IMAGE 3
+- 后腰剪裁、绑带、蝴蝶结、拉链位置 100% 按 IMAGE 3
+- 后片刺绣 / 蕾丝 / 钉珠图案、密度、走向 100% 按 IMAGE 3
+- 后裙身褶皱方向 / 拼接缝位 100% 按 IMAGE 3
+- 后片面料肌理（缎面光感 / 蕾丝镂空 / 雪纺垂坠）100% 按 IMAGE 3
+
+⚠️ 严禁根据 IMAGE 1（正面图）推测背部 —— 必须以 IMAGE 3 为唯一权威。
+模特的身材曲线 / 肤色 / 发色仍以 IMAGE 1 为准，IMAGE 3 仅提供"衣物背面"。`
+      : isBack && !hasBackReference
+        ? `\n══════════════════════════════════════════════════════════
+⚠️ 背部参考图未提供
+══════════════════════════════════════════════════════════
+
+本张是背面特写但没有背部参考图。请基于 IMAGE 1 的款式合理推测背部，但：
+- 避免编造不存在的剪裁 / 装饰 / 镂空形状
+- 默认背部是闭合的（除非 IMAGE 1 正面明示了露背设计）
+- 优先用"含蓄保守"的背面，避免猜错。`
+        : "";
 
   const materialBlock = materialDetailsText
     ? `\n══════════════════════════════════════════════════════════
@@ -203,6 +295,7 @@ ${getFramingByFocus(focusMode)}
     closeupOpticsBlock,
     interactionBlock,
     consistencyBlock,
+    backReferenceBlock,
     materialBlock,
     hardConstraints,
   ]

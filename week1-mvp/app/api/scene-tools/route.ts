@@ -16,6 +16,7 @@ import {
 } from "@/lib/scene-prompt";
 import {
   CLOSEUP_PRESETS,
+  isBackCloseupKey,
   type CloseupKey,
   type FocusMode,
 } from "@/lib/scene-tools-prompt";
@@ -70,26 +71,46 @@ export async function POST(req: NextRequest) {
 
     const formData = await req.formData();
 
-    // ─── 收集产品图 ───
+    // ─── 收集产品图 + 背部参考图 ───
+    // 产品图按 product_image_<i> 收集（i 从 0 起）
+    // 背部参考图按 back_reference_image_<i> 收集（i 对应产品 idx，可选）
     const productFiles: File[] = [];
+    const backRefFiles: Map<number, File> = new Map(); // product_idx -> back ref file
     for (const [key, value] of formData.entries()) {
-      if (/^product_image_?\d+$/.test(key) && value instanceof File) {
-        productFiles.push(value);
+      const productMatch = key.match(/^product_image_?(\d+)$/);
+      if (productMatch && value instanceof File) {
+        const idx = Number(productMatch[1]);
+        productFiles[idx] = value;
+        continue;
+      }
+      const backMatch = key.match(/^back_reference_image_?(\d+)$/);
+      if (backMatch && value instanceof File) {
+        const idx = Number(backMatch[1]);
+        if (value.size > 20 * 1024 * 1024) {
+          return NextResponse.json(
+            { error: `背部参考图 ${value.name} 太大（限 20MB）` },
+            { status: 400 },
+          );
+        }
+        backRefFiles.set(idx, value);
+        continue;
       }
     }
-    if (productFiles.length === 0) {
+    // 去掉 productFiles 数组里的稀疏 hole（用户上传顺序不连续时）
+    const compactProductFiles = productFiles.filter((f) => f instanceof File);
+    if (compactProductFiles.length === 0) {
       return NextResponse.json(
         { error: "请上传至少一张产品图" },
         { status: 400 },
       );
     }
-    if (productFiles.length > 30) {
+    if (compactProductFiles.length > 30) {
       return NextResponse.json(
         { error: "产品图最多 30 张（防止误操作出图爆量）" },
         { status: 400 },
       );
     }
-    for (const f of productFiles) {
+    for (const f of compactProductFiles) {
       if (f.size > 20 * 1024 * 1024) {
         return NextResponse.json(
           { error: `产品图 ${f.name} 太大（限 20MB）` },
@@ -97,6 +118,9 @@ export async function POST(req: NextRequest) {
         );
       }
     }
+    // 用 compact 后的数组替换
+    productFiles.length = 0;
+    productFiles.push(...compactProductFiles);
 
     // ─── 解析 scenes 数组 ───
     // 每个 scene 包含：
@@ -381,7 +405,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // ─── 落盘产品图到 job 输入目录 ───
+    // ─── 落盘产品图 + 背部参考图到 job 输入目录 ───
     const inputsDir = path.join(DATA_DIR_PATH, "job-inputs", job.id);
     await fs.mkdir(inputsDir, { recursive: true });
     const productPaths: string[] = [];
@@ -400,7 +424,29 @@ export async function POST(req: NextRequest) {
       productPaths.push(abs);
       productMimes.push(f.type || "image/jpeg");
     }
-    // 把 product_paths / product_mime_types 补进 params
+    // 背部参考图（可选，跟产品 idx 对齐，缺失则为 null）
+    const backRefPaths: Array<string | null> = [];
+    const backRefMimes: Array<string | null> = [];
+    for (let i = 0; i < productFiles.length; i++) {
+      const f = backRefFiles.get(i);
+      if (!f) {
+        backRefPaths.push(null);
+        backRefMimes.push(null);
+        continue;
+      }
+      const ext =
+        f.type === "image/png"
+          ? "png"
+          : f.type === "image/webp"
+            ? "webp"
+            : "jpg";
+      const filename = `back_${i}.${ext}`;
+      const abs = path.join(inputsDir, filename);
+      await fs.writeFile(abs, Buffer.from(await f.arrayBuffer()));
+      backRefPaths.push(abs);
+      backRefMimes.push(f.type || "image/jpeg");
+    }
+    // 把 product_paths / back_ref_paths 补进 params
     const existingParams = (() => {
       try {
         return JSON.parse(job.params || "{}") as Record<string, unknown>;
@@ -413,6 +459,8 @@ export async function POST(req: NextRequest) {
         ...existingParams,
         product_paths: productPaths,
         product_mime_types: productMimes,
+        back_ref_paths: backRefPaths,
+        back_ref_mime_types: backRefMimes,
       }),
       job.id,
     );
@@ -494,6 +542,9 @@ async function sceneToolsItemHandler(
     }>;
     product_paths: string[];
     product_mime_types: string[];
+    // v6 新增
+    back_ref_paths?: Array<string | null>;
+    back_ref_mime_types?: Array<string | null>;
   };
 
   const itemMeta = p.items[ctx.item.idx];
@@ -507,6 +558,17 @@ async function sceneToolsItemHandler(
   const closeupKey = itemMeta.closeup_key;
   const focusMode: FocusMode = p.focus_mode ?? "model_first";
   const materialDetailsText = p.material_details_text || undefined;
+
+  // 当前 item 是否需要背部参考图（特写 + isBack 预设 + 该产品上传过背图）
+  const needsBackRef =
+    kind === "closeup" && isBackCloseupKey(closeupKey);
+  const backRefPath = needsBackRef
+    ? p.back_ref_paths?.[itemMeta.product_idx] || null
+    : null;
+  const backRefMime = needsBackRef
+    ? p.back_ref_mime_types?.[itemMeta.product_idx] || null
+    : null;
+  const hasBackReference = !!backRefPath;
 
   // 预算兜底
   const status = getUserBudgetStatus(ctx.userId);
@@ -539,6 +601,7 @@ async function sceneToolsItemHandler(
     closeupKey,
     materialDetailsText,
     sceneTotalItems,
+    hasBackReference,
   };
 
   let prompt: string;
@@ -568,6 +631,14 @@ async function sceneToolsItemHandler(
       p.user_hint || undefined,
       promptOpts,
     );
+  }
+  // 背部参考图（IMAGE 3）—— 仅在需要时附上，跟产品图配对
+  if (hasBackReference && backRefPath) {
+    const backBuf = await fs.readFile(backRefPath);
+    inputs.push({
+      buffer: backBuf,
+      mimeType: backRefMime || "image/jpeg",
+    });
   }
 
   // 调出图（gemini-image / openai-image 自动分发）
@@ -630,6 +701,7 @@ async function sceneToolsItemHandler(
       variant_idx: variantIdx,
       variant_total: variantTotal,
       closeup_key: closeupKey,
+      has_back_reference: hasBackReference,
       scene_type: scene.type,
       focus_mode: focusMode,
       aspect_ratio: p.aspect_ratio,
