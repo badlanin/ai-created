@@ -9,6 +9,7 @@ import {
   PlusCircle,
   PenLine,
   Image as ImageIcon,
+  ZoomIn,
 } from "lucide-react";
 import { useCurrentUser } from "@/lib/hooks/use-current-user";
 import { useJobPolling } from "@/lib/hooks/use-job-polling";
@@ -18,6 +19,23 @@ import {
   TEXT_SCENE_PRESETS as STATIC_PRESETS,
   type TextScenePreset,
 } from "@/lib/text-scene-presets";
+import { CLOSEUP_PRESETS } from "@/lib/scene-tools-prompt";
+
+// 客户端不直接 import server-only 的 type；用 string literal union 防 ts boundary 报错
+type CloseupKey =
+  | "back"
+  | "side_waist"
+  | "chest_to_thigh"
+  | "lower_body_motion"
+  | "neckline_shoulder";
+type FocusMode = "model_first" | "balanced" | "environmental";
+
+type MaterialRow = {
+  id: number;
+  name: string;
+  english_name: string | null;
+  description: string | null;
+};
 
 /* ─────────────────────────────────────────────────────────
  *  类型
@@ -38,18 +56,31 @@ type ProductFile = {
   url: string; // local preview
 };
 
-// count = 这个场景出几张图（1-5，默认 1）
-// N 张产品图 × 每个场景按 count 展开成 count 张 → 总 = N × sum(count)
-// 多张同场景由 prompt 自动加"变体 X/N 互动差异化"hint，避免重复
+// 单场景输出 = count（常规变体）+ closeup_presets.length（特写多选）
+// 总输出 = N 产品图 × Σ(单场景输出)
+// 常规变体由 prompt 自动加镜头预设循环；特写各自固定镜头
 type SceneEntry =
-  | { id: string; type: "text"; text: string; count: number }
+  | {
+      id: string;
+      type: "text";
+      text: string;
+      count: number;
+      closeup_presets: CloseupKey[];
+    }
   | {
       id: string;
       type: "image";
       scene_id: number;
       scene_name: string;
       count: number;
+      closeup_presets: CloseupKey[];
     };
+
+const FOCUS_MODES: Array<{ value: FocusMode; label: string; hint: string }> = [
+  { value: "model_first", label: "🎯 模特主体", hint: "占比 70-80%（默认）" },
+  { value: "balanced", label: "⚖️ 场景平衡", hint: "占比 50-60%" },
+  { value: "environmental", label: "🏛️ 环境氛围", hint: "占比 30-40%" },
+];
 
 const ASPECT_RATIOS = [
   { value: "3:4", label: "3:4 竖（推荐）" },
@@ -206,6 +237,15 @@ export default function SceneToolsPage() {
   const [userHint, setUserHint] = useState("");
   const [modelId, setModelId] = useState("gemini-3-pro-image-preview");
   const [imageSize, setImageSize] = useState<"1K" | "2K" | "4K">("2K");
+  const [focusMode, setFocusMode] = useState<FocusMode>("model_first");
+
+  // 材质（首次产品图上传后自动调 /api/analyze → /api/materials/match 拿匹配结果）
+  const [allMaterials, setAllMaterials] = useState<MaterialRow[]>([]);
+  const [matchedMaterialIds, setMatchedMaterialIds] = useState<number[]>([]);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzedFingerprint, setAnalyzedFingerprint] = useState<string | null>(
+    null,
+  );
 
   // 提交
   const [submitting, setSubmitting] = useState(false);
@@ -287,40 +327,57 @@ export default function SceneToolsPage() {
         if (typeof params.user_hint === "string")
           setUserHint(params.user_hint || "");
         if (typeof data.job.model === "string") setModelId(data.job.model);
-        // scenes 反填：从 items 里推每个 scene 的 count（variant_total）
-        type ItemMeta = {
-          scene_idx: number;
-          variant_total?: number;
+        if (
+          params.focus_mode === "model_first" ||
+          params.focus_mode === "balanced" ||
+          params.focus_mode === "environmental"
+        )
+          setFocusMode(params.focus_mode);
+        if (Array.isArray(params.material_ids))
+          setMatchedMaterialIds(
+            (params.material_ids as unknown[])
+              .map((x) => Number(x))
+              .filter((x) => Number.isFinite(x) && x > 0),
+          );
+        // scenes 反填：直接从 scenes payload 里读 count + closeup_presets
+        type ScenePayload = {
+          type: "text" | "image";
+          text?: string;
+          scene_id?: number;
+          scene_name?: string;
+          count?: number;
+          closeup_presets?: string[];
         };
-        const items = (params.items as ItemMeta[]) || [];
-        const sceneCountMap = new Map<number, number>();
-        for (const it of items) {
-          if (typeof it.scene_idx === "number") {
-            sceneCountMap.set(it.scene_idx, it.variant_total ?? 1);
-          }
-        }
-        type ScenePayload =
-          | { type: "text"; text: string }
-          | {
-              type: "image";
-              scene_id: number;
-              scene_name?: string;
-              scene_image_path?: string;
-            };
         const scenesRaw = (params.scenes as ScenePayload[]) || [];
         const prefilled: SceneEntry[] = scenesRaw.map((s, idx) => {
-          const count = sceneCountMap.get(idx) ?? 1;
+          const count =
+            typeof s.count === "number" ? Math.max(0, Math.min(5, s.count)) : 1;
+          const closeup_presets = (s.closeup_presets || []).filter(
+            (k): k is CloseupKey =>
+              k === "back" ||
+              k === "side_waist" ||
+              k === "chest_to_thigh" ||
+              k === "lower_body_motion" ||
+              k === "neckline_shoulder",
+          );
           const id = `prefill-${idx}-${Date.now()}`;
-          if (s.type === "image") {
+          if (s.type === "image" && typeof s.scene_id === "number") {
             return {
               id,
               type: "image",
               scene_id: s.scene_id,
               scene_name: s.scene_name || `场景#${s.scene_id}`,
               count,
+              closeup_presets,
             };
           }
-          return { id, type: "text", text: s.text, count };
+          return {
+            id,
+            type: "text",
+            text: s.text || "",
+            count,
+            closeup_presets,
+          };
         });
         if (prefilled.length > 0) setScenes(prefilled);
         setPrefillBanner(
@@ -339,6 +396,64 @@ export default function SceneToolsPage() {
       }
     };
   }, []);
+
+  // ─── 首次上传产品图后自动解析面料 + 匹配材质词库 ───
+  // 用第一张产品图跑 /api/analyze → 拿到 garment_attrs.面料材质 字段 →
+  // POST 到 /api/materials/match 拿匹配到的材质 ID 列表 → 存到 state，
+  // 提交时一并传给后端。fingerprint = 第一张图的 file name+size，
+  // 避免重复 analyze 同一张图。用户可手动改（材质多选 UI 在第 ③ 列）。
+  useEffect(() => {
+    if (products.length === 0) {
+      setMatchedMaterialIds([]);
+      setAnalyzedFingerprint(null);
+      return;
+    }
+    const first = products[0];
+    const fp = `${first.file.name}::${first.file.size}`;
+    if (fp === analyzedFingerprint) return;
+    let cancelled = false;
+    (async () => {
+      setAnalyzing(true);
+      try {
+        // 1. 调 /api/analyze 解析款式
+        const fd = new FormData();
+        fd.append("image0", first.file, first.file.name);
+        const r1 = await fetch("/api/analyze", { method: "POST", body: fd });
+        if (!r1.ok) throw new Error("analyze failed");
+        const attrs = (await r1.json()) as Record<string, unknown>;
+        const fabricText = String(attrs["面料材质"] || "");
+        if (!fabricText.trim()) {
+          if (!cancelled) setMatchedMaterialIds([]);
+          return;
+        }
+        // 2. 用面料文本调 /api/materials/match
+        const r2 = await fetch("/api/materials/match", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: fabricText }),
+        });
+        if (!r2.ok) throw new Error("match failed");
+        const data = (await r2.json()) as {
+          matched: MaterialRow[];
+          all: MaterialRow[];
+        };
+        if (cancelled) return;
+        setAllMaterials(data.all || []);
+        setMatchedMaterialIds((data.matched || []).map((m) => m.id));
+      } catch {
+        // 解析失败不阻断流程（拿不到材质也能跑，prompt 会让模型自己看图）
+        if (!cancelled) setMatchedMaterialIds([]);
+      } finally {
+        if (!cancelled) {
+          setAnalyzedFingerprint(fp);
+          setAnalyzing(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [products, analyzedFingerprint]);
 
   function onPickProducts(files: FileList | File[] | null) {
     if (!files || (files instanceof FileList ? files.length : files.length) === 0)
@@ -370,7 +485,7 @@ export default function SceneToolsPage() {
     const id = `text-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     setScenes((prev) => [
       ...prev,
-      { id, type: "text", text: initialText, count: 1 },
+      { id, type: "text", text: initialText, count: 1, closeup_presets: [] },
     ]);
   }
 
@@ -389,6 +504,7 @@ export default function SceneToolsPage() {
         scene_id: scene.id,
         scene_name: scene.name,
         count: 1,
+        closeup_presets: [],
       },
     ]);
   }
@@ -406,13 +522,37 @@ export default function SceneToolsPage() {
   }
 
   function updateSceneCount(id: string, count: number) {
-    const c = Math.max(1, Math.min(5, count));
+    // 允许 0（用户只想要特写镜头，没常规变体）
+    const c = Math.max(0, Math.min(5, count));
     setScenes((prev) => prev.map((s) => (s.id === id ? { ...s, count: c } : s)));
   }
 
+  function toggleSceneCloseup(id: string, key: CloseupKey) {
+    setScenes((prev) =>
+      prev.map((s) => {
+        if (s.id !== id) return s;
+        const has = s.closeup_presets.includes(key);
+        const next = has
+          ? s.closeup_presets.filter((k) => k !== key)
+          : [...s.closeup_presets, key];
+        return { ...s, closeup_presets: next };
+      }),
+    );
+  }
+
+  function toggleMaterial(matId: number) {
+    setMatchedMaterialIds((prev) =>
+      prev.includes(matId) ? prev.filter((x) => x !== matId) : [...prev, matId],
+    );
+  }
+
   // 总数 + 软警告
-  // 每张场景按它的 count 展开，total = N 张产品图 × sum(count)
-  const sceneTotal = scenes.reduce((sum, s) => sum + (s.count || 1), 0);
+  // 单场景输出 = count（常规变体）+ closeup_presets.length（特写多选）
+  // total = N 产品图 × Σ(单场景输出)
+  const sceneTotal = scenes.reduce(
+    (sum, s) => sum + (s.count || 0) + (s.closeup_presets?.length || 0),
+    0,
+  );
   const totalCount = products.length * sceneTotal;
   const estCostCny = totalCount * 1.7; // Pro 4K 约 ¥1.7/张
   const showWarning = totalCount > 20;
@@ -435,6 +575,11 @@ export default function SceneToolsPage() {
         setError("有空的文字场景，请填写或删除");
         return;
       }
+      const total = (s.count || 0) + (s.closeup_presets?.length || 0);
+      if (total === 0) {
+        setError("有场景没有勾选张数也没有特写镜头，请删除或加张数");
+        return;
+      }
     }
 
     setSubmitting(true);
@@ -445,15 +590,28 @@ export default function SceneToolsPage() {
         fd.append(`product_image_${i}`, p.file, p.file.name);
       });
       const scenesPayload = scenes.map((s) => {
-        const count = Math.max(1, Math.min(5, s.count || 1));
+        const count = Math.max(0, Math.min(5, s.count || 0));
+        const closeup_presets = (s.closeup_presets || []).slice(0, 5);
         if (s.type === "text")
-          return { type: "text", text: s.text.trim(), count };
-        return { type: "image", scene_id: s.scene_id, count };
+          return {
+            type: "text",
+            text: s.text.trim(),
+            count,
+            closeup_presets,
+          };
+        return {
+          type: "image",
+          scene_id: s.scene_id,
+          count,
+          closeup_presets,
+        };
       });
       fd.append("scenes", JSON.stringify(scenesPayload));
       fd.append("aspect_ratio", aspectRatio);
       fd.append("model", modelId);
       fd.append("image_size", imageSize);
+      fd.append("focus_mode", focusMode);
+      fd.append("material_ids", JSON.stringify(matchedMaterialIds));
       if (userHint.trim()) fd.append("user_hint", userHint.trim());
 
       const res = await fetch("/api/scene-tools", {
@@ -535,8 +693,8 @@ export default function SceneToolsPage() {
           服饰场景图
         </h1>
         <p className="mt-1 text-sm text-fg-tertiary">
-          上传 N 张产品成片 + 选 M 个场景（文字 / 图片混搭）→ 输出 N×M 张换景成片。
-          每张产品图都会和每个场景配出一张图。
+          上传产品图 + 选场景（每个场景独立配「常规变体张数 + 特写镜头多选」）→ 输出 N 产品 × Σ(每场景张数 + 特写数) 张图。
+          首张产品图会自动识别面料并配上材质词库。
         </p>
       </header>
 
@@ -664,6 +822,7 @@ export default function SceneToolsPage() {
                   onRemove={() => removeScene(s.id)}
                   onUpdateText={(t) => updateTextScene(s.id, t)}
                   onUpdateCount={(n) => updateSceneCount(s.id, n)}
+                  onToggleCloseup={(k) => toggleSceneCloseup(s.id, k)}
                   scenesLib={scenesLib}
                 />
               ))}
@@ -789,6 +948,79 @@ export default function SceneToolsPage() {
               </div>
             </div>
 
+            {/* 画面焦点（全局，控制"常规变体"占比；不影响特写镜头） */}
+            <div>
+              <label className="block text-[11px] text-fg-tertiary mb-1">
+                画面焦点（常规变体占比；不影响特写镜头）
+              </label>
+              <div className="grid grid-cols-3 gap-1">
+                {FOCUS_MODES.map((m) => (
+                  <button
+                    key={m.value}
+                    type="button"
+                    onClick={() => setFocusMode(m.value)}
+                    className={
+                      focusMode === m.value
+                        ? "px-1.5 py-1.5 rounded text-[10px] bg-brand-500 text-white font-medium"
+                        : "px-1.5 py-1.5 rounded text-[10px] bg-bg-base text-fg-secondary border border-border-subtle hover:bg-brand-50 hover:text-brand-600"
+                    }
+                    title={m.hint}
+                  >
+                    <div>{m.label}</div>
+                    <div
+                      className={
+                        focusMode === m.value
+                          ? "text-[9px] opacity-80"
+                          : "text-[9px] text-fg-muted"
+                      }
+                    >
+                      {m.hint}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 材质（首次上传后自动匹配，可手动改） */}
+            {(allMaterials.length > 0 || analyzing) && (
+              <div>
+                <label className="block text-[11px] text-fg-tertiary mb-1">
+                  服装材质
+                  {analyzing && (
+                    <span className="ml-2 text-fg-muted">分析中…</span>
+                  )}
+                  {!analyzing && matchedMaterialIds.length > 0 && (
+                    <span className="ml-2 text-brand-500">
+                      已识别 {matchedMaterialIds.length} 种
+                    </span>
+                  )}
+                </label>
+                <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
+                  {allMaterials.map((m) => {
+                    const on = matchedMaterialIds.includes(m.id);
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => toggleMaterial(m.id)}
+                        className={
+                          on
+                            ? "px-2 py-0.5 rounded text-[10px] bg-brand-500 text-white"
+                            : "px-2 py-0.5 rounded text-[10px] bg-bg-base text-fg-secondary border border-border-subtle hover:bg-brand-50 hover:text-brand-600"
+                        }
+                        title={m.description || m.name}
+                      >
+                        {m.name}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="text-[9px] text-fg-muted mt-1">
+                  自动从第一张产品图识别面料。点 tag 可手动增删。特写镜头时按选中材质的"光线特性 / 纹理规则"精确刻画。
+                </div>
+              </div>
+            )}
+
             <div>
               <label className="block text-[11px] text-fg-tertiary mb-1">
                 额外提示（可选）
@@ -846,6 +1078,7 @@ export default function SceneToolsPage() {
             </button>
           </div>
 
+          {/* 进度展示 */}
           {/* 进度展示 */}
           {activeJobId && job && (
             <div className="border-t border-border-subtle pt-3 space-y-2">
@@ -991,6 +1224,7 @@ function SceneEntryCard({
   onRemove,
   onUpdateText,
   onUpdateCount,
+  onToggleCloseup,
   scenesLib,
 }: {
   entry: SceneEntry;
@@ -998,14 +1232,17 @@ function SceneEntryCard({
   onRemove: () => void;
   onUpdateText: (text: string) => void;
   onUpdateCount: (count: number) => void;
+  onToggleCloseup: (key: CloseupKey) => void;
   scenesLib: Scene[];
 }) {
-  // 数量选择子组件（1-5），文字 + 图片场景共用
+  const sceneTotal = (entry.count || 0) + (entry.closeup_presets?.length || 0);
+
+  // 常规张数选择（0-5；0 = 只要特写）
   const CountPicker = (
     <div className="flex items-center gap-1.5">
-      <span className="text-[10px] text-fg-tertiary">出图</span>
+      <span className="text-[10px] text-fg-tertiary">常规</span>
       <div className="flex gap-0.5">
-        {[1, 2, 3, 4, 5].map((n) => (
+        {[0, 1, 2, 3, 4, 5].map((n) => (
           <button
             key={n}
             type="button"
@@ -1015,7 +1252,11 @@ function SceneEntryCard({
                 ? "w-5 h-5 rounded text-[10px] bg-brand-500 text-white font-medium"
                 : "w-5 h-5 rounded text-[10px] bg-bg-base text-fg-secondary border border-border-subtle hover:bg-brand-50 hover:text-brand-600"
             }
-            title={`这个场景出 ${n} 张图`}
+            title={
+              n === 0
+                ? "不出常规变体（只出特写）"
+                : `常规变体 ${n} 张（自动循环 5 种镜头预设）`
+            }
           >
             {n}
           </button>
@@ -1023,6 +1264,52 @@ function SceneEntryCard({
       </div>
     </div>
   );
+
+  // 特写镜头多选
+  const CloseupPicker = (
+    <div className="flex items-start gap-1.5">
+      <span className="text-[10px] text-fg-tertiary inline-flex items-center gap-0.5 pt-0.5 shrink-0">
+        <ZoomIn size={10} />
+        特写
+      </span>
+      <div className="flex flex-wrap gap-0.5 flex-1">
+        {CLOSEUP_PRESETS.map((p) => {
+          const on = entry.closeup_presets.includes(p.key as CloseupKey);
+          return (
+            <button
+              key={p.key}
+              type="button"
+              onClick={() => onToggleCloseup(p.key as CloseupKey)}
+              className={
+                on
+                  ? "px-1.5 py-0.5 rounded text-[10px] bg-brand-500 text-white"
+                  : "px-1.5 py-0.5 rounded text-[10px] bg-bg-base text-fg-secondary border border-border-subtle hover:bg-brand-50 hover:text-brand-600"
+              }
+              title={p.description.slice(0, 80)}
+            >
+              {p.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  // 子总数 hint
+  const SubTotal =
+    sceneTotal > 0 ? (
+      <div className="text-[10px] text-fg-muted">
+        本场景共出{" "}
+        <strong className="text-fg-secondary">{sceneTotal}</strong> 张
+        {entry.count > 0 && `（常规 ${entry.count}`}
+        {entry.count > 0 && entry.closeup_presets.length > 0 && " + "}
+        {entry.closeup_presets.length > 0 &&
+          `特写 ${entry.closeup_presets.length}`}
+        {(entry.count > 0 || entry.closeup_presets.length > 0) && "）"}
+      </div>
+    ) : (
+      <div className="text-[10px] text-warn">⚠️ 至少要 1 张常规或 1 个特写</div>
+    );
 
   if (entry.type === "text") {
     return (
@@ -1032,16 +1319,13 @@ function SceneEntryCard({
             <PenLine size={12} strokeWidth={2.2} />
             场景 {index} · 文字
           </div>
-          <div className="flex items-center gap-2">
-            {CountPicker}
-            <button
-              onClick={onRemove}
-              className="text-fg-muted hover:text-danger"
-              title="移除"
-            >
-              <X size={12} />
-            </button>
-          </div>
+          <button
+            onClick={onRemove}
+            className="text-fg-muted hover:text-danger"
+            title="移除"
+          >
+            <X size={12} />
+          </button>
         </div>
         <textarea
           value={entry.text}
@@ -1054,6 +1338,11 @@ function SceneEntryCard({
           <span>姿势由模型按场景描述自然生成</span>
           <span>{entry.text.length}/500</span>
         </div>
+        <div className="mt-1.5 space-y-1">
+          {CountPicker}
+          {CloseupPicker}
+          {SubTotal}
+        </div>
       </div>
     );
   }
@@ -1061,32 +1350,40 @@ function SceneEntryCard({
   // image
   const scene = scenesLib.find((s) => s.id === entry.scene_id);
   return (
-    <div className="p-2 bg-bg-tertiary rounded border border-border-subtle flex items-center gap-2">
-      {scene?.image_url && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={scene.image_url}
-          alt={entry.scene_name}
-          className="w-10 h-14 object-cover rounded border border-border-subtle"
-        />
-      )}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1 text-[11px] text-fg-secondary font-medium">
-          <ImageIcon size={11} strokeWidth={2.2} />
-          场景 {index} · 图片
+    <div className="p-2 bg-bg-tertiary rounded border border-border-subtle">
+      <div className="flex items-start gap-2">
+        {scene?.image_url && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={scene.image_url}
+            alt={entry.scene_name}
+            className="w-10 h-14 object-cover rounded border border-border-subtle shrink-0"
+          />
+        )}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-1">
+            <div className="text-[11px] text-fg-secondary font-medium inline-flex items-center gap-1">
+              <ImageIcon size={11} strokeWidth={2.2} />
+              场景 {index} · 图片
+            </div>
+            <button
+              onClick={onRemove}
+              className="text-fg-muted hover:text-danger"
+              title="移除"
+            >
+              <X size={12} />
+            </button>
+          </div>
+          <div className="text-sm font-medium text-fg-primary truncate">
+            {entry.scene_name}
+          </div>
         </div>
-        <div className="text-sm font-medium text-fg-primary truncate">
-          {entry.scene_name}
-        </div>
-        <div className="mt-0.5">{CountPicker}</div>
       </div>
-      <button
-        onClick={onRemove}
-        className="text-fg-muted hover:text-danger self-start"
-        title="移除"
-      >
-        <X size={14} />
-      </button>
+      <div className="mt-1.5 space-y-1">
+        {CountPicker}
+        {CloseupPicker}
+        {SubTotal}
+      </div>
     </div>
   );
 }

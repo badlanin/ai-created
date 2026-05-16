@@ -1,8 +1,5 @@
 /**
- * Scene Tools — 服饰场景图（统一工具）· v2 简化版
- *
- * 替代了之前的 5 个 scene-tools 子工具（background-swap / poster /
- * social-snap / replicate / text-shoot），收敛为单一工作流：
+ * Scene Tools — 服饰场景图（统一工具）· v3 加焦点开关 + 特写 + 材质词库
  *
  *   产品图（含模特+服装）+ 场景描述 → 把模特放到该场景里重新拍
  *
@@ -10,29 +7,35 @@
  *   1. 文字场景（free text）—— 模型自由发挥取景 / 光线 / 构图
  *   2. 图片场景（plate）—— 模型把 plate 当氛围参考
  *
- * 出图按 N（产品图）× M（场景）笛卡尔积；每个 (i, j) item 是一张图。
- *
- * v2（2026-05）：根据用户反馈把姿势 / 镜头 / 景深的硬约束全删了，
- * 只保留"保身份 / 保服装 / 换背景 / 用场景光线"四条核心。模型按场景
- * 自己理解怎么摆姿势 + 取景。FRAMING_TIGHT_SINGLE 也已 v2 化（见
- * lib/scene-tools-prompt.ts）。
+ * v3（2026-05）：
+ *   - 接 FocusMode 开关（model_first 默认，balanced，environmental）
+ *   - 接 closeup 镜头预设（5 套）
+ *   - 接材质词库（lib/materials.ts → formatMaterialDetails）
+ *   - 加"同一场景多变体背景一致"约束
  */
 
-import { FRAMING_TIGHT_SINGLE } from "./scene-tools-prompt";
+import {
+  buildFramingBlock,
+  type FocusMode,
+  type CloseupKey,
+} from "./scene-tools-prompt";
 
-/**
- * 文字场景模式 prompt
- *
- * Inputs to model:
- *   IMAGE 1 = 产品图（含模特+服装+原背景）
- *   （无 IMAGE 2，文字模式不带 plate）
- *
- * @param sceneText 中文/英文场景描述
- * @param userHint 可选追加创意指令
- */
+export interface SceneShootOpts {
+  sceneText?: string;
+  userHint?: string;
+  focusMode?: FocusMode;
+  kind?: "regular" | "closeup";
+  variantIdx?: number;
+  variantTotal?: number;
+  closeupKey?: CloseupKey;
+  materialDetailsText?: string;
+  sceneTotalItems?: number;
+}
+
 export function buildSceneShootText(
   sceneText: string,
   userHint?: string,
+  opts: Omit<SceneShootOpts, "sceneText" | "userHint"> = {},
 ): string {
   const sceneClean = sceneText.trim();
   const userHintBlock = userHint?.trim()
@@ -42,6 +45,26 @@ export function buildSceneShootText(
 
 ${userHint.trim()}\n`
     : "";
+
+  const framingBlock = buildFramingBlock({
+    focusMode: opts.focusMode ?? "model_first",
+    kind: opts.kind ?? "regular",
+    variantIdx: opts.variantIdx,
+    variantTotal: opts.variantTotal,
+    closeupKey: opts.closeupKey,
+    materialDetailsText: opts.materialDetailsText,
+  });
+
+  const sceneConsistencyBlock =
+    (opts.sceneTotalItems ?? 1) > 1
+      ? `\n══════════════════════════════════════════════════════════
+🎬 同场景多变体背景一致
+══════════════════════════════════════════════════════════
+
+本次提交在该场景下要出 ${opts.sceneTotalItems} 张图（含常规变体 + 特写镜头）。
+这 ${opts.sceneTotalItems} 张必须是"同一地点、同一时段、同一光线方向"——
+都来自同一次拍摄，不允许换日时段、换天气、换背景。\n`
+      : "";
 
   return `You will receive ONE image:
 
@@ -78,15 +101,13 @@ ${sceneClean}
 - Background: 100% the described scene
 - Lighting: 100% from the scene description (match temperature,
   direction, time-of-day)
-- Pose / framing / camera distance / lens / depth of field: choose
-  what feels natural for this scene. A real photographer would adapt
-  per location — open scenes get wider natural standing, intimate
-  corners get tighter editorial framing.
 - Body proportions must read as a real human at correct scale to
   anything visible in the scene.
 - Edges of the subject lit organically by the scene's light, never
   a "cut-out / pasted-on" composite feel.
 
+${framingBlock}
+${sceneConsistencyBlock}
 ══════════════════════════════════════════════════════════
 ❌ FORBIDDEN
 ══════════════════════════════════════════════════════════
@@ -107,19 +128,10 @@ taken on location at the described scene.
 `;
 }
 
-/**
- * 图片场景模式 prompt
- *
- * Inputs to model:
- *   IMAGE 1 = 产品图（含模特+服装+原背景）
- *   IMAGE 2 = scene plate（这就是要把模特放进去的场景）
- *
- * @param scenePlateName 场景中文名（写进 prompt 让模型理解上下文）
- * @param userHint 可选追加创意指令
- */
 export function buildSceneShootImage(
   scenePlateName?: string,
   userHint?: string,
+  opts: Omit<SceneShootOpts, "sceneText" | "userHint"> = {},
 ): string {
   const sceneHint = scenePlateName
     ? `\n  Scene location name: "${scenePlateName}"`
@@ -131,6 +143,27 @@ export function buildSceneShootImage(
 
 ${userHint.trim()}\n`
     : "";
+
+  const framingBlock = buildFramingBlock({
+    focusMode: opts.focusMode ?? "model_first",
+    kind: opts.kind ?? "regular",
+    variantIdx: opts.variantIdx,
+    variantTotal: opts.variantTotal,
+    closeupKey: opts.closeupKey,
+    materialDetailsText: opts.materialDetailsText,
+  });
+
+  const sceneConsistencyBlock =
+    (opts.sceneTotalItems ?? 1) > 1
+      ? `\n══════════════════════════════════════════════════════════
+🎬 同场景多变体背景一致
+══════════════════════════════════════════════════════════
+
+本次提交在该场景下要出 ${opts.sceneTotalItems} 张图（含常规变体 + 特写镜头）。
+这 ${opts.sceneTotalItems} 张必须是"同一地点、同一时段、同一光线方向"——
+都来自 IMAGE 2 那个空间，常规变体取宽景，特写仅是镜头拉近 + 大光圈虚化背景，
+绝不允许换天气、换日时段、换不同的房间。\n`
+      : "";
 
   return `You will receive TWO images:
 
@@ -152,6 +185,12 @@ hand resting on the table, holding a cup from the surface, sitting
 on the stairs, etc. The pose must arise from what's actually in
 IMAGE 2.
 
+⚠️ IMPORTANT: Use IMAGE 2 only as "atmosphere / lighting / palette /
+materials" reference. Do NOT replicate IMAGE 2's framing or subject
+scale — even if IMAGE 2 shows a huge wide environment with tiny figures
+or no figure at all, your output must follow the framing block below
+(not IMAGE 2's framing).
+
 ══════════════════════════════════════════════════════════
 ✅ KEEP FROM IMAGE 1
 ══════════════════════════════════════════════════════════
@@ -169,14 +208,9 @@ IMAGE 2.
   palette all come from IMAGE 2)
 - Lighting: 100% from IMAGE 2's natural light — match color temperature,
   direction, time-of-day; re-light skin and garment accordingly
-- Pose: ACTIVELY interact with IMAGE 2's objects (see next block for
-  the full interaction directive)
-- Framing / camera distance / lens / depth of field: choose whatever
-  a real on-location fashion photographer would for THIS specific
-  scene + interaction.
 
-${FRAMING_TIGHT_SINGLE}
-
+${framingBlock}
+${sceneConsistencyBlock}
 ══════════════════════════════════════════════════════════
 ❌ FORBIDDEN
 ══════════════════════════════════════════════════════════

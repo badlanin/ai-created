@@ -14,7 +14,15 @@ import {
   buildSceneShootText,
   buildSceneShootImage,
 } from "@/lib/scene-prompt";
-import { getVariantCameraHint } from "@/lib/scene-tools-prompt";
+import {
+  CLOSEUP_PRESETS,
+  type CloseupKey,
+  type FocusMode,
+} from "@/lib/scene-tools-prompt";
+import {
+  formatMaterialDetails,
+  getMaterialsByIds,
+} from "@/lib/materials";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -34,14 +42,25 @@ const ALLOWED_RATIOS = [
 /**
  * POST /api/scene-tools
  *
- * 服饰场景图（统一工具）。N 张产品图 × M 个场景 → N×M 张成片。
+ * 服饰场景图（统一工具）v5 — 加焦点开关 + 特写镜头 + 材质词库。
+ *
+ *   单场景输出 = count（常规变体）+ closeup_presets.length（特写多选）
+ *   总输出 = N 产品图 × Σ(scene_i 单场景输出)
  *
  * formData:
- *   - product_image_<i>: File（i = 0..N-1，N 张产品图，每张含模特+服装）
- *   - scenes: JSON Array<{ type: 'text', text: string } | { type: 'image', scene_id: number }>
- *   - aspect_ratio: '3:4' | '9:16' | '1:1' | '16:9' | '4:3' 等
- *   - user_hint?: string（≤ 200 字，给所有 item 共用的额外指令）
- *   - model?: string（默认 gemini-3-pro-image-preview）
+ *   - product_image_<i>: File（i = 0..N-1，N 张产品图）
+ *   - scenes: JSON Array<{
+ *        type: 'text' | 'image',
+ *        text?: string, scene_id?: number,
+ *        count: number,                     // 常规变体张数 0-5
+ *        closeup_presets: CloseupKey[]      // 特写多选（back / side_waist / ...）
+ *     }>
+ *   - aspect_ratio: '3:4' | '9:16' | '1:1' | ...
+ *   - image_size: '1K' | '2K' | '4K'
+ *   - focus_mode: 'model_first' | 'balanced' | 'environmental'
+ *   - material_ids: JSON Array<number>     // 材质词库 ID 列表（autoMatch 后传过来）
+ *   - user_hint?: string（≤ 200 字）
+ *   - model?: string
  */
 export async function POST(req: NextRequest) {
   try {
@@ -80,12 +99,28 @@ export async function POST(req: NextRequest) {
     }
 
     // ─── 解析 scenes 数组 ───
-    // count = 该场景出几张图（1-5，默认 1）。每张额外的 count 会触发模型按
-    // 场景物件出一个不同的自然互动姿势。
+    // 每个 scene 包含：
+    //   - count       : 常规变体张数（1-5）
+    //   - closeup_presets: 特写镜头多选（5 个 key 的子集）
+    //
+    // 单个场景输出 = count + closeup_presets.length，最大 10
     const scenesRaw = formData.get("scenes");
+    const VALID_CLOSEUP_KEYS = new Set<string>(
+      CLOSEUP_PRESETS.map((p) => p.key),
+    );
     type SceneEntry =
-      | { type: "text"; text: string; count: number }
-      | { type: "image"; scene_id: number; count: number };
+      | {
+          type: "text";
+          text: string;
+          count: number;
+          closeup_presets: CloseupKey[];
+        }
+      | {
+          type: "image";
+          scene_id: number;
+          count: number;
+          closeup_presets: CloseupKey[];
+        };
     let scenes: SceneEntry[];
     try {
       const parsed = JSON.parse(String(scenesRaw || "[]"));
@@ -98,22 +133,40 @@ export async function POST(req: NextRequest) {
           const obj = s as Record<string, unknown>;
           const rawCount = Number(obj.count);
           const count =
-            Number.isFinite(rawCount) && rawCount >= 1
+            Number.isFinite(rawCount) && rawCount >= 0
               ? Math.min(5, Math.floor(rawCount))
               : 1;
+          // 特写预设多选（最多 5 个，去重）
+          let closeup_presets: CloseupKey[] = [];
+          if (Array.isArray(obj.closeup_presets)) {
+            const seen = new Set<string>();
+            for (const k of obj.closeup_presets) {
+              if (typeof k !== "string") continue;
+              if (!VALID_CLOSEUP_KEYS.has(k)) continue;
+              if (seen.has(k)) continue;
+              seen.add(k);
+              closeup_presets.push(k as CloseupKey);
+            }
+          }
+          const totalForScene = count + closeup_presets.length;
+          if (totalForScene <= 0) return null; // 全部为 0 视为空场景
+          if (totalForScene > 10) {
+            throw new Error("单场景输出最多 10 张（常规 + 特写之和）");
+          }
           if (obj.type === "text" && typeof obj.text === "string") {
             const text = obj.text.trim();
             if (text.length === 0) return null;
             if (text.length > 500) {
               throw new Error("文字场景描述太长（限 500 字）");
             }
-            return { type: "text", text, count };
+            return { type: "text", text, count, closeup_presets };
           }
           if (obj.type === "image" && Number.isFinite(obj.scene_id)) {
             return {
               type: "image",
               scene_id: Number(obj.scene_id),
               count,
+              closeup_presets,
             };
           }
           return null;
@@ -132,13 +185,48 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // ─── focus_mode ───
+    const focusModeRaw = formData.get("focus_mode");
+    const focusMode: FocusMode =
+      focusModeRaw === "balanced" || focusModeRaw === "environmental"
+        ? (focusModeRaw as FocusMode)
+        : "model_first";
+
+    // ─── material_ids（材质词库，跟 batch-photo 一样的接入方式） ───
+    let materialIds: number[] = [];
+    const materialIdsRaw = formData.get("material_ids");
+    if (typeof materialIdsRaw === "string" && materialIdsRaw.trim()) {
+      try {
+        const parsedIds = JSON.parse(materialIdsRaw);
+        if (Array.isArray(parsedIds)) {
+          materialIds = parsedIds
+            .map((x) => Number(x))
+            .filter((x) => Number.isFinite(x) && x > 0)
+            .slice(0, 20);
+        }
+      } catch {
+        // 忽略，走空数组
+      }
+    }
+    const materials =
+      materialIds.length > 0 ? getMaterialsByIds(materialIds) : [];
+    const materialDetailsText = materials.length
+      ? formatMaterialDetails(materials)
+      : undefined;
+
     // ─── 加载图片场景的元信息 ───
     type ImageSceneMeta = { id: number; name: string; image_path: string };
     const imageScenes: Map<number, ImageSceneMeta> = new Map();
     const imageSceneIds = scenes
       .filter(
-        (s): s is { type: "image"; scene_id: number; count: number } =>
-          s.type === "image",
+        (
+          s,
+        ): s is {
+          type: "image";
+          scene_id: number;
+          count: number;
+          closeup_presets: CloseupKey[];
+        } => s.type === "image",
       )
       .map((s) => s.scene_id);
     if (imageSceneIds.length > 0) {
@@ -193,16 +281,22 @@ export async function POST(req: NextRequest) {
         ? qualityRaw
         : "4K";
 
-    // ─── 构造 items：N 产品 × 每个场景按 count 展开 ───
-    // 不再是简单 N×M 笛卡尔积，而是 N × sum(scene.count)
-    // 每个 (product_idx, scene_idx, variant_idx) 是一张图
+    // ─── 构造 items：N 产品 × 每个场景按 (常规变体 + 特写多选) 展开 ───
+    // 每个场景产出 = count 张常规 + closeup_presets.length 张特写
+    // 单个 item 的 kind 区分 "regular" vs "closeup"
     const N = productFiles.length;
     const M = scenes.length;
     type ItemMeta = {
       product_idx: number;
       scene_idx: number;
-      variant_idx: number; // 该场景的第几张变体（1..count）
-      variant_total: number; // 该场景总共出几张
+      kind: "regular" | "closeup";
+      // regular 时：第几张/总数（用于 variant 镜头预设循环）
+      variant_idx?: number;
+      variant_total?: number;
+      // closeup 时：对应预设 key
+      closeup_key?: CloseupKey;
+      // 同场景在该次提交里总共出几张图（常规 + 特写之和），用于"背景一致性"约束
+      scene_total_items: number;
       label: string;
     };
     const items: ItemMeta[] = [];
@@ -214,17 +308,36 @@ export async function POST(req: NextRequest) {
             ? imageScenes.get(sceneEntry.scene_id)?.name || `场景#${sceneEntry.scene_id}`
             : sceneEntry.text.slice(0, 14) +
               (sceneEntry.text.length > 14 ? "…" : "");
-        const total = sceneEntry.count;
-        for (let v = 1; v <= total; v++) {
+        const regularTotal = sceneEntry.count;
+        const closeupTotal = sceneEntry.closeup_presets.length;
+        const sceneTotal = regularTotal + closeupTotal;
+        // 常规变体
+        for (let v = 1; v <= regularTotal; v++) {
           items.push({
             product_idx: i,
             scene_idx: j,
+            kind: "regular",
             variant_idx: v,
-            variant_total: total,
+            variant_total: regularTotal,
+            scene_total_items: sceneTotal,
             label:
-              total > 1
-                ? `产品 ${i + 1} · ${sceneLabel} · 变体 ${v}/${total}`
+              regularTotal > 1
+                ? `产品 ${i + 1} · ${sceneLabel} · 变体 ${v}/${regularTotal}`
                 : `产品 ${i + 1} · ${sceneLabel}`,
+          });
+        }
+        // 特写镜头
+        for (const closeupKey of sceneEntry.closeup_presets) {
+          const presetLabel =
+            CLOSEUP_PRESETS.find((p) => p.key === closeupKey)?.label ||
+            String(closeupKey);
+          items.push({
+            product_idx: i,
+            scene_idx: j,
+            kind: "closeup",
+            closeup_key: closeupKey,
+            scene_total_items: sceneTotal,
+            label: `产品 ${i + 1} · ${sceneLabel} · ${presetLabel}`,
           });
         }
       }
@@ -240,21 +353,31 @@ export async function POST(req: NextRequest) {
         aspect_ratio: aspectRatio,
         image_size: imageSize,
         user_hint: userHint || null,
+        focus_mode: focusMode,
+        material_ids: materialIds,
+        material_details_text: materialDetailsText || null,
         product_count: N,
         scene_count: M,
-        scenes: scenes.map((s, j) => {
+        scenes: scenes.map((s) => {
           if (s.type === "image") {
             const meta = imageScenes.get(s.scene_id);
             return {
-              type: "image",
+              type: "image" as const,
               scene_id: s.scene_id,
               scene_name: meta?.name,
               scene_image_path: meta?.image_path,
+              count: s.count,
+              closeup_presets: s.closeup_presets,
             };
           }
-          return { type: "text", text: s.text };
+          return {
+            type: "text" as const,
+            text: s.text,
+            count: s.count,
+            closeup_presets: s.closeup_presets,
+          };
         }),
-        items, // [{product_idx, scene_idx, label}, ...]
+        items, // [{product_idx, scene_idx, kind, variant_idx?, closeup_key?, ...}]
       },
     });
 
@@ -342,22 +465,31 @@ async function sceneToolsItemHandler(
     aspect_ratio?: string;
     image_size?: "1K" | "2K" | "4K";
     user_hint?: string | null;
+    focus_mode?: FocusMode;
+    material_details_text?: string | null;
     product_count: number;
     scene_count: number;
     scenes: Array<
-      | { type: "text"; text: string }
+      | { type: "text"; text: string; count?: number; closeup_presets?: string[] }
       | {
           type: "image";
           scene_id: number;
           scene_name?: string;
           scene_image_path?: string;
+          count?: number;
+          closeup_presets?: string[];
         }
     >;
     items: Array<{
       product_idx: number;
       scene_idx: number;
-      variant_idx?: number; // 新字段（v3）：该场景的第几张变体
-      variant_total?: number; // 新字段（v3）：该场景总共出几张
+      // v3：常规变体场景的字段
+      variant_idx?: number;
+      variant_total?: number;
+      // v5：每个 item 的"是常规还是特写"
+      kind?: "regular" | "closeup";
+      closeup_key?: CloseupKey;
+      scene_total_items?: number;
       label: string;
     }>;
     product_paths: string[];
@@ -367,9 +499,14 @@ async function sceneToolsItemHandler(
   const itemMeta = p.items[ctx.item.idx];
   if (!itemMeta) throw new Error(`item[${ctx.item.idx}] 丢失`);
 
-  // 兼容老 job（没 variant_idx 字段）
+  // 兼容老 job（没 kind / variant_idx 字段，按"常规变体"处理）
+  const kind: "regular" | "closeup" = itemMeta.kind ?? "regular";
   const variantIdx = itemMeta.variant_idx ?? 1;
   const variantTotal = itemMeta.variant_total ?? 1;
+  const sceneTotalItems = itemMeta.scene_total_items ?? variantTotal;
+  const closeupKey = itemMeta.closeup_key;
+  const focusMode: FocusMode = p.focus_mode ?? "model_first";
+  const materialDetailsText = p.material_details_text || undefined;
 
   // 预算兜底
   const status = getUserBudgetStatus(ctx.userId);
@@ -393,18 +530,25 @@ async function sceneToolsItemHandler(
   const scene = p.scenes[itemMeta.scene_idx];
   if (!scene) throw new Error(`scene[${itemMeta.scene_idx}] 丢失`);
 
-  // 多变体（同一场景出多张）时附差异化 hint 到 user_hint 里
-  // 用 getVariantCameraHint 给每张变体钉死一个镜头预设（角度 / 朝向 / 距离 / 构图），
-  // 让模型在该预设下变姿势 / 互动，但不能回退到"正面眼平居中全身"的默认偷懒
-  const variantHint = getVariantCameraHint(variantIdx, variantTotal);
-  const composedHint = [p.user_hint, variantHint]
-    .filter((s): s is string => Boolean(s && s.trim()))
-    .join("\n");
+  // 现在 prompt 自己处理 framing block（包含镜头/特写/材质），user_hint 简单透传即可
+  const promptOpts = {
+    focusMode,
+    kind,
+    variantIdx,
+    variantTotal,
+    closeupKey,
+    materialDetailsText,
+    sceneTotalItems,
+  };
 
   let prompt: string;
   const inputs: Array<{ buffer: Buffer; mimeType: string }> = [productInput];
   if (scene.type === "text") {
-    prompt = buildSceneShootText(scene.text, composedHint || undefined);
+    prompt = buildSceneShootText(
+      scene.text,
+      p.user_hint || undefined,
+      promptOpts,
+    );
   } else {
     if (!scene.scene_image_path) {
       throw new Error(`图片场景 ${scene.scene_id} 文件路径丢失`);
@@ -419,7 +563,11 @@ async function sceneToolsItemHandler(
           ? "image/webp"
           : "image/jpeg",
     });
-    prompt = buildSceneShootImage(scene.scene_name, composedHint || undefined);
+    prompt = buildSceneShootImage(
+      scene.scene_name,
+      p.user_hint || undefined,
+      promptOpts,
+    );
   }
 
   // 调出图（gemini-image / openai-image 自动分发）
@@ -478,9 +626,12 @@ async function sceneToolsItemHandler(
       provider: gen.provider,
       product_idx: itemMeta.product_idx,
       scene_idx: itemMeta.scene_idx,
+      item_kind: kind,
       variant_idx: variantIdx,
       variant_total: variantTotal,
+      closeup_key: closeupKey,
       scene_type: scene.type,
+      focus_mode: focusMode,
       aspect_ratio: p.aspect_ratio,
       image_size: p.image_size,
     },
