@@ -19,6 +19,7 @@ import {
   isBackCloseupKey,
   type CloseupKey,
   type FocusMode,
+  type PoseMode,
 } from "@/lib/scene-tools-prompt";
 import {
   formatMaterialDetails,
@@ -216,6 +217,11 @@ export async function POST(req: NextRequest) {
         ? (focusModeRaw as FocusMode)
         : "model_first";
 
+    // ─── pose_mode（v7：杂志大片 / 场景互动） ───
+    const poseModeRaw = formData.get("pose_mode");
+    const poseMode: PoseMode =
+      poseModeRaw === "interactive" ? "interactive" : "editorial";
+
     // ─── material_ids（材质词库，跟 batch-photo 一样的接入方式） ───
     let materialIds: number[] = [];
     const materialIdsRaw = formData.get("material_ids");
@@ -378,6 +384,7 @@ export async function POST(req: NextRequest) {
         image_size: imageSize,
         user_hint: userHint || null,
         focus_mode: focusMode,
+        pose_mode: poseMode,
         material_ids: materialIds,
         material_details_text: materialDetailsText || null,
         product_count: N,
@@ -514,6 +521,7 @@ async function sceneToolsItemHandler(
     image_size?: "1K" | "2K" | "4K";
     user_hint?: string | null;
     focus_mode?: FocusMode;
+    pose_mode?: PoseMode;
     material_details_text?: string | null;
     product_count: number;
     scene_count: number;
@@ -557,7 +565,10 @@ async function sceneToolsItemHandler(
   const sceneTotalItems = itemMeta.scene_total_items ?? variantTotal;
   const closeupKey = itemMeta.closeup_key;
   const focusMode: FocusMode = p.focus_mode ?? "model_first";
+  const poseMode: PoseMode = p.pose_mode ?? "editorial";
   const materialDetailsText = p.material_details_text || undefined;
+  // v7：杂志大片随机组合的种子（job.id + variant_idx）
+  const variantSeed = `${ctx.job.id}:${variantIdx}`;
 
   // 当前 item 是否需要背部参考图（特写 + isBack 预设 + 该产品上传过背图）
   const needsBackRef =
@@ -595,6 +606,8 @@ async function sceneToolsItemHandler(
   // 现在 prompt 自己处理 framing block（包含镜头/特写/材质），user_hint 简单透传即可
   const promptOpts = {
     focusMode,
+    poseMode,
+    variantSeed,
     kind,
     variantIdx,
     variantTotal,
@@ -704,6 +717,7 @@ async function sceneToolsItemHandler(
       has_back_reference: hasBackReference,
       scene_type: scene.type,
       focus_mode: focusMode,
+      pose_mode: poseMode,
       aspect_ratio: p.aspect_ratio,
       image_size: p.image_size,
     },

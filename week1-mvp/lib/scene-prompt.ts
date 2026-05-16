@@ -13,6 +13,7 @@ import {
   buildFramingBlock,
   type FocusMode,
   type CloseupKey,
+  type PoseMode,
 } from "./scene-tools-prompt";
 
 export interface SceneShootOpts {
@@ -27,6 +28,10 @@ export interface SceneShootOpts {
   sceneTotalItems?: number;
   /** 背部参考图（IMAGE 3）是否随请求附带。kind=closeup + isBack 时才有意义 */
   hasBackReference?: boolean;
+  /** v7: 姿势模式（editorial 杂志大片 / interactive 场景互动），默认 editorial */
+  poseMode?: PoseMode;
+  /** v7: 杂志大片随机组合的种子（一般为 job.id + ":" + variant_idx） */
+  variantSeed?: string;
 }
 
 export function buildSceneShootText(
@@ -51,6 +56,8 @@ ${userHint.trim()}\n`
     closeupKey: opts.closeupKey,
     materialDetailsText: opts.materialDetailsText,
     hasBackReference: opts.hasBackReference,
+    poseMode: opts.poseMode ?? "editorial",
+    variantSeed: opts.variantSeed,
   });
 
   const sceneConsistencyBlock =
@@ -167,6 +174,8 @@ ${userHint.trim()}\n`
     closeupKey: opts.closeupKey,
     materialDetailsText: opts.materialDetailsText,
     hasBackReference: opts.hasBackReference,
+    poseMode: opts.poseMode ?? "editorial",
+    variantSeed: opts.variantSeed,
   });
 
   const sceneConsistencyBlock =

@@ -29,6 +29,7 @@ type CloseupKey =
   | "lower_body_motion"
   | "neckline_shoulder";
 type FocusMode = "model_first" | "balanced" | "environmental";
+type PoseMode = "editorial" | "interactive";
 
 type MaterialRow = {
   id: number;
@@ -83,6 +84,19 @@ const FOCUS_MODES: Array<{ value: FocusMode; label: string; hint: string }> = [
   { value: "model_first", label: "🎯 模特主体", hint: "占比 70-80%（默认）" },
   { value: "balanced", label: "⚖️ 场景平衡", hint: "占比 50-60%" },
   { value: "environmental", label: "🏛️ 环境氛围", hint: "占比 30-40%" },
+];
+
+const POSE_MODES: Array<{ value: PoseMode; label: string; hint: string }> = [
+  {
+    value: "editorial",
+    label: "🎭 杂志大片",
+    hint: "随机姿势/角度/焦距组合，场景作 backdrop（默认）",
+  },
+  {
+    value: "interactive",
+    label: "🏛️ 场景互动",
+    hint: "模特坐/倚/扶场景物件，5 套预设循环（v5 老行为）",
+  },
 ];
 
 const ASPECT_RATIOS = [
@@ -241,6 +255,7 @@ export default function SceneToolsPage() {
   const [modelId, setModelId] = useState("gemini-3-pro-image-preview");
   const [imageSize, setImageSize] = useState<"1K" | "2K" | "4K">("2K");
   const [focusMode, setFocusMode] = useState<FocusMode>("model_first");
+  const [poseMode, setPoseMode] = useState<PoseMode>("editorial");
 
   // 材质（首次产品图上传后自动调 /api/analyze → /api/materials/match 拿匹配结果）
   const [allMaterials, setAllMaterials] = useState<MaterialRow[]>([]);
@@ -336,6 +351,11 @@ export default function SceneToolsPage() {
           params.focus_mode === "environmental"
         )
           setFocusMode(params.focus_mode);
+        if (
+          params.pose_mode === "editorial" ||
+          params.pose_mode === "interactive"
+        )
+          setPoseMode(params.pose_mode);
         if (Array.isArray(params.material_ids))
           setMatchedMaterialIds(
             (params.material_ids as unknown[])
@@ -654,6 +674,7 @@ export default function SceneToolsPage() {
       fd.append("model", modelId);
       fd.append("image_size", imageSize);
       fd.append("focus_mode", focusMode);
+      fd.append("pose_mode", poseMode);
       fd.append("material_ids", JSON.stringify(matchedMaterialIds));
       if (userHint.trim()) fd.append("user_hint", userHint.trim());
 
@@ -1066,6 +1087,39 @@ export default function SceneToolsPage() {
                       }
                     >
                       {m.hint}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* v7: 姿势模式开关 */}
+            <div>
+              <label className="block text-[11px] text-fg-tertiary mb-1">
+                姿势模式（控制常规变体的姿势生成逻辑）
+              </label>
+              <div className="grid grid-cols-2 gap-1">
+                {POSE_MODES.map((m) => (
+                  <button
+                    key={m.value}
+                    type="button"
+                    onClick={() => setPoseMode(m.value)}
+                    className={
+                      poseMode === m.value
+                        ? "px-1.5 py-1.5 rounded text-[10px] bg-brand-500 text-white font-medium"
+                        : "px-1.5 py-1.5 rounded text-[10px] bg-bg-base text-fg-secondary border border-border-subtle hover:bg-brand-50 hover:text-brand-600"
+                    }
+                    title={m.hint}
+                  >
+                    <div>{m.label}</div>
+                    <div
+                      className={
+                        poseMode === m.value
+                          ? "text-[9px] opacity-80"
+                          : "text-[9px] text-fg-muted"
+                      }
+                    >
+                      {m.hint.split("，")[0]}
                     </div>
                   </button>
                 ))}

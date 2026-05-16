@@ -1,21 +1,152 @@
 /**
- * Scene Tools — Framing prompt 词库（v6 加姿势型特写 + 背部参考图支持）
+ * Scene Tools — Framing prompt 词库（v7 加杂志大片随机姿势组合）
  *
- * v6 (2026-05)：
- *   - CLOSEUP_PRESETS 从 5 增到 9：
- *     - 原有：后背 / 侧腰 / 胸腿 / 下半身 / 颈肩
- *     - 新增（标 recommended）：抚腰 / 抚臀回眸 / 举臂背身 / 提裙侧步
- *   - 每个预设加 isBack 字段，标记"涉及背面"的预设
- *     —— 用户选了 isBack 时，前端会弹出背部参考图上传 UI
- *   - buildFramingBlock 加 hasBackReference 参数 + 背面专项 prompt 块
+ * v7 (2026-05)：
+ *   - 加 PoseMode：editorial（杂志大片，默认） / interactive（场景互动，v5 老行为）
+ *   - editorial 模式下走"维度随机组合"，6 个维度 × N 选项，伪随机摇骰子
+ *   - LENS 维度按 FocusMode 过滤（model_first 不允许 35mm 广角，避免模特变小）
+ *   - 伪随机种子 = job_id + variant_idx，可复现
  *
- * v5 历史：
- *   - 占比 70-80%（之前 50%），删 long full body / floor space 远景档
- *   - FocusMode 三档：model_first / balanced / environmental
- *   - 接入材质词库（lib/materials.ts）
+ * v6: CLOSEUP_PRESETS 5→9（+ 4 姿势型）+ isBack + 背部参考 IMAGE 3
+ * v5: 占比 70-80% + FocusMode 三档 + 材质词库
  */
 
 export type FocusMode = "model_first" | "balanced" | "environmental";
+export type PoseMode = "editorial" | "interactive";
+
+/* ─────────── 6 个 editorial 维度库 ─────────── */
+
+const POSES = [
+  "站立放松：一手垂体侧，一手插入裙摆/腰侧/口袋",
+  "走动 mid-stride：前脚踩稳，后脚抬离地面，重心略前",
+  "转身瞬间：身体半旋，发丝和裙摆带动，仿佛刚被叫住",
+  "回眸：身体朝前，头部回向后看，下颌略抬",
+  "抚发：单手轻抚耳后发际，下颌微低",
+  "抚腰：单手或双手轻按腰侧，手腕略外翻",
+  "抚臀回眸：3/4 背身，单手贴腰后/上臀，回头侧首",
+  "双手举头：双臂自然举过头顶或搭在后颈/扶后脑",
+  "提裙：单手指尖轻捏裙摆侧边自然提起，露出部分腿线",
+  "单脚交叉：双腿交叉，一只脚尖点地，身形拉长",
+  "微微低头：下颌轻收，眼神向下，颈部曲线优雅",
+  "略侧身：身体偏向 3/4 侧，肩线错开",
+  "双手插袋：两手分别插入裙摆袋/腰侧",
+  "扭腰 S 形：身体形成 S 曲线，肩部和臀部反向偏移",
+  "倚墙手交叉：背靠墙面，双手交叉于胸前或体侧",
+];
+
+const ANGLES = [
+  "眼平视角（相机和模特眼睛平齐）",
+  "略低位仰拍（相机胸口高度向上拍）",
+  "略高位俯拍（相机微高于人头向下拍）",
+  "Dutch tilt 倾斜（相机倾斜 ~20°，编辑感）",
+  "3/4 侧（相机偏离正前方 ~45°）",
+  "完全侧面 profile（相机正侧面）",
+  "完全背身（相机正后方）",
+];
+
+// LENS 按 FocusMode 过滤
+function getLensesByFocus(focus: FocusMode): string[] {
+  if (focus === "model_first") {
+    // 70-80% 占比时不允许广角，模特会被拉远
+    return [
+      "50mm 自然透视",
+      "85mm 人像压缩，背景虚化柔和",
+      "135mm 长焦极浅景深，背景奶油化",
+    ];
+  }
+  if (focus === "balanced") {
+    return [
+      "35mm 略广（环境感更强）",
+      "50mm 自然透视",
+      "85mm 人像压缩",
+    ];
+  }
+  // environmental
+  return [
+    "28mm 广角（吃满环境）",
+    "35mm 略广",
+    "50mm 自然透视",
+  ];
+}
+
+const FRAMINGS = [
+  "紧凑全身（脚尖近底边，头顶距上边 ≤ 20%）",
+  "3/4 身（膝盖以上，腰至头部充满画面）",
+  "waist-up 半身（腰部以上，重在上身和服装上半）",
+];
+
+const COMPOSITIONS = [
+  "居中构图",
+  "偏左三分（模特位于画面左 1/3 处）",
+  "偏右三分（模特位于画面右 1/3 处）",
+  "黄金分割左上",
+  "黄金分割右下",
+];
+
+const GAZES = [
+  "直视镜头，神态自然",
+  "看向画面外远方，若有所思",
+  "看向斜上方，下颌略抬",
+  "看向斜下方，眼神温柔",
+  "闭眼，神态宁静",
+  "半笑，嘴角微扬，目光偏向镜头",
+  "侧首看身后，露出 1/3 侧脸",
+];
+
+/* ─────────── 伪随机：mulberry32 + 字符串哈希 ─────────── */
+
+function strHash(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+  }
+  return h >>> 0;
+}
+
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return function () {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function pickWith(rng: () => number, arr: string[]): string {
+  const i = Math.floor(rng() * arr.length);
+  return arr[Math.max(0, Math.min(arr.length - 1, i))];
+}
+
+/**
+ * 构造单张变体的杂志大片随机组合。
+ * seed = job_id + ":" + variant_idx（保证可复现 + N 张之间不同）
+ */
+export function buildEditorialCombo(
+  seedStr: string,
+  focusMode: FocusMode,
+): {
+  pose: string;
+  angle: string;
+  lens: string;
+  framing: string;
+  composition: string;
+  gaze: string;
+} {
+  const rng = mulberry32(strHash(seedStr));
+  const lenses = getLensesByFocus(focusMode);
+  return {
+    pose: pickWith(rng, POSES),
+    angle: pickWith(rng, ANGLES),
+    lens: pickWith(rng, lenses),
+    framing: pickWith(rng, FRAMINGS),
+    composition: pickWith(rng, COMPOSITIONS),
+    gaze: pickWith(rng, GAZES),
+  };
+}
+
+/* ─────────── v6 老的 CLOSEUP_PRESETS（不变） ─────────── */
 
 const REGULAR_VARIANT_PRESETS: string[] = [
   "镜头：眼平视角 · 正面朝向 · 居中构图 · 紧凑全身（脚尖近底边，头顶距上边 ≤ 20%，无大留白）",
@@ -26,7 +157,6 @@ const REGULAR_VARIANT_PRESETS: string[] = [
 ];
 
 export const CLOSEUP_PRESETS = [
-  // ─── 原 5 个（按裁切区域分） ───
   {
     key: "back" as const,
     label: "后背特写",
@@ -41,7 +171,7 @@ export const CLOSEUP_PRESETS = [
     isBack: false,
     recommended: false,
     description:
-      "侧腰特写镜头：相机偏侧位 ~80°。构图框定胸→大腿上段（半身侧面）。重点呈现:束腰剪裁 / 腰线曲线 / 侧身面料垂坠 / 高光走向沿身体侧面流淌。脸最多露下半（下巴+嘴），不强调正脸识别。",
+      "侧腰特写镜头：相机偏侧位 ~80°。构图框定胸→大腿上段（半身侧面）。重点呈现：束腰剪裁 / 腰线曲线 / 侧身面料垂坠 / 高光走向沿身体侧面流淌。脸最多露下半（下巴+嘴），不强调正脸识别。",
   },
   {
     key: "chest_to_thigh" as const,
@@ -67,7 +197,6 @@ export const CLOSEUP_PRESETS = [
     description:
       "领口至肩特写镜头：相机正前方约 0.8m，略略仰角。构图框定下颌→胸口上方（领口和肩部区域）。重点呈现：颈线设计 / 锁骨曲线 / 肩带 / 一字肩或抹胸边缘 / 领口的褶皱或装饰 / 配饰（项链、耳环）与领口的呼应。脸只露下半（嘴和下巴），不强调眼神。",
   },
-  // ─── v6 新增 4 个（按姿势分，全部标 recommended） ───
   {
     key: "hand_on_waist" as const,
     label: "抚腰",
@@ -104,7 +233,6 @@ export const CLOSEUP_PRESETS = [
 
 export type CloseupKey = (typeof CLOSEUP_PRESETS)[number]["key"];
 
-/** 工具：判断某个 closeupKey 是否需要"背部参考图" */
 export function isBackCloseupKey(key: CloseupKey | undefined): boolean {
   if (!key) return false;
   return CLOSEUP_PRESETS.find((p) => p.key === key)?.isBack === true;
@@ -114,7 +242,7 @@ function getFramingByFocus(focus: FocusMode): string {
   switch (focus) {
     case "model_first":
       return `画面焦点：模特主体（占比 70-80%）
-- 模特纵向占画面 70-80%
+- 模特纵向占画面 70-80%（半身镜头时即"上半身占 70-80%"，不是把人缩小）
 - 头顶距上边界 ≤ 20%，全身镜头时脚尖距底边 ≤ 15%
 - 服装是主体，场景是"背景"不是 co-protagonist
 - 禁止：远景 / 环境镜头 / establishing shot / wide environmental shot
@@ -139,8 +267,11 @@ export interface FramingOpts {
   variantTotal?: number;
   closeupKey?: CloseupKey;
   materialDetailsText?: string;
-  /** 背部参考图（IMAGE 3）是否已附在请求里。kind=closeup + isBack 时才生效 */
   hasBackReference?: boolean;
+  /** v7 新增：姿势模式（默认 editorial 杂志大片） */
+  poseMode?: PoseMode;
+  /** v7 新增：editorial 随机组合的种子（job.id + variant_idx 拼字符串） */
+  variantSeed?: string;
 }
 
 export function buildFramingBlock(opts: FramingOpts): string {
@@ -152,7 +283,11 @@ export function buildFramingBlock(opts: FramingOpts): string {
     closeupKey,
     materialDetailsText,
     hasBackReference,
+    poseMode,
+    variantSeed,
   } = opts;
+
+  const effectivePoseMode: PoseMode = poseMode ?? "editorial";
 
   let cameraBlock = "";
   if (kind === "closeup") {
@@ -162,12 +297,38 @@ export function buildFramingBlock(opts: FramingOpts): string {
   } else {
     const idx = Math.max(1, variantIdx ?? 1);
     const total = Math.max(1, variantTotal ?? 1);
-    if (total > 1) {
-      const preset =
-        REGULAR_VARIANT_PRESETS[(idx - 1) % REGULAR_VARIANT_PRESETS.length];
-      cameraBlock = `本张是第 ${idx}/${total} 张常规变体。\n${preset}。\n在这个镜头基础上让模特按场景物件自由互动（坐 / 倚 / 撑 / 拿 / 走），但镜头角度 / 朝向 / 距离 / 构图必须严格按上面预设走，不要回退到"正面眼平居中全身"基准。`;
+
+    if (effectivePoseMode === "editorial") {
+      // v7：维度随机组合（杂志大片风格）
+      const seed = variantSeed || `default:${idx}`;
+      const combo = buildEditorialCombo(seed, focusMode);
+      cameraBlock = `本张是第 ${idx}/${total} 张常规变体（杂志编辑大片风格 · 随机组合）：
+
+- 姿势：${combo.pose}
+- 相机角度：${combo.angle}
+- 镜头焦距：${combo.lens}
+- 取景：${combo.framing}
+- 构图位置：${combo.composition}
+- 视线 / 情绪：${combo.gaze}
+
+⚠️ 杂志大片要点：
+- 模特就像在 photoshoot 现场，闪光灯每闪一次摆一个姿势，每张是独立瞬间
+- **场景只是 backdrop**，不需要让模特"融入"或"互动"场景物件（不必坐椅子 / 倚门框 / 扶栏杆）
+- 模特可以在场景里任意位置，姿势按上面的指令独立完成
+- 上面的"姿势 / 角度 / 镜头"组合就是本张的"创意指令"，必须严格执行
+- 跟同场景的其它变体之间，姿势 / 角度 / 焦距必须明显不同（看就是随机摆拍）`;
     } else {
-      cameraBlock = `镜头：${REGULAR_VARIANT_PRESETS[0]}（单张时用基准预设）。`;
+      // interactive：v5 老行为（5 套预设循环 + 场景物件互动）
+      const preset =
+        total > 1
+          ? REGULAR_VARIANT_PRESETS[
+              (idx - 1) % REGULAR_VARIANT_PRESETS.length
+            ]
+          : REGULAR_VARIANT_PRESETS[0];
+      cameraBlock =
+        total > 1
+          ? `本张是第 ${idx}/${total} 张常规变体（场景互动风格）。\n${preset}。\n在这个镜头基础上让模特按场景物件自由互动（坐 / 倚 / 撑 / 拿 / 走），但镜头角度 / 朝向 / 距离 / 构图必须严格按上面预设走，不要回退到"正面眼平居中全身"基准。`
+          : `镜头：${preset}（单张时用基准预设）。`;
     }
   }
 
@@ -199,7 +360,7 @@ export function buildFramingBlock(opts: FramingOpts): string {
 
 - 大光圈 f/1.4 ~ f/2.0 浅景深
 - 背景纯虚化（bokeh）：场景仅作色调氛围和环境光提示，物体形状彻底糊掉
-- 主体面料质感清晰锐利（focus plane 在服装本身)
+- 主体面料质感清晰锐利（focus plane 在服装本身）
 - 光打到服装关键面料区域，呈现该面料应有的光感（缎面看高光、蕾丝看镂空、雪纺看半透 etc.）
 
 ⚠️ 重要：背景虚化但仍来自原场景。同一个场景的常规变体 + 特写镜头必须是
@@ -207,7 +368,6 @@ export function buildFramingBlock(opts: FramingOpts): string {
 不是换场景或换光线。`
       : "";
 
-  // 背部参考图专项约束（仅当 kind=closeup + isBack + hasBackReference 时启用）
   const isBack =
     kind === "closeup" && closeupKey
       ? CLOSEUP_PRESETS.find((p) => p.key === closeupKey)?.isBack === true
@@ -268,8 +428,9 @@ ${getFramingByFocus(focusMode)}
 ✅ 允许：紧凑全身 / 3/4 身 / 一张 waist-up 半身（5 张里最多 1 张）
 ❌ 禁止：纯脸特写 / 纯手特写 / 只露半截裙摆的局部裁切 / 隐藏正面服装的纯背身（背身允许但要可见服装轮廓）`;
 
+  // interactive 模式才需要"读场景互动"指令；editorial 模式不需要
   const interactionBlock =
-    kind === "closeup"
+    kind === "closeup" || effectivePoseMode === "editorial"
       ? ""
       : `\n══════════════════════════════════════════════════════════
 🎬 读场景，自然互动
@@ -280,20 +441,36 @@ ${getFramingByFocus(focusMode)}
 
 模特应自然地与其中 1-2 件互动——坐 / 倚 / 撑 / 走中 / 拿——避免"傻站中间不动"默认值。`;
 
-  const hardConstraints = `\n══════════════════════════════════════════════════════════
-🔒 硬约束（不可违反）
+  // editorial 模式专属说明
+  const editorialNoteBlock =
+    kind !== "closeup" && effectivePoseMode === "editorial"
+      ? `\n══════════════════════════════════════════════════════════
+🎭 杂志大片风格说明
 ══════════════════════════════════════════════════════════
 
-- 身体比例 = 真人尺度（椅子 ~85cm，门 ~210cm，桌子 ~75cm —— 模特身高与之对应）
-- 模特身上的光 = 场景的光（色温和方向一致，不允许"棚拍主体贴到暗场景"）
-- 模特是 IMAGE 1 同一人，服装一模一样
-- 接触点物理可信（手扶桌 = 真实压住；坐 = 体重沉入坐面）`;
+本次提交走"杂志编辑大片"风格：模特在场景前自由摆拍，不需要刻意坐 / 倚 / 扶
+场景里的家具或建筑。场景仅作 backdrop，可清晰可虚化，但姿势独立于场景物件。
+每一张都是独立的瞬间，多张之间姿势 / 角度 / 焦距全部不同。`
+      : "";
+
+  const hardConstraints = `\n══════════════════════════════════════════════════════════
+🔒 硬约束（不可违反，优先级最高）
+══════════════════════════════════════════════════════════
+
+1. FocusMode 占比要求最高优先（参见上面的"画面焦点"段）—— 即使姿势组合里
+   有"半身"等取景，模特"可见部分"仍按 70-80% / 50-60% / 30-40% 占满画面，
+   不允许把人缩小到符号大小
+2. 身体比例 = 真人尺度（椅子 ~85cm，门 ~210cm，桌子 ~75cm —— 模特身高与之对应）
+3. 模特身上的光 = 场景的光（色温和方向一致，不允许"棚拍主体贴到暗场景"）
+4. 模特是 IMAGE 1 同一人，服装一模一样
+5. 接触点物理可信（手扶桌 = 真实压住；坐 = 体重沉入坐面）`;
 
   return [
     cameraBlock,
     productMainImageBlock,
     closeupOpticsBlock,
     interactionBlock,
+    editorialNoteBlock,
     consistencyBlock,
     backReferenceBlock,
     materialBlock,
@@ -309,9 +486,10 @@ export const FRAMING_TIGHT_SINGLE = buildFramingBlock({
   kind: "regular",
   variantIdx: 1,
   variantTotal: 1,
+  poseMode: "editorial",
 });
 
-/** @deprecated 改用 buildFramingBlock({ kind: "regular", variantIdx, variantTotal }) */
+/** @deprecated 改用 buildFramingBlock() */
 export function getVariantCameraHint(
   variantIdx: number,
   variantTotal: number,
