@@ -1,13 +1,13 @@
 /**
- * Scene Tools — Framing prompt 词库（v7 加杂志大片随机姿势组合）
+ * Scene Tools — Framing prompt 词库（v8 加摄影真实质感约束 + 全身偏向）
  *
- * v7 (2026-05)：
- *   - 加 PoseMode：editorial（杂志大片，默认） / interactive（场景互动，v5 老行为）
- *   - editorial 模式下走"维度随机组合"，6 个维度 × N 选项，伪随机摇骰子
- *   - LENS 维度按 FocusMode 过滤（model_first 不允许 35mm 广角，避免模特变小）
- *   - 伪随机种子 = job_id + variant_idx，可复现
+ * v8 (2026-05)：
+ *   - FRAMINGS 改成偏全身：5 选 1 里 4 项全身 + 1 项 3/4 身穿插（≤ 20% 概率）
+ *   - 新增 PHOTO_REALISM 硬约束块（胶片质感 + 皮肤纹理 + 头发丝），常规+特写都注入
+ *   - 占比 70-80% 强化：加 HERO SHOT / FILL THE FRAME / DOMINANT SUBJECT 术语 + 负面案例
  *
- * v6: CLOSEUP_PRESETS 5→9（+ 4 姿势型）+ isBack + 背部参考 IMAGE 3
+ * v7: 加 PoseMode；editorial 维度随机；LENS 按 FocusMode 过滤
+ * v6: CLOSEUP_PRESETS 5→9 + isBack + 背部参考 IMAGE 3
  * v5: 占比 70-80% + FocusMode 三档 + 材质词库
  */
 
@@ -44,10 +44,8 @@ const ANGLES = [
   "完全背身（相机正后方）",
 ];
 
-// LENS 按 FocusMode 过滤
 function getLensesByFocus(focus: FocusMode): string[] {
   if (focus === "model_first") {
-    // 70-80% 占比时不允许广角，模特会被拉远
     return [
       "50mm 自然透视",
       "85mm 人像压缩，背景虚化柔和",
@@ -61,7 +59,6 @@ function getLensesByFocus(focus: FocusMode): string[] {
       "85mm 人像压缩",
     ];
   }
-  // environmental
   return [
     "28mm 广角（吃满环境）",
     "35mm 略广",
@@ -69,10 +66,14 @@ function getLensesByFocus(focus: FocusMode): string[] {
   ];
 }
 
+// v8：FRAMINGS 改成偏全身（5 选 1，4 个全身变体 + 1 个 3/4 身穿插）
+// 这样 80% 概率出全身（展示服装全貌），20% 概率出 3/4 身（少量穿插，避免重复）
 const FRAMINGS = [
-  "紧凑全身（脚尖近底边，头顶距上边 ≤ 20%）",
-  "3/4 身（膝盖以上，腰至头部充满画面）",
-  "waist-up 半身（腰部以上，重在上身和服装上半）",
+  "紧凑全身（脚尖近底边，头顶距上边 ≤ 15%，无大留白）",
+  "全身带小留白（脚尖距底边 ~10%，头顶距上边 ~15%，整体居中偏紧）",
+  "全身贴边（头顶和脚尖几乎顶到画面边缘，模特撑满纵向）",
+  "全身偏一侧（脚到头完整可见，模特位于画面 1/3 处，留侧边给场景氛围）",
+  "3/4 身（膝盖以上，胸/腰至头部充满画面 —— 5 张里最多 1 张）",
 ];
 
 const COMPOSITIONS = [
@@ -93,7 +94,7 @@ const GAZES = [
   "侧首看身后，露出 1/3 侧脸",
 ];
 
-/* ─────────── 伪随机：mulberry32 + 字符串哈希 ─────────── */
+/* ─────────── 伪随机 ─────────── */
 
 function strHash(s: string): number {
   let h = 2166136261;
@@ -119,10 +120,6 @@ function pickWith(rng: () => number, arr: string[]): string {
   return arr[Math.max(0, Math.min(arr.length - 1, i))];
 }
 
-/**
- * 构造单张变体的杂志大片随机组合。
- * seed = job_id + ":" + variant_idx（保证可复现 + N 张之间不同）
- */
 export function buildEditorialCombo(
   seedStr: string,
   focusMode: FocusMode,
@@ -146,7 +143,7 @@ export function buildEditorialCombo(
   };
 }
 
-/* ─────────── v6 老的 CLOSEUP_PRESETS（不变） ─────────── */
+/* ─────────── CLOSEUP_PRESETS（v6 不变） ─────────── */
 
 const REGULAR_VARIANT_PRESETS: string[] = [
   "镜头：眼平视角 · 正面朝向 · 居中构图 · 紧凑全身（脚尖近底边，头顶距上边 ≤ 20%，无大留白）",
@@ -238,15 +235,25 @@ export function isBackCloseupKey(key: CloseupKey | undefined): boolean {
   return CLOSEUP_PRESETS.find((p) => p.key === key)?.isBack === true;
 }
 
+// v8：占比要求强化（hero shot 术语 + 负面案例）
 function getFramingByFocus(focus: FocusMode): string {
   switch (focus) {
     case "model_first":
-      return `画面焦点：模特主体（占比 70-80%）
-- 模特纵向占画面 70-80%（半身镜头时即"上半身占 70-80%"，不是把人缩小）
-- 头顶距上边界 ≤ 20%，全身镜头时脚尖距底边 ≤ 15%
-- 服装是主体，场景是"背景"不是 co-protagonist
-- 禁止：远景 / 环境镜头 / establishing shot / wide environmental shot
-- 禁止：模特小到只占画面 1/3，场景占 2/3 以上`;
+      return `画面焦点：HERO SHOT · 模特占满画面（占比 70-80%）
+
+✅ 合格标准：
+- 模特纵向占画面 70-80%（"hero shot / dominant subject / fill the frame"）
+- 观者第一眼焦点必落在模特身上
+- 背景明显屈居"配角"
+- 头顶距上边界 ≤ 15%，全身镜头时脚尖距底边 ≤ 10%
+
+❌ 失败重来标准：
+- 模特纵向 < 60%（"小小一个人站在大场景里"= 失败重来）
+- 周围大片留白（"游客照"= 失败重来）
+- 场景占画面 > 50%（"环境照"= 失败重来）
+
+🚫 严禁：远景 / 环境镜头 / establishing shot / wide environmental shot
+🚫 严禁：模特小到只占画面 1/3，场景占 2/3 以上`;
     case "balanced":
       return `画面焦点：场景与模特并重（占比 50-60%）
 - 模特纵向占画面 50-60%（环境是叙事的一部分，但模特仍是焦点）
@@ -260,6 +267,40 @@ function getFramingByFocus(focus: FocusMode): string {
   }
 }
 
+// v8 新增：📸 真实摄影质感约束（常规+特写都注入）
+const PHOTO_REALISM_BLOCK = `══════════════════════════════════════════════════════════
+📸 真实摄影质感（不可妥协 · 优先级仅次于身份/服装一致性）
+══════════════════════════════════════════════════════════
+
+这是一张真实的杂志编辑大片摄影作品，必须有真实摄影的所有质感细节：
+
+▸ 皮肤：
+  - 保留毛孔、细绒毛、皮肤微纹理、自然轻微油光
+  - 自然轻微瑕疵（不完美才真实：细小斑点、轻微红印、自然褶皱）
+  - 真实肤色变化（脸颊微红、鼻尖肤色稍深、眼下淡阴影）
+  - ❌ 严禁：磨皮 / 塑料感 / 人偶感 / over-smoothing / airbrush 过度
+
+▸ 头发：
+  - 每一根发丝独立可辨，有缝隙、有飞丝、有断发、有发际线小绒毛
+  - 自然光下的高光走向，分缕但不规整
+  - ❌ 严禁：CGI 风一缕一块的塑料质感 / 假发感
+
+▸ 唇 / 眉 / 眼：
+  - 唇：自然唇纹、轻微反光、不要 airbrush 平滑
+  - 眉：单根眉毛走向可辨，不是一片色块
+  - 眼：虹膜纹理可见，自然湿润反光，眼白有微血丝
+
+▸ 整体胶片质感：
+  - Kodak Portra 400 / Fujifilm Pro 400H / Cinestill 800T 一类胶片感
+  - 自然颗粒（film grain），不是数码涂抹光滑
+  - 胶片柔和的色彩过渡（不要数码 HDR 锐化感）
+  - 中画幅相机（Hasselblad / Phase One）的层次感
+
+▸ ❌ 通用红线：
+  - AI 默认的 over-smoothing 倾向 = 严重失败，必须避免
+  - 假塑料人偶感 / wax figure aesthetic = 严重失败
+  - 过度后期修饰 / Instagram filter 风 = 严重失败`;
+
 export interface FramingOpts {
   focusMode: FocusMode;
   kind: "regular" | "closeup";
@@ -268,9 +309,7 @@ export interface FramingOpts {
   closeupKey?: CloseupKey;
   materialDetailsText?: string;
   hasBackReference?: boolean;
-  /** v7 新增：姿势模式（默认 editorial 杂志大片） */
   poseMode?: PoseMode;
-  /** v7 新增：editorial 随机组合的种子（job.id + variant_idx 拼字符串） */
   variantSeed?: string;
 }
 
@@ -299,7 +338,6 @@ export function buildFramingBlock(opts: FramingOpts): string {
     const total = Math.max(1, variantTotal ?? 1);
 
     if (effectivePoseMode === "editorial") {
-      // v7：维度随机组合（杂志大片风格）
       const seed = variantSeed || `default:${idx}`;
       const combo = buildEditorialCombo(seed, focusMode);
       cameraBlock = `本张是第 ${idx}/${total} 张常规变体（杂志编辑大片风格 · 随机组合）：
@@ -318,7 +356,6 @@ export function buildFramingBlock(opts: FramingOpts): string {
 - 上面的"姿势 / 角度 / 镜头"组合就是本张的"创意指令"，必须严格执行
 - 跟同场景的其它变体之间，姿势 / 角度 / 焦距必须明显不同（看就是随机摆拍）`;
     } else {
-      // interactive：v5 老行为（5 套预设循环 + 场景物件互动）
       const preset =
         total > 1
           ? REGULAR_VARIANT_PRESETS[
@@ -414,21 +451,26 @@ ${
 }`
     : "";
 
+  // v8：常规变体加"展示服装全貌"硬约束
   const productMainImageBlock =
     kind === "closeup"
       ? ""
       : `\n══════════════════════════════════════════════════════════
-📐 这是商品主图
+📐 这是商品主图（展示服装全貌）
 ══════════════════════════════════════════════════════════
 
 输出是服装产品图，DRESS 是主角，场景是 backdrop。
 
+✅ 核心目标：**完整展示模特身上的服装** —— 从领口到裙摆/鞋的整件衣服必须能看到
+✅ 80% 以上的变体应是「完整全身」镜头，留 ≤ 20% 给 3/4 身穿插（避免重复）
+✅ 即使 framing 是"3/4 身"，仍需让观者一眼判断出服装的整体廓型和长度
+
 ${getFramingByFocus(focusMode)}
 
-✅ 允许：紧凑全身 / 3/4 身 / 一张 waist-up 半身（5 张里最多 1 张）
-❌ 禁止：纯脸特写 / 纯手特写 / 只露半截裙摆的局部裁切 / 隐藏正面服装的纯背身（背身允许但要可见服装轮廓）`;
+❌ 严禁：纯脸特写 / 纯手特写 / 只露半截裙摆的局部裁切 / waist-up 半身（这是特写的事）
+❌ 严禁：把服装裁切到"看不出整件衣服的款式"
+❌ 严禁：隐藏正面服装的纯背身（背身允许但要可见服装轮廓）`;
 
-  // interactive 模式才需要"读场景互动"指令；editorial 模式不需要
   const interactionBlock =
     kind === "closeup" || effectivePoseMode === "editorial"
       ? ""
@@ -441,7 +483,6 @@ ${getFramingByFocus(focusMode)}
 
 模特应自然地与其中 1-2 件互动——坐 / 倚 / 撑 / 走中 / 拿——避免"傻站中间不动"默认值。`;
 
-  // editorial 模式专属说明
   const editorialNoteBlock =
     kind !== "closeup" && effectivePoseMode === "editorial"
       ? `\n══════════════════════════════════════════════════════════
@@ -457,8 +498,8 @@ ${getFramingByFocus(focusMode)}
 🔒 硬约束（不可违反，优先级最高）
 ══════════════════════════════════════════════════════════
 
-1. FocusMode 占比要求最高优先（参见上面的"画面焦点"段）—— 即使姿势组合里
-   有"半身"等取景，模特"可见部分"仍按 70-80% / 50-60% / 30-40% 占满画面，
+1. FocusMode 占比要求最高优先（参见上面"画面焦点"段）—— 即使姿势组合里
+   有"3/4 身"等取景，模特"可见部分"仍按 70-80% / 50-60% / 30-40% 占满画面，
    不允许把人缩小到符号大小
 2. 身体比例 = 真人尺度（椅子 ~85cm，门 ~210cm，桌子 ~75cm —— 模特身高与之对应）
 3. 模特身上的光 = 场景的光（色温和方向一致，不允许"棚拍主体贴到暗场景"）
@@ -474,6 +515,7 @@ ${getFramingByFocus(focusMode)}
     consistencyBlock,
     backReferenceBlock,
     materialBlock,
+    PHOTO_REALISM_BLOCK,
     hardConstraints,
   ]
     .filter(Boolean)
