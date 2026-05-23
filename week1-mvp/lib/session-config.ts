@@ -18,11 +18,15 @@ const SESSION_SECRET =
   process.env.SESSION_SECRET ||
   "dev-session-secret-please-change-in-production-minimum-32-chars";
 
+const allowInsecureCookies =
+  process.env.ALLOW_INSECURE_COOKIES === "1" ||
+  process.env.ALLOW_INSECURE_COOKIES === "true";
+
 export const sessionOptions: SessionOptions = {
   password: SESSION_SECRET,
   cookieName: "buqiqi_session",
   cookieOptions: {
-    secure: process.env.NODE_ENV === "production",
+    secure: process.env.NODE_ENV === "production" && !allowInsecureCookies,
     httpOnly: true,
     sameSite: "lax",
     maxAge: 60 * 60 * 24 * 30, // 30 天
