@@ -136,9 +136,11 @@ export async function POST(req: NextRequest) {
 
     const qualityLevelRaw = formData.get("quality_level");
     const qualityLevel: "hd" | "2k" | "4k" =
-      qualityLevelRaw === "hd" || qualityLevelRaw === "4k"
+      qualityLevelRaw === "hd" ||
+      qualityLevelRaw === "2k" ||
+      qualityLevelRaw === "4k"
         ? qualityLevelRaw
-        : "2k";
+        : "hd";
 
     // ─── 解析颜色列表 ───
     let colorsToApply: ColorRow[] = [];
@@ -428,7 +430,7 @@ async function recolorItemHandler(
       materialDetails: p.material_details_text || undefined,
       realismConstraints: p.realism_constraints_text || undefined,
       userSeed: p.user_seed || undefined,
-      qualityLevel: p.quality_level || "2k",
+      qualityLevel: p.quality_level || "hd",
       originalColorName: p.original_color_name || undefined,
       hasSwatch: swatchInput !== null,
     }) + multiImageHint;

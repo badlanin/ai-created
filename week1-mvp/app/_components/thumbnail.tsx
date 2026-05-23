@@ -28,6 +28,8 @@ export interface ThumbnailProps {
   hoverOverlay?: React.ReactNode;
   /** 点击事件 */
   onClick?: () => void;
+  /** 双击事件 */
+  onDoubleClick?: () => void;
   /** 是否被选中（会加蓝色边框） */
   selected?: boolean;
   /**
@@ -71,6 +73,7 @@ export const Thumbnail = forwardRef<HTMLDivElement, ThumbnailProps>(
       checkbox,
       hoverOverlay,
       onClick,
+      onDoubleClick,
       selected = false,
       fallback,
       useThumb = true,
@@ -107,9 +110,12 @@ export const Thumbnail = forwardRef<HTMLDivElement, ThumbnailProps>(
       <div
         ref={ref}
         onClick={onClick}
+        onDoubleClick={onDoubleClick}
         className={[
           "relative overflow-hidden rounded-md bg-bg-tertiary border border-border-subtle group transition-colors",
-          onClick ? "cursor-pointer hover:border-border-default" : "",
+          onClick || onDoubleClick
+            ? "cursor-pointer hover:border-border-default"
+            : "",
           selected
             ? "ring-2 ring-brand-500 ring-offset-2 ring-offset-bg-primary border-transparent"
             : "",

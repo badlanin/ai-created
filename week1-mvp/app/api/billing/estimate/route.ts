@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
       body.quality_level === "2k" ||
       body.quality_level === "4k"
         ? body.quality_level
-        : "2k";
+        : "hd";
     const imageCount = Math.max(0, Math.floor(Number(body.image_count) || 0));
 
     const estimate = estimateBatchCost(model, quality, imageCount);

@@ -250,7 +250,7 @@ export function hexToRgb(
  * 输出质量指令 · 关键：告诉模型**重绘而不是改图**，按目标分辨率渲染
  * 这是让"糊图变清晰"的核心——模型不会拘泥于原图的像素，而是按指令级别重新生成
  */
-function buildQualityHint(level: "hd" | "2k" | "4k" = "2k"): string {
+function buildQualityHint(level: "hd" | "2k" | "4k" = "hd"): string {
   const levelLabel = level === "4k" ? "4K 超清" : level === "2k" ? "2K 高清" : "HD 清晰";
   return `【输出质量 / Output Quality】${levelLabel}
 - 必须输出 ${level.toUpperCase()} 级别的清晰锐利图像（${level.toUpperCase()} ultra-high resolution, tack-sharp）
@@ -351,7 +351,7 @@ export function buildRecolorPrompt(
   }
 
   // 清晰度指令（关键）——告诉模型按 2K/4K 重绘，不要复刻输入图的模糊
-  parts.push("", buildQualityHint(options.qualityLevel ?? "2k"));
+  parts.push("", buildQualityHint(options.qualityLevel ?? "hd"));
 
   parts.push(
     "",

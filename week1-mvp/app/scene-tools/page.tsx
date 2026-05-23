@@ -1,19 +1,21 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   Sparkles,
   Upload,
   X,
-  PlusCircle,
   PenLine,
   Image as ImageIcon,
   ZoomIn,
+  Check,
+  Crop as CropIcon,
 } from "lucide-react";
 import { useCurrentUser } from "@/lib/hooks/use-current-user";
 import { useJobPolling } from "@/lib/hooks/use-job-polling";
 import { Dropzone } from "@/app/_components/ui";
+import { ImageCropper } from "@/app/_components/image-cropper";
 import { TaskViewport } from "@/app/_components/task-viewport";
 import {
   TEXT_SCENE_PRESETS as STATIC_PRESETS,
@@ -55,9 +57,29 @@ type ProductFile = {
   id: string;
   file: File;
   url: string; // local preview
+  source: ProductImageSource;
   // v6: 该产品的背部参考图（可选）
   backFile?: File;
   backUrl?: string;
+};
+
+type ProductImageSource = "web" | "local";
+type ProductUploadChannel = "web" | "selected" | "local";
+
+type ScrapedImage = {
+  id: string;
+  url: string;
+  proxyUrl: string;
+  alt: string;
+  width: number | null;
+  height: number | null;
+};
+
+type OriginalPreview = {
+  src: string;
+  alt: string;
+  title: string;
+  revokeUrl?: boolean;
 };
 
 // 单场景输出 = count（常规变体）+ closeup_presets.length（特写多选）
@@ -106,6 +128,22 @@ const ASPECT_RATIOS = [
   { value: "16:9", label: "16:9 横" },
   { value: "4:3", label: "4:3 横" },
 ];
+
+function extensionFromMime(mimeType: string): string {
+  if (mimeType.includes("png")) return "png";
+  if (mimeType.includes("webp")) return "webp";
+  if (mimeType.includes("gif")) return "gif";
+  return "jpg";
+}
+
+function fileNameFromUrl(url: string, index: number, mimeType: string): string {
+  try {
+    const parsed = new URL(url);
+    const last = parsed.pathname.split("/").filter(Boolean).pop();
+    if (last && /\.[a-z0-9]{2,5}$/i.test(last)) return last;
+  } catch {}
+  return `web-product-${index + 1}.${extensionFromMime(mimeType)}`;
+}
 
 // 文字场景预设已搬到 lib/text-scene-presets.ts，跟 batch-photo 共享。
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -249,6 +287,20 @@ export default function SceneToolsPage() {
 
   // 表单
   const [products, setProducts] = useState<ProductFile[]>([]);
+  const [openProductChannel, setOpenProductChannel] =
+    useState<ProductUploadChannel | null>(null);
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [scrapeLoading, setScrapeLoading] = useState(false);
+  const [scrapedImages, setScrapedImages] = useState<ScrapedImage[]>([]);
+  const [selectedScrapedUrls, setSelectedScrapedUrls] = useState<Set<string>>(
+    new Set(),
+  );
+  const [savingScraped, setSavingScraped] = useState(false);
+  const [originalPreview, setOriginalPreview] =
+    useState<OriginalPreview | null>(null);
+  const [croppingProductId, setCroppingProductId] = useState<string | null>(
+    null,
+  );
   const [scenes, setScenes] = useState<SceneEntry[]>([]);
   const [aspectRatio, setAspectRatio] = useState("3:4");
   const [userHint, setUserHint] = useState("");
@@ -272,6 +324,9 @@ export default function SceneToolsPage() {
 
   // 场景图选择面板（显示 / 隐藏）
   const [scenePickerOpen, setScenePickerOpen] = useState(false);
+  const scrapedClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   // 文字场景预设（从 /api/text-scenes 拉，admin 可在 admin/scenes 里编辑）
   // API 拉不到则回退到 lib 里 hardcoded 的 28 条（提供首次部署兜底）
@@ -420,6 +475,29 @@ export default function SceneToolsPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!originalPreview) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOriginalPreview(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [originalPreview]);
+
+  useEffect(() => {
+    return () => {
+      if (originalPreview?.revokeUrl) URL.revokeObjectURL(originalPreview.src);
+    };
+  }, [originalPreview]);
+
+  useEffect(() => {
+    return () => {
+      if (scrapedClickTimerRef.current) {
+        clearTimeout(scrapedClickTimerRef.current);
+      }
+    };
+  }, []);
+
   // ─── 首次上传产品图后自动解析面料 + 匹配材质词库 ───
   // 用第一张产品图跑 /api/analyze → 拿到 garment_attrs.面料材质 字段 →
   // POST 到 /api/materials/match 拿匹配到的材质 ID 列表 → 存到 state，
@@ -478,20 +556,27 @@ export default function SceneToolsPage() {
     };
   }, [products, analyzedFingerprint]);
 
-  function onPickProducts(files: FileList | File[] | null) {
-    if (!files || (files instanceof FileList ? files.length : files.length) === 0)
-      return;
-    const arr: File[] = files instanceof FileList ? Array.from(files) : files;
+  function addProductFiles(files: File[], source: ProductImageSource) {
+    if (files.length === 0) return;
     const newProducts: ProductFile[] = [];
-    for (const f of arr) {
+    for (const f of files) {
       if (!f.type.startsWith("image/")) continue;
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       const url = URL.createObjectURL(f);
       productUrlsRef.current.set(id, url);
-      newProducts.push({ id, file: f, url });
+      newProducts.push({ id, file: f, url, source });
     }
+    if (newProducts.length === 0) return;
     setProducts((prev) => [...prev, ...newProducts]);
+    setOpenProductChannel("selected");
     setError(null);
+  }
+
+  function onPickProducts(files: FileList | File[] | null) {
+    if (!files || (files instanceof FileList ? files.length : files.length) === 0)
+      return;
+    const arr: File[] = files instanceof FileList ? Array.from(files) : files;
+    addProductFiles(arr, "local");
   }
 
   function removeProduct(id: string) {
@@ -504,6 +589,154 @@ export default function SceneToolsPage() {
     if (url) {
       URL.revokeObjectURL(url);
       productUrlsRef.current.delete(id);
+    }
+  }
+
+  function toggleProductChannel(channel: ProductUploadChannel) {
+    setOpenProductChannel((prev) => (prev === channel ? null : channel));
+  }
+
+  async function handleScrapeImages() {
+    const url = sourceUrl.trim();
+    if (!url) {
+      setError("请先输入网页 URL");
+      return;
+    }
+
+    setScrapeLoading(true);
+    setSelectedScrapedUrls(new Set());
+    setError(null);
+    try {
+      const res = await fetch("/api/scrape-images", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const data = (await res.json()) as {
+        images?: ScrapedImage[];
+        error?: string;
+      };
+      if (!res.ok) throw new Error(data.error || "抓取失败");
+      const images = data.images || [];
+      setScrapedImages(images);
+      if (images.length === 0) setError("没有抓取到可用图片");
+    } catch (e) {
+      setScrapedImages([]);
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setScrapeLoading(false);
+    }
+  }
+
+  function toggleScrapedImage(url: string) {
+    setSelectedScrapedUrls((prev) => {
+      const next = new Set(prev);
+      if (next.has(url)) next.delete(url);
+      else next.add(url);
+      return next;
+    });
+  }
+
+  function scheduleScrapedImageSelect(url: string) {
+    if (scrapedClickTimerRef.current) {
+      clearTimeout(scrapedClickTimerRef.current);
+    }
+    scrapedClickTimerRef.current = setTimeout(() => {
+      toggleScrapedImage(url);
+      scrapedClickTimerRef.current = null;
+    }, 220);
+  }
+
+  function cancelScrapedImageSelect() {
+    if (!scrapedClickTimerRef.current) return;
+    clearTimeout(scrapedClickTimerRef.current);
+    scrapedClickTimerRef.current = null;
+  }
+
+  function openOriginalPreview(preview: OriginalPreview) {
+    setOriginalPreview(preview);
+  }
+
+  function openProductPreview(product: ProductFile, title: string) {
+    openOriginalPreview({
+      src: product.url,
+      alt: product.file.name || title,
+      title,
+    });
+  }
+
+  function confirmProductCrop(productId: string, blob: Blob) {
+    const current = products.find((p) => p.id === productId);
+    if (!current) {
+      setCroppingProductId(null);
+      return;
+    }
+
+    const mimeType = blob.type || current.file.type || "image/png";
+    const ext = extensionFromMime(mimeType);
+    const baseName = current.file.name.replace(/\.[^.]+$/, "") || "product";
+    const file = new File([blob], `${baseName}-cropped.${ext}`, {
+      type: mimeType,
+    });
+    const url = URL.createObjectURL(file);
+    const oldUrl = productUrlsRef.current.get(productId);
+    if (oldUrl) URL.revokeObjectURL(oldUrl);
+    productUrlsRef.current.set(productId, url);
+    setProducts((prev) =>
+      prev.map((p) =>
+        p.id === productId
+          ? {
+              ...p,
+              file,
+              url,
+            }
+          : p,
+      ),
+    );
+    setAnalyzedFingerprint(null);
+    setCroppingProductId(null);
+  }
+
+  async function addSelectedScrapedImagesToProducts() {
+    const selected = scrapedImages.filter((img) =>
+      selectedScrapedUrls.has(img.url),
+    );
+    if (selected.length === 0) {
+      setError("请先选择网页图片");
+      return;
+    }
+
+    setSavingScraped(true);
+    setError(null);
+    try {
+      const downloaded: File[] = [];
+      for (const img of selected) {
+        const res = await fetch(img.proxyUrl);
+        if (!res.ok) continue;
+        const mimeType = res.headers.get("content-type") || "image/jpeg";
+        const blob = await res.blob();
+        downloaded.push(
+          new File(
+            [blob],
+            fileNameFromUrl(img.url, downloaded.length, mimeType),
+            { type: mimeType },
+          ),
+        );
+      }
+      if (downloaded.length === 0) {
+        setError("选中的网页图片无法下载");
+        return;
+      }
+      addProductFiles(downloaded, "web");
+      setSelectedScrapedUrls((prev) => {
+        const next = new Set(prev);
+        for (const img of selected) next.delete(img.url);
+        return next;
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSavingScraped(false);
     }
   }
 
@@ -615,6 +848,11 @@ export default function SceneToolsPage() {
   const needsBackRef = scenes.some((s) =>
     s.closeup_presets.some((k) => BACK_KEYS.has(k)),
   );
+  const localProducts = products.filter((p) => p.source === "local");
+  const croppingProduct =
+    croppingProductId !== null
+      ? products.find((p) => p.id === croppingProductId) || null
+      : null;
 
   const canSubmit =
     !submitting && products.length > 0 && scenes.length > 0 && !activeJobId;
@@ -783,116 +1021,207 @@ export default function SceneToolsPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* ① 产品图 */}
         <section className="bg-bg-secondary rounded-lg border border-border-subtle p-5">
-          <h2 className="text-sm font-semibold text-fg-primary mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-fg-primary mb-1 flex items-center justify-between">
             <span>① 产品图（{products.length}）</span>
-            <label className="cursor-pointer">
-              <input
-                type="file"
-                accept="image/*"
-                multiple
-                onChange={(e) => onPickProducts(e.target.files)}
-                className="hidden"
-              />
-              <span className="text-[11px] text-brand-400 hover:underline inline-flex items-center gap-0.5">
-                <PlusCircle size={12} />
-                添加
-              </span>
-            </label>
           </h2>
+          <div className="text-[12px] text-fg-tertiary mb-3">
+            网页 / 已选 / 本地 · 随心搭
+          </div>
 
-          {products.length === 0 ? (
-            <Dropzone
-              accept="image/*"
-              multiple
-              onFiles={(files) => onPickProducts(files)}
-              icon={<Upload size={28} strokeWidth={1.6} />}
-              title="拖拽 / 点击 / Ctrl+V 粘贴产品图"
-              description="PNG / JPG / WebP · 限 20MB · 支持多选 · 鼠标移到此处后可粘贴剪贴板里的图"
-            />
-          ) : (
-            <>
-              {needsBackRef && (
-                <div className="mb-2 p-2 rounded text-[10px] bg-[var(--brand-50-bg)] border border-brand-200 text-brand-700">
-                  📷 检测到你选了背面相关的特写镜头（后背 / 抚臀回眸 / 举臂背身）。建议给每件产品上传一张「背部参考图」——模型会根据它精准还原背部细节（露背、绑带、刺绣）。不传也能跑，但背部细节模型会猜。
-                </div>
-              )}
-              <div className="grid grid-cols-3 gap-2 max-h-[480px] overflow-y-auto pr-1">
-                {products.map((p, idx) => (
-                  <div key={p.id} className="relative group">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={p.url}
-                      alt={p.file.name}
-                      className="w-full aspect-[3/4] object-cover rounded border border-border-subtle"
+          <div className="border-t border-border-subtle">
+            <ProductUploadChannelPanel
+              title="网页"
+              count={scrapedImages.length}
+              open={openProductChannel === "web"}
+              onToggle={() => toggleProductChannel("web")}
+            >
+              <div className="space-y-3">
+                <div className="p-3 rounded-md border border-dashed border-[rgba(16,185,129,0.35)] bg-[var(--success-bg)]">
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <input
+                      type="url"
+                      value={sourceUrl}
+                      onChange={(e) => setSourceUrl(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          handleScrapeImages();
+                        }
+                      }}
+                      placeholder="https://example.com/product-page"
+                      className="input h-9 flex-1 bg-bg-primary text-[12px]"
                     />
-                    {/* 产品编号角标 */}
-                    <div className="absolute top-1 left-1 px-1 py-0.5 text-[9px] bg-black/60 text-white rounded">
-                      P{idx + 1}
-                    </div>
                     <button
-                      onClick={() => removeProduct(p.id)}
-                      className="absolute top-1 right-1 p-1 bg-black/60 text-white rounded hover:bg-black/80 opacity-0 group-hover:opacity-100 transition-opacity"
-                      title="移除"
+                      type="button"
+                      onClick={handleScrapeImages}
+                      disabled={scrapeLoading || !sourceUrl.trim()}
+                      className="btn btn-primary btn-sm sm:w-[84px]"
                     >
-                      <X size={12} />
+                      {scrapeLoading ? "抓取中..." : "抓取"}
                     </button>
-                    {/* v6: 背部参考图小角标（仅当任意场景勾选了背面特写时显示） */}
-                    {needsBackRef && (
-                      <div className="absolute bottom-1 left-1 right-1">
-                        {p.backUrl ? (
-                          <div className="relative group/back">
+                  </div>
+                </div>
+
+                {scrapedImages.length > 0 ? (
+                  <>
+                    <div className="grid grid-cols-2 gap-2 max-h-[360px] overflow-y-auto pr-1">
+                      {scrapedImages.map((img, i) => {
+                        const active = selectedScrapedUrls.has(img.url);
+                        return (
+                          <button
+                            key={img.url}
+                            type="button"
+                            onClick={() => scheduleScrapedImageSelect(img.url)}
+                            onDoubleClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              cancelScrapedImageSelect();
+                              openOriginalPreview({
+                                src: img.proxyUrl,
+                                alt: img.alt || `网页图片 ${i + 1}`,
+                                title: `网页图片 ${i + 1}`,
+                              });
+                            }}
+                            title="单击选中，双击查看原尺寸"
+                            className={`relative min-h-[150px] rounded-md bg-bg-tertiary border p-2 flex items-center justify-center transition-colors ${
+                              active
+                                ? "border-[var(--success)]"
+                                : "border-border-subtle hover:border-border-default"
+                            }`}
+                          >
+                            <span
+                              className="absolute top-1 left-1 z-10 w-5 h-5 rounded text-white text-[10px] flex items-center justify-center"
+                              style={{ background: "rgba(0, 0, 0, 0.6)" }}
+                            >
+                              {i + 1}
+                            </span>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
-                              src={p.backUrl}
-                              alt="back ref"
-                              className="w-full h-8 object-cover rounded border-2 border-brand-400"
-                              title="背部参考图（已上传）"
+                              src={img.proxyUrl}
+                              alt={img.alt || `网页图片 ${i + 1}`}
+                              loading="lazy"
+                              decoding="async"
+                              draggable={false}
+                              className="block max-h-[220px] w-auto max-w-full rounded object-contain"
                             />
-                            <button
-                              onClick={() => removeProductBackRef(p.id)}
-                              className="absolute -top-1 -right-1 p-0.5 bg-danger text-white rounded-full opacity-0 group-hover/back:opacity-100"
-                              title="移除背部参考图"
-                            >
-                              <X size={10} />
-                            </button>
-                          </div>
-                        ) : (
-                          <label
-                            className="block w-full px-1 py-1 text-[9px] text-center bg-black/70 text-white rounded cursor-pointer hover:bg-black/90 border border-brand-300/50"
-                            title="上传该产品的背部参考图"
-                          >
-                            + 背部参考图
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              onChange={(e) => {
-                                const f = e.target.files?.[0];
-                                if (f) setProductBackRef(p.id, f);
-                              }}
-                            />
-                          </label>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ))}
+                            {active ? (
+                              <span
+                                className="absolute top-1 right-1 w-5 h-5 rounded-full text-white flex items-center justify-center"
+                                style={{ background: "var(--success)" }}
+                              >
+                                <Check size={13} strokeWidth={3} />
+                              </span>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={addSelectedScrapedImagesToProducts}
+                      disabled={savingScraped || selectedScrapedUrls.size === 0}
+                      className="btn btn-primary btn-sm"
+                    >
+                      {savingScraped
+                        ? "添加中..."
+                        : `添加到已选${
+                            selectedScrapedUrls.size
+                              ? `（${selectedScrapedUrls.size}）`
+                              : ""
+                          }`}
+                    </button>
+                  </>
+                ) : null}
               </div>
-              {/* 已有图片后仍保留一个迷你 Dropzone 用于继续追加（拖 / 粘贴 / 点击） */}
-              <div className="mt-2">
+            </ProductUploadChannelPanel>
+
+            <ProductUploadChannelPanel
+              title="已选"
+              count={products.length}
+              open={openProductChannel === "selected"}
+              onToggle={() => toggleProductChannel("selected")}
+            >
+              {products.length > 0 ? (
+                <>
+                  {needsBackRef && (
+                    <div className="mb-2 p-2 rounded text-[10px] bg-[var(--brand-50-bg)] border border-brand-200 text-brand-700">
+                      📷 检测到你选了背面相关的特写镜头（后背 / 抚臀回眸 / 举臂背身）。建议给每件产品上传一张「背部参考图」——模型会根据它精准还原背部细节（露背、绑带、刺绣）。不传也能跑，但背部细节模型会猜。
+                    </div>
+                  )}
+                  <div className="grid grid-cols-3 gap-2 max-h-[480px] overflow-y-auto pr-1">
+                    {products.map((p, idx) => (
+                      <SceneProductCard
+                        key={p.id}
+                        product={p}
+                        index={idx}
+                        needsBackRef={needsBackRef}
+                        onRemove={() => removeProduct(p.id)}
+                        onStartCrop={() => setCroppingProductId(p.id)}
+                        onSetBackRef={(file) => setProductBackRef(p.id, file)}
+                        onRemoveBackRef={() => removeProductBackRef(p.id)}
+                        onPreview={() => openProductPreview(p, `已选产品图 P${idx + 1}`)}
+                      />
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div className="text-[12px] text-fg-tertiary p-3 rounded-md border border-dashed border-border-default bg-bg-tertiary">
+                  暂无已选图片，可从「网页」添加，或在「本地」上传。
+                </div>
+              )}
+            </ProductUploadChannelPanel>
+
+            <ProductUploadChannelPanel
+              title="本地"
+              count={localProducts.length}
+              open={openProductChannel === "local"}
+              onToggle={() => toggleProductChannel("local")}
+            >
+              <div className="space-y-3">
                 <Dropzone
-                  compact
+                  compact={localProducts.length > 0}
                   accept="image/*"
                   multiple
                   onFiles={(files) => onPickProducts(files)}
+                  icon={<Upload size={28} strokeWidth={1.6} />}
+                  title="拖拽 / 点击 / Ctrl+V 粘贴产品图"
+                  description="PNG / JPG / WebP · 限 20MB · 支持多选 · 鼠标移到此处后可粘贴剪贴板里的图"
                 >
-                  <div className="px-3 py-2 text-center text-[11px] text-fg-tertiary">
-                    + 继续添加（拖拽 / 点击 / Ctrl+V 粘贴）
-                  </div>
+                  {localProducts.length > 0 ? (
+                    <div className="px-3 py-2 text-center text-[11px] text-fg-tertiary">
+                      + 继续添加（拖拽 / 点击 / Ctrl+V 粘贴）
+                    </div>
+                  ) : null}
                 </Dropzone>
+
+                {localProducts.length > 0 ? (
+                  <div className="grid grid-cols-3 gap-2 max-h-[360px] overflow-y-auto pr-1">
+                    {localProducts.map((p) => {
+                      const idx = products.findIndex((item) => item.id === p.id);
+                      return (
+                        <SceneProductCard
+                          key={p.id}
+                          product={p}
+                          index={idx >= 0 ? idx : 0}
+                          needsBackRef={needsBackRef}
+                          onRemove={() => removeProduct(p.id)}
+                          onStartCrop={() => setCroppingProductId(p.id)}
+                          onSetBackRef={(file) => setProductBackRef(p.id, file)}
+                          onRemoveBackRef={() => removeProductBackRef(p.id)}
+                          onPreview={() =>
+                            openProductPreview(
+                              p,
+                              `本地产品图 P${idx >= 0 ? idx + 1 : 1}`,
+                            )
+                          }
+                        />
+                      );
+                    })}
+                  </div>
+                ) : null}
               </div>
-            </>
-          )}
+            </ProductUploadChannelPanel>
+          </div>
         </section>
 
         {/* ② 场景列表 */}
@@ -1269,6 +1598,56 @@ export default function SceneToolsPage() {
         </section>
       </div>
 
+      {croppingProduct ? (
+        <ImageCropper
+          imageSrc={croppingProduct.url}
+          initialAspect={0}
+          onConfirm={(blob) => confirmProductCrop(croppingProduct.id, blob)}
+          onCancel={() => setCroppingProductId(null)}
+        />
+      ) : null}
+
+      {originalPreview ? (
+        <div
+          className="fixed inset-0 z-[100] bg-black/85 backdrop-blur-sm"
+          onClick={() => setOriginalPreview(null)}
+        >
+          <div
+            className="absolute left-4 right-4 top-3 z-10 flex items-center justify-between gap-3 text-white"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="min-w-0">
+              <div className="truncate text-sm font-medium">
+                {originalPreview.title}
+              </div>
+              <div className="text-[11px] text-white/60">
+                原尺寸预览 · Esc 关闭
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setOriginalPreview(null)}
+              className="h-9 w-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center"
+              aria-label="关闭原尺寸预览"
+            >
+              <X size={18} strokeWidth={2.2} />
+            </button>
+          </div>
+          <div className="absolute inset-x-0 bottom-0 top-14 overflow-auto p-6">
+            <div className="min-w-max min-h-full flex items-start justify-center">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={originalPreview.src}
+                alt={originalPreview.alt}
+                className="block max-w-none h-auto rounded-md bg-white shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+                draggable={false}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {/* 场景图选择面板（modal） */}
       {scenePickerOpen && (
         <div
@@ -1359,6 +1738,151 @@ export default function SceneToolsPage() {
         </div>
       )}
     </main>
+  );
+}
+
+/* ─────────── 产品图上传通道 ─────────── */
+
+function ProductUploadChannelPanel({
+  title,
+  count,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  count: number;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="border-b border-border-subtle last:border-b-0">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full h-10 flex items-center gap-2 text-left text-[13px] text-fg-secondary hover:text-fg-primary"
+      >
+        <span className="w-4 text-fg-tertiary">{open ? "▾" : "▸"}</span>
+        <span className="font-medium">{title}</span>
+        <span className="ml-1 px-2 py-0.5 rounded-full bg-bg-tertiary border border-border-subtle text-[11px] text-fg-tertiary">
+          {count}
+        </span>
+      </button>
+      {open ? <div className="pb-3 pl-6">{children}</div> : null}
+    </div>
+  );
+}
+
+function SceneProductCard({
+  product,
+  index,
+  needsBackRef,
+  onRemove,
+  onStartCrop,
+  onSetBackRef,
+  onRemoveBackRef,
+  onPreview,
+}: {
+  product: ProductFile;
+  index: number;
+  needsBackRef: boolean;
+  onRemove: () => void;
+  onStartCrop: () => void;
+  onSetBackRef: (file: File) => void;
+  onRemoveBackRef: () => void;
+  onPreview: () => void;
+}) {
+  return (
+    <div
+      className="relative group"
+      onDoubleClick={onPreview}
+      title="双击查看原尺寸"
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={product.url}
+        alt={product.file.name}
+        className="w-full aspect-[3/4] object-cover rounded border border-border-subtle"
+      />
+      <div className="absolute top-1 left-1 px-1 py-0.5 text-[9px] bg-black/60 text-white rounded">
+        P{index + 1}
+      </div>
+      <div
+        className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-black/55 opacity-0 group-hover:opacity-100 transition-opacity"
+        onDoubleClick={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onStartCrop();
+          }}
+          className="w-[72px] justify-center px-2.5 py-1 bg-white/95 hover:bg-white text-[11px] text-gray-900 rounded flex items-center gap-1"
+        >
+          <CropIcon size={11} strokeWidth={2.2} />
+          裁剪
+        </button>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+          className="w-[72px] justify-center px-2.5 py-1 text-[11px] text-white rounded flex items-center gap-1"
+          style={{ background: "var(--danger)" }}
+        >
+          <X size={11} strokeWidth={2.2} />
+          删除
+        </button>
+      </div>
+      {needsBackRef && (
+        <div className="absolute bottom-1 left-1 right-1">
+          {product.backUrl ? (
+            <div className="relative group/back">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={product.backUrl}
+                alt="back ref"
+                className="w-full h-8 object-cover rounded border-2 border-brand-400"
+                title="背部参考图（已上传）"
+              />
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemoveBackRef();
+                }}
+                onDoubleClick={(e) => e.stopPropagation()}
+                className="absolute -top-1 -right-1 p-0.5 bg-danger text-white rounded-full opacity-0 group-hover/back:opacity-100"
+                title="移除背部参考图"
+              >
+                <X size={10} />
+              </button>
+            </div>
+          ) : (
+            <label
+              className="block w-full px-1 py-1 text-[9px] text-center bg-black/70 text-white rounded cursor-pointer hover:bg-black/90 border border-brand-300/50"
+              title="上传该产品的背部参考图"
+              onClick={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
+            >
+              + 背部参考图
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) onSetBackRef(f);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -35,11 +35,16 @@ import {
   type OpenAIImageSize,
   type OpenAIImageQuality,
 } from "./openai-image";
+import {
+  generateImageUniversal,
+  isUniversalModel,
+} from "./universal-model";
 
-export type ImageProvider = "gemini" | "openai";
+export type ImageProvider = "gemini" | "openai" | "universal";
 
 /** 按 modelId 推断 provider */
 export function getProviderForModel(modelId: string): ImageProvider {
+  if (isUniversalModel(modelId)) return "universal";
   if (modelId.startsWith("gpt-image")) return "openai";
   return "gemini";
 }
@@ -185,6 +190,26 @@ export async function generateImage(
   const provider = getProviderForModel(opts.modelId);
   const inputs = opts.inputs || [];
 
+  if (provider === "universal") {
+    const result = await generateImageUniversal({
+      inputs,
+      prompt: opts.prompt,
+      aspectRatio: opts.aspectRatio,
+      imageSize: opts.imageSize,
+    });
+    return {
+      mimeType: result.mimeType,
+      data: result.data,
+      model: result.model,
+      provider: "universal",
+      usage: {
+        inputTokens: result.usage?.inputTokens,
+        outputTokens: result.usage?.outputTokens,
+        totalTokens: result.usage?.totalTokens,
+      },
+    };
+  }
+
   if (provider === "openai") {
     // OpenAI 路径
     const size: OpenAIImageSize =
@@ -273,6 +298,7 @@ export function estimateImageCostUSD(opts: {
   imageSize?: "0.5K" | "1K" | "2K" | "4K";
 }): number {
   const provider = getProviderForModel(opts.modelId);
+  if (provider === "universal") return 0;
   if (provider === "openai") {
     const size =
       opts.size ??

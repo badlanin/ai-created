@@ -374,6 +374,21 @@ function migrate(db: Database.Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_announcements_enabled
       ON announcements(enabled, created_at DESC);
+
+    -- ==========================================
+    -- Shopify 产品上架绑定（按用户保存）
+    -- ==========================================
+    CREATE TABLE IF NOT EXISTS shopify_connections (
+      user_id          INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      shop_domain      TEXT NOT NULL,
+      access_token_enc TEXT NOT NULL,
+      shop_name        TEXT,
+      myshopify_domain TEXT,
+      primary_domain   TEXT,
+      created_at       INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at       INTEGER NOT NULL DEFAULT (unixepoch()),
+      last_tested_at   INTEGER
+    );
   `);
 
   // 增量迁移：新增列（已存在时跳过）
@@ -405,7 +420,15 @@ function migrate(db: Database.Database) {
   `);
 
   // 启动时恢复：把被进程重启打断的 item 标为 failed
-  recoverOrphanJobs(db);
+  // In next dev, route compilation can load a second bundle while an
+  // in-process worker is still running. Running recovery there would falsely
+  // mark active jobs as failed.
+  if (
+    process.env.NODE_ENV !== "development" ||
+    process.env.RECOVER_ORPHAN_JOBS_IN_DEV === "1"
+  ) {
+    recoverOrphanJobs(db);
+  }
 
   seedAiModels(db);
   seedPoses(db);
@@ -562,6 +585,14 @@ function seedAiModels(db: Database.Database) {
       is_default: 0,
       sort_order: 30,
     },
+    {
+      model_id: "universal-test",
+      label: "通用模型（测试）",
+      description: "通用接口 · 文字解析 gpt-5.5",
+      category: "vision",
+      is_default: 0,
+      sort_order: 90,
+    },
 
     // ----- 图像生成（recolor / on-model 用）-----
     {
@@ -588,6 +619,14 @@ function seedAiModels(db: Database.Database) {
       category: "image_gen",
       is_default: 0,
       sort_order: 30,
+    },
+    {
+      model_id: "universal-test",
+      label: "通用模型（测试）",
+      description: "通用接口 · 图片合成 Gemini 中转",
+      category: "image_gen",
+      is_default: 0,
+      sort_order: 35,
     },
     // ----- OpenAI Image -----
     // 注意：截至 2026-04 官方 model 列表只有 gpt-image-2 / 1.5 / 1 / 1-mini，

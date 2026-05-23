@@ -1,5 +1,9 @@
 import { resolveModelId } from "./ai-models";
 import { buildGenaiClient } from "./genai-client";
+import {
+  analyzeGarmentUniversal,
+  isUniversalModel,
+} from "./universal-model";
 
 /**
  * 服装属性结构化 schema
@@ -73,6 +77,14 @@ export async function analyzeGarment(
   modelOverride?: string,
 ) {
   const MODEL = resolveModelId("vision", modelOverride);
+  if (isUniversalModel(MODEL)) {
+    return analyzeGarmentUniversal(
+      images,
+      SYSTEM_PROMPT,
+      `请分析以下 ${images.length} 张服装图片，提取结构化的服饰属性。`,
+    );
+  }
+
   const ai = buildGenaiClient();
 
   const parts: Array<

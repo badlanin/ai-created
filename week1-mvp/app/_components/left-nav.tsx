@@ -10,6 +10,7 @@ import {
   History as HistoryIcon,
   Wallet,
   Library,
+  ShoppingBag,
   Settings,
   ChevronRight,
   PanelLeftClose,
@@ -177,6 +178,12 @@ export function LeftNav({
           active={isActive("/batch-photo")}
         />
         <CollapsedIcon
+          href="/product-listing"
+          label="产品上架"
+          Icon={ShoppingBag}
+          active={isActive("/product-listing")}
+        />
+        <CollapsedIcon
           href="/history"
           label="历史"
           Icon={HistoryIcon}
@@ -302,6 +309,12 @@ export function LeftNav({
             Icon={Sparkles}
             label="服饰场景图"
             active={isActive("/scene-tools")}
+          />
+          <NavItem
+            href="/product-listing"
+            Icon={ShoppingBag}
+            label="产品上架"
+            active={isActive("/product-listing")}
           />
           <NavItem
             href="/history"

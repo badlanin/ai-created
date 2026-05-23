@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
-import { Camera, Sparkles, Upload, ImageIcon, Crop as CropIcon, X } from "lucide-react";
+import { Camera, Check, Sparkles, Upload, ImageIcon, Crop as CropIcon, X } from "lucide-react";
 import { ImageCropper } from "@/app/_components/image-cropper";
 import { AppShell } from "@/app/_components/app-shell";
 import { NotificationStack, useNotifications, notifyHelpers } from "@/app/_components/notification-stack";
@@ -97,6 +97,24 @@ type Expression = {
   is_default: number;
 };
 type GarmentAttrs = Record<string, string | string[]>;
+type UploadChannel = "web" | "selected" | "local";
+type ProductImageSource = "web" | "local";
+
+type ScrapedImage = {
+  id: string;
+  url: string;
+  proxyUrl: string;
+  alt: string;
+  width: number | null;
+  height: number | null;
+};
+
+type OriginalPreview = {
+  src: string;
+  alt: string;
+  title: string;
+  revokeUrl?: boolean;
+};
 
 interface CostEstimate {
   per_image_cny: number;
@@ -168,6 +186,31 @@ interface SlotFile {
   cropped: boolean;
 }
 
+function extensionFromMime(type: string | null): string {
+  const normalized = (type || "").split(";")[0].trim().toLowerCase();
+  if (normalized === "image/png") return "png";
+  if (normalized === "image/webp") return "webp";
+  if (normalized === "image/gif") return "gif";
+  if (normalized === "image/avif") return "avif";
+  return "jpg";
+}
+
+function fileNameFromUrl(url: string, index: number, mimeType: string | null) {
+  let base = `web-image-${index + 1}`;
+  try {
+    const parsed = new URL(url);
+    const last = parsed.pathname.split("/").filter(Boolean).pop();
+    if (last) base = decodeURIComponent(last);
+  } catch {}
+
+  base = base
+    .replace(/\.[a-z0-9]{2,5}$/i, "")
+    .replace(/[/\\?%*:|"<>]/g, "_")
+    .slice(0, 80);
+
+  return `${base || `web-image-${index + 1}`}.${extensionFromMime(mimeType)}`;
+}
+
 /* ─────────── 客户端压缩 ─────────── */
 
 async function resizeImage(file: File, maxSize = 2048): Promise<Blob> {
@@ -232,7 +275,29 @@ function BatchPhotoTab({
 
   // ─── 产品图（3 固定槽位）───
   const [slots, setSlots] = useState<(SlotFile | null)[]>([null, null, null]);
+  const [slotSources, setSlotSources] = useState<
+    (ProductImageSource | null)[]
+  >([null, null, null]);
   const [croppingSlot, setCroppingSlot] = useState<number | null>(null);
+  const [openUploadChannels, setOpenUploadChannels] = useState<
+    Record<UploadChannel, boolean>
+  >({
+    web: false,
+    selected: false,
+    local: false,
+  });
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [scrapeLoading, setScrapeLoading] = useState(false);
+  const [scrapedImages, setScrapedImages] = useState<ScrapedImage[]>([]);
+  const [selectedScrapedUrls, setSelectedScrapedUrls] = useState<Set<string>>(
+    new Set(),
+  );
+  const [savingScraped, setSavingScraped] = useState(false);
+  const [originalPreview, setOriginalPreview] =
+    useState<OriginalPreview | null>(null);
+  const scrapedClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   // ─── 解析 ───
   const [analyzing, setAnalyzing] = useState(false);
@@ -623,6 +688,29 @@ function BatchPhotoTab({
     return () => clearTimeout(t);
   }, [totalImageCount, modelId, qualityLevel]);
 
+  useEffect(() => {
+    if (!originalPreview) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOriginalPreview(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [originalPreview]);
+
+  useEffect(() => {
+    return () => {
+      if (originalPreview?.revokeUrl) URL.revokeObjectURL(originalPreview.src);
+    };
+  }, [originalPreview]);
+
+  useEffect(() => {
+    return () => {
+      if (scrapedClickTimerRef.current) {
+        clearTimeout(scrapedClickTimerRef.current);
+      }
+    };
+  }, []);
+
   /* ─── 轮询 ─── */
   const handleJobFinished = useCallback(() => {
     fetch("/api/jobs/active")
@@ -676,12 +764,21 @@ function BatchPhotoTab({
 
   /* ─── 槽位操作 ─── */
 
-  async function setSlotFromFile(slotIdx: number, file: File) {
+  async function setSlotFromFile(
+    slotIdx: number,
+    file: File,
+    source: ProductImageSource = "local",
+  ) {
     try {
       const blob = await resizeImage(file, 2048);
       setSlots((prev) => {
         const next = [...prev];
         next[slotIdx] = { file, blob, cropped: false };
+        return next;
+      });
+      setSlotSources((prev) => {
+        const next = [...prev];
+        next[slotIdx] = source;
         return next;
       });
     } catch (e) {
@@ -692,14 +789,14 @@ function BatchPhotoTab({
   function onSlotPick(slotIdx: number, files: File[]) {
     if (!files || files.length === 0) return;
     if (files.length === 1) {
-      void setSlotFromFile(slotIdx, files[0]);
+      void setSlotFromFile(slotIdx, files[0], "local");
       return;
     }
     // 一次拖入多张：依次填充后续空槽位
     let pointer = slotIdx;
     for (const f of files) {
       if (pointer >= slots.length) break;
-      void setSlotFromFile(pointer, f);
+      void setSlotFromFile(pointer, f, "local");
       pointer += 1;
     }
   }
@@ -710,9 +807,161 @@ function BatchPhotoTab({
       next[slotIdx] = null;
       return next;
     });
+    setSlotSources((prev) => {
+      const next = [...prev];
+      next[slotIdx] = null;
+      return next;
+    });
     if (slotIdx === 0) {
       setGarmentAttrs(null);
       setSelectedMaterialIds([]);
+    }
+  }
+
+  function toggleUploadChannel(channel: UploadChannel) {
+    setOpenUploadChannels((prev) => ({
+      ...prev,
+      [channel]: !prev[channel],
+    }));
+  }
+
+  async function handleScrapeImages() {
+    const url = sourceUrl.trim();
+    if (!url) {
+      notifyHelpers.warn(push, "请先输入网页 URL");
+      return;
+    }
+
+    setScrapeLoading(true);
+    setSelectedScrapedUrls(new Set());
+    try {
+      const res = await fetch("/api/scrape-images", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const data = (await res.json()) as {
+        images?: ScrapedImage[];
+        error?: string;
+      };
+      if (!res.ok) throw new Error(data.error || "抓取失败");
+
+      const images = data.images || [];
+      setScrapedImages(images);
+      if (images.length === 0) {
+        notifyHelpers.warn(push, "没有抓取到可用图片");
+      } else {
+        notifyHelpers.success(push, `已抓取 ${images.length} 张网页图片`);
+      }
+    } catch (e) {
+      setScrapedImages([]);
+      notifyHelpers.error(
+        push,
+        "网页图片抓取失败",
+        e instanceof Error ? e.message : String(e),
+      );
+    } finally {
+      setScrapeLoading(false);
+    }
+  }
+
+  function toggleScrapedImage(url: string) {
+    setSelectedScrapedUrls((prev) => {
+      const next = new Set(prev);
+      if (next.has(url)) next.delete(url);
+      else next.add(url);
+      return next;
+    });
+  }
+
+  function scheduleScrapedImageSelect(url: string) {
+    if (scrapedClickTimerRef.current) {
+      clearTimeout(scrapedClickTimerRef.current);
+    }
+    scrapedClickTimerRef.current = setTimeout(() => {
+      toggleScrapedImage(url);
+      scrapedClickTimerRef.current = null;
+    }, 220);
+  }
+
+  function cancelScrapedImageSelect() {
+    if (!scrapedClickTimerRef.current) return;
+    clearTimeout(scrapedClickTimerRef.current);
+    scrapedClickTimerRef.current = null;
+  }
+
+  function openOriginalPreview(preview: OriginalPreview) {
+    setOriginalPreview(preview);
+  }
+
+  function openSlotPreview(slotIdx: number, title: string) {
+    const slot = slots[slotIdx];
+    if (!slot) return;
+    openOriginalPreview({
+      src: URL.createObjectURL(slot.blob),
+      alt: title,
+      title,
+      revokeUrl: true,
+    });
+  }
+
+  async function addSelectedScrapedImagesToSlots() {
+    const selected = scrapedImages.filter((img) =>
+      selectedScrapedUrls.has(img.url),
+    );
+    if (selected.length === 0) {
+      notifyHelpers.warn(push, "请先选择网页图片");
+      return;
+    }
+
+    const emptySlots = slots
+      .map((slot, index) => (slot ? -1 : index))
+      .filter((index) => index >= 0);
+    if (emptySlots.length === 0) {
+      notifyHelpers.warn(push, "三个产品图槽位都已填满");
+      return;
+    }
+
+    setSavingScraped(true);
+    try {
+      let added = 0;
+      for (const img of selected.slice(0, emptySlots.length)) {
+        const res = await fetch(img.proxyUrl);
+        if (!res.ok) continue;
+        const mimeType = res.headers.get("content-type") || "image/jpeg";
+        const blob = await res.blob();
+        const file = new File(
+          [blob],
+          fileNameFromUrl(img.url, added, mimeType),
+          { type: mimeType },
+        );
+        await setSlotFromFile(emptySlots[added], file, "web");
+        added += 1;
+      }
+
+      if (added === 0) {
+        notifyHelpers.error(push, "添加失败", "选中的网页图片无法下载");
+        return;
+      }
+
+      setSelectedScrapedUrls((prev) => {
+        const next = new Set(prev);
+        for (const img of selected.slice(0, added)) next.delete(img.url);
+        return next;
+      });
+      setOpenUploadChannels((prev) => ({ ...prev, selected: true }));
+      notifyHelpers.success(push, `已添加 ${added} 张图片到已选`);
+      if (selected.length > added) {
+        notifyHelpers.info(push, `还有 ${selected.length - added} 张未添加，槽位已满`);
+      }
+    } catch (e) {
+      notifyHelpers.error(
+        push,
+        "添加失败",
+        e instanceof Error ? e.message : String(e),
+      );
+    } finally {
+      setSavingScraped(false);
     }
   }
 
@@ -739,6 +988,9 @@ function BatchPhotoTab({
     try {
       const fd = new FormData();
       fd.append("image0", slot.blob, slot.file.name);
+      if (modelId === "universal-test") {
+        fd.append("model", modelId);
+      }
       const res = await fetch("/api/analyze", { method: "POST", body: fd });
       if (!res.ok) throw new Error((await res.json()).error || res.statusText);
       const attrs = (await res.json()) as GarmentAttrs;
@@ -781,6 +1033,7 @@ function BatchPhotoTab({
   /* ─── 派生 ─── */
   const filledSlots = slots.filter((s): s is SlotFile => s !== null);
   const hasProductImages = filledSlots.length > 0;
+  const localSlotCount = slotSources.filter((source) => source === "local").length;
 
   const selectedMaterials = selectedMaterialIds
     .map((id) => allMaterials.find((m) => m.id === id))
@@ -996,11 +1249,16 @@ function BatchPhotoTab({
   /* ─── 重置 ─── */
   function resetAll() {
     setSlots([null, null, null]);
+    setSlotSources([null, null, null]);
     setGarmentAttrs(null);
     setSelectedMaterialIds([]);
     setSelectedPoseIds(new Set());
     setUserSeed("");
     setExtraScenePairs([]);
+    setSourceUrl("");
+    setScrapedImages([]);
+    setSelectedScrapedUrls(new Set());
+    setOpenUploadChannels({ web: false, selected: false, local: false });
     // 纯色色值不重置（用户可能希望每次都用同一个底色）
     setActiveJobId(null);
     slotStore.reset();
@@ -1160,28 +1418,190 @@ function BatchPhotoTab({
             {/* Step 1: 产品图上传（紧凑：3 槽限宽不撑满）*/}
             <CollapsibleSection
               title="① 上传产品图"
-              description="拖拽 / 点击 / Ctrl+V 粘贴；一张图也能开始"
+              description="网页 / 已选 / 本地 · 随心搭"
               defaultOpen
             >
-              <div className="grid grid-cols-3 gap-2.5 max-w-[540px]">
-                {PRODUCT_SLOTS.map((cfg, i) => (
-                  <ProductSlot
-                    key={cfg.key}
-                    label={cfg.label}
-                    hint={cfg.hint}
-                    slot={slots[i]}
-                    slotIndex={i}
-                    onPick={onSlotPick}
-                    onRemove={() => onSlotRemove(i)}
-                    onStartCrop={() => setCroppingSlot(i)}
-                  />
-                ))}
+              <div className="space-y-1">
+                <UploadChannelPanel
+                  title="网页"
+                  count={scrapedImages.length}
+                  open={openUploadChannels.web}
+                  onToggle={() => toggleUploadChannel("web")}
+                >
+                  <div className="space-y-3">
+                    <div className="p-3 rounded-md border border-dashed border-[rgba(16,185,129,0.35)] bg-[var(--success-bg)]">
+                      <div className="flex flex-col gap-2 sm:flex-row">
+                        <input
+                          type="url"
+                          value={sourceUrl}
+                          onChange={(e) => setSourceUrl(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              handleScrapeImages();
+                            }
+                          }}
+                          placeholder="https://example.com/product-page"
+                          className="input h-9 flex-1 bg-bg-primary text-[12px]"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleScrapeImages}
+                          disabled={scrapeLoading || !sourceUrl.trim()}
+                          className="btn btn-primary btn-sm sm:w-[96px]"
+                        >
+                          {scrapeLoading ? "抓取中..." : "抓取"}
+                        </button>
+                      </div>
+                    </div>
+
+                    {scrapedImages.length > 0 ? (
+                      <>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2.5">
+                          {scrapedImages.map((img, i) => {
+                            const active = selectedScrapedUrls.has(img.url);
+                            return (
+                              <button
+                                key={img.url}
+                                type="button"
+                                onClick={() => scheduleScrapedImageSelect(img.url)}
+                                onDoubleClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  cancelScrapedImageSelect();
+                                  openOriginalPreview({
+                                    src: img.proxyUrl,
+                                    alt: img.alt || `网页图片 ${i + 1}`,
+                                    title: `网页图片 ${i + 1}`,
+                                  });
+                                }}
+                                title="单击选中，双击查看原尺寸"
+                                className={`relative min-h-[150px] rounded-md bg-bg-tertiary border p-2 flex items-center justify-center transition-colors ${
+                                  active
+                                    ? "border-[var(--success)]"
+                                    : "border-border-subtle hover:border-border-default"
+                                }`}
+                              >
+                                <span
+                                  className="absolute top-1 left-1 z-10 w-5 h-5 rounded text-white text-[10px] flex items-center justify-center"
+                                  style={{ background: "rgba(0, 0, 0, 0.6)" }}
+                                >
+                                  {i + 1}
+                                </span>
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={img.proxyUrl}
+                                  alt={img.alt || `网页图片 ${i + 1}`}
+                                  loading="lazy"
+                                  decoding="async"
+                                  draggable={false}
+                                  className="block max-h-[220px] w-auto max-w-full rounded object-contain"
+                                />
+                                {active ? (
+                                  <span
+                                    className="absolute top-1 right-1 w-5 h-5 rounded-full text-white flex items-center justify-center"
+                                    style={{ background: "var(--success)" }}
+                                  >
+                                    <Check size={13} strokeWidth={3} />
+                                  </span>
+                                ) : null}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={addSelectedScrapedImagesToSlots}
+                          disabled={savingScraped || selectedScrapedUrls.size === 0}
+                          className="btn btn-primary btn-sm"
+                        >
+                          {savingScraped
+                            ? "添加中..."
+                            : `添加到已选${
+                                selectedScrapedUrls.size
+                                  ? `（${selectedScrapedUrls.size}）`
+                                  : ""
+                              }`}
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                </UploadChannelPanel>
+
+                <UploadChannelPanel
+                  title="已选"
+                  count={filledSlots.length}
+                  open={openUploadChannels.selected}
+                  onToggle={() => toggleUploadChannel("selected")}
+                >
+                  {hasProductImages ? (
+                    <div className="grid grid-cols-3 gap-2.5 max-w-[540px]">
+                      {PRODUCT_SLOTS.map((cfg, i) =>
+                        slots[i] ? (
+                          <ProductSlot
+                            key={cfg.key}
+                            label={cfg.label}
+                            hint={cfg.hint}
+                            slot={slots[i]}
+                            slotIndex={i}
+                            onPick={onSlotPick}
+                            onRemove={() => onSlotRemove(i)}
+                            onStartCrop={() => setCroppingSlot(i)}
+                            allowReplace={false}
+                            actionsLayout="vertical"
+                            onDoubleClick={() =>
+                              openSlotPreview(i, `已选产品图 · ${cfg.label}`)
+                            }
+                          />
+                        ) : (
+                          <div
+                            key={cfg.key}
+                            className="aspect-[3/4] rounded-md border border-dashed border-border-default bg-bg-tertiary flex flex-col items-center justify-center text-center p-3"
+                          >
+                            <div className="text-[13px] font-medium text-fg-secondary">
+                              {cfg.label}
+                            </div>
+                            <div className="mt-1 text-[10px] text-fg-tertiary">
+                              等待添加
+                            </div>
+                          </div>
+                        ),
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-[12px] text-fg-tertiary p-3 rounded-md border border-dashed border-border-default bg-bg-tertiary">
+                      暂无已选图片，可从「网页」添加，或在「本地」上传。
+                    </div>
+                  )}
+                </UploadChannelPanel>
+
+                <UploadChannelPanel
+                  title="本地"
+                  count={localSlotCount}
+                  open={openUploadChannels.local}
+                  onToggle={() => toggleUploadChannel("local")}
+                >
+                  <div className="grid grid-cols-3 gap-2.5 max-w-[540px]">
+                    {PRODUCT_SLOTS.map((cfg, i) => (
+                      <ProductSlot
+                        key={cfg.key}
+                        label={cfg.label}
+                        hint={cfg.hint}
+                        slot={slotSources[i] === "local" ? slots[i] : null}
+                        slotIndex={i}
+                        onPick={onSlotPick}
+                        onRemove={() => onSlotRemove(i)}
+                        onStartCrop={() => setCroppingSlot(i)}
+                      />
+                    ))}
+                  </div>
+                  {hasProductImages && (
+                    <p className="mt-3 text-[11px] text-fg-tertiary">
+                      支持 Ctrl+V 粘贴：鼠标移到任意槽位上即可粘贴。一次拖多张会自动分配到后续空槽位。
+                    </p>
+                  )}
+                </UploadChannelPanel>
               </div>
-              {hasProductImages && (
-                <p className="mt-3 text-[11px] text-fg-tertiary">
-                  支持 Ctrl+V 粘贴：鼠标移到任意槽位上即可粘贴。一次拖多张会自动分配到后续空槽位。
-                </p>
-              )}
             </CollapsibleSection>
 
             {/* 裁剪模态 */}
@@ -1946,6 +2366,46 @@ function BatchPhotoTab({
           </div>
         </div>
       )}
+      {originalPreview ? (
+        <div
+          className="fixed inset-0 z-[100] bg-black/85 backdrop-blur-sm"
+          onClick={() => setOriginalPreview(null)}
+        >
+          <div
+            className="absolute left-4 right-4 top-3 z-10 flex items-center justify-between gap-3 text-white"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="min-w-0">
+              <div className="truncate text-sm font-medium">
+                {originalPreview.title}
+              </div>
+              <div className="text-[11px] text-white/60">
+                原尺寸预览 · Esc 关闭
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setOriginalPreview(null)}
+              className="h-9 w-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center"
+              aria-label="关闭原尺寸预览"
+            >
+              <X size={18} strokeWidth={2.2} />
+            </button>
+          </div>
+          <div className="absolute inset-x-0 bottom-0 top-14 overflow-auto p-6">
+            <div className="min-w-max min-h-full flex items-start justify-center">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={originalPreview.src}
+                alt={originalPreview.alt}
+                className="block max-w-none h-auto rounded-md bg-white shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+                draggable={false}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </AppShell>
   );
 }
@@ -2007,6 +2467,39 @@ function BatchPhotoTabBarWrapper({ tabs }: { tabs: TabsApi }) {
   );
 }
 
+/* ─────────── 上传通道折叠行 ─────────── */
+
+function UploadChannelPanel({
+  title,
+  count,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  count: number;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="border-t border-border-subtle first:border-t-0">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full h-9 flex items-center gap-2 text-left text-[13px] text-fg-secondary hover:text-fg-primary"
+      >
+        <span className="w-4 text-fg-tertiary">{open ? "▾" : "▸"}</span>
+        <span className="font-medium">{title}</span>
+        <span className="ml-1 px-2 py-0.5 rounded-full bg-bg-tertiary border border-border-subtle text-[11px] text-fg-tertiary">
+          {count}
+        </span>
+      </button>
+      {open ? <div className="pb-3 pl-6">{children}</div> : null}
+    </div>
+  );
+}
+
 /* ─────────── 单产品图槽位（Dropzone + Ctrl+V） ─────────── */
 
 function ProductSlot({
@@ -2017,6 +2510,9 @@ function ProductSlot({
   onPick,
   onRemove,
   onStartCrop,
+  allowReplace = true,
+  actionsLayout = "horizontal",
+  onDoubleClick,
 }: {
   label: string;
   hint: string;
@@ -2025,6 +2521,9 @@ function ProductSlot({
   onPick: (slotIdx: number, files: File[]) => void;
   onRemove: () => void;
   onStartCrop: () => void;
+  allowReplace?: boolean;
+  actionsLayout?: "horizontal" | "vertical";
+  onDoubleClick?: () => void;
 }) {
   if (!slot) {
     return (
@@ -2055,6 +2554,9 @@ function ProductSlot({
       onPick={onPick}
       onRemove={onRemove}
       onStartCrop={onStartCrop}
+      allowReplace={allowReplace}
+      actionsLayout={actionsLayout}
+      onDoubleClick={onDoubleClick}
     />
   );
 }
@@ -2069,6 +2571,9 @@ function SlotFilled({
   onPick,
   onRemove,
   onStartCrop,
+  allowReplace = true,
+  actionsLayout = "horizontal",
+  onDoubleClick,
 }: {
   label: string;
   slot: SlotFile;
@@ -2076,13 +2581,16 @@ function SlotFilled({
   onPick: (slotIdx: number, files: File[]) => void;
   onRemove: () => void;
   onStartCrop: () => void;
+  allowReplace?: boolean;
+  actionsLayout?: "horizontal" | "vertical";
+  onDoubleClick?: () => void;
 }) {
   const inputId = `slot-replace-${slotIndex}`;
   const [hover, setHover] = useState(false);
 
   // hover 时也允许 Ctrl+V 替换
   useEffect(() => {
-    if (!hover) return;
+    if (!hover || !allowReplace) return;
     function onPaste(e: ClipboardEvent) {
       const items = Array.from(e.clipboardData?.items || []);
       const fileItems = items
@@ -2095,12 +2603,14 @@ function SlotFilled({
     }
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
-  }, [hover, onPick, slotIndex]);
+  }, [allowReplace, hover, onPick, slotIndex]);
 
   return (
     <div
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      onDoubleClick={onDoubleClick}
+      title={onDoubleClick ? "双击查看原尺寸" : undefined}
       className="relative aspect-[3/4] rounded-md border border-border-default bg-bg-tertiary overflow-hidden group"
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -2124,7 +2634,7 @@ function SlotFilled({
         </div>
       ) : null}
       {/* hover 提示：可粘贴 */}
-      {hover ? (
+      {hover && allowReplace ? (
         <div className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded text-[10px] text-white opacity-80"
           style={{ background: "rgba(0, 0, 0, 0.6)" }}
         >
@@ -2132,39 +2642,57 @@ function SlotFilled({
         </div>
       ) : null}
       <div
-        className="absolute inset-0 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100 gap-1.5"
+        className={`absolute inset-0 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100 gap-1.5 ${
+          actionsLayout === "vertical" ? "flex-col" : ""
+        }`}
         style={{ background: hover ? "rgba(0, 0, 0, 0.55)" : "transparent" }}
       >
-        <label
-          htmlFor={inputId}
-          className="px-2.5 py-1 bg-white/95 hover:bg-white text-[11px] text-gray-900 rounded cursor-pointer flex items-center gap-1"
-        >
-          <ImageIcon size={11} strokeWidth={2.2} />
-          替换
-          <input
-            id={inputId}
-            type="file"
-            accept="image/*"
-            onChange={(e) => {
-              const files = Array.from(e.target.files || []);
-              if (files.length > 0) onPick(slotIndex, files);
-              e.target.value = "";
-            }}
-            className="hidden"
-          />
-        </label>
+        {allowReplace ? (
+          <label
+            htmlFor={inputId}
+            onClick={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+            className="px-2.5 py-1 bg-white/95 hover:bg-white text-[11px] text-gray-900 rounded cursor-pointer flex items-center gap-1"
+          >
+            <ImageIcon size={11} strokeWidth={2.2} />
+            替换
+            <input
+              id={inputId}
+              type="file"
+              accept="image/*"
+              onChange={(e) => {
+                const files = Array.from(e.target.files || []);
+                if (files.length > 0) onPick(slotIndex, files);
+                e.target.value = "";
+              }}
+              className="hidden"
+            />
+          </label>
+        ) : null}
         <button
           type="button"
-          onClick={onStartCrop}
-          className="px-2.5 py-1 bg-white/95 hover:bg-white text-[11px] text-gray-900 rounded flex items-center gap-1"
+          onClick={(e) => {
+            e.stopPropagation();
+            onStartCrop();
+          }}
+          onDoubleClick={(e) => e.stopPropagation()}
+          className={`px-2.5 py-1 bg-white/95 hover:bg-white text-[11px] text-gray-900 rounded flex items-center gap-1 ${
+            actionsLayout === "vertical" ? "w-[72px] justify-center" : ""
+          }`}
         >
           <CropIcon size={11} strokeWidth={2.2} />
           裁剪
         </button>
         <button
           type="button"
-          onClick={onRemove}
-          className="px-2.5 py-1 text-[11px] text-white rounded flex items-center gap-1"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+          onDoubleClick={(e) => e.stopPropagation()}
+          className={`px-2.5 py-1 text-[11px] text-white rounded flex items-center gap-1 ${
+            actionsLayout === "vertical" ? "w-[72px] justify-center" : ""
+          }`}
           style={{ background: "var(--danger)" }}
         >
           <X size={11} strokeWidth={2.2} />

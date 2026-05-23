@@ -1,7 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Palette, Sparkles, X, Upload, Crop as CropIcon, Search } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Check,
+  Palette,
+  Sparkles,
+  X,
+  Upload,
+  Crop as CropIcon,
+  Search,
+} from "lucide-react";
 import { ImageCropper } from "@/app/_components/image-cropper";
 import { AppShell } from "@/app/_components/app-shell";
 import {
@@ -64,6 +72,25 @@ interface CostEstimate {
   remaining_cny: number;
 }
 
+type UploadMode = "url" | "local";
+type ProductImageSource = "url" | "local";
+
+type ScrapedImage = {
+  id: string;
+  url: string;
+  proxyUrl: string;
+  alt: string;
+  width: number | null;
+  height: number | null;
+};
+
+type OriginalPreview = {
+  src: string;
+  alt: string;
+  title: string;
+  revokeUrl?: boolean;
+};
+
 /* ─────────── 常量 ─────────── */
 
 const ASPECT_RATIOS = [
@@ -81,9 +108,9 @@ const QUALITY_LEVELS: Array<{
   label: string;
   desc: string;
 }> = [
-  { value: "2k", label: "2K 高清（推荐）", desc: "约 1792×2400" },
+  { value: "2k", label: "2K 高清", desc: "约 1792×2400" },
   { value: "4k", label: "4K 超清", desc: "约 3584×4800 · 贵 15x" },
-  { value: "hd", label: "HD 清晰", desc: "约 896×1200 · 最省" },
+  { value: "hd", label: "HD 清晰（推荐）", desc: "约 896×1200 · 最省" },
 ];
 
 // v2 色卡 9 色系展示顺序（label 文本，跟 api/colors 的 COLOR_GROUP_LABELS 对齐）
@@ -128,6 +155,31 @@ async function resizeImage(file: File, maxSize = 2048): Promise<Blob> {
   });
 }
 
+function extensionFromMime(type: string | null): string {
+  const normalized = (type || "").split(";")[0].trim().toLowerCase();
+  if (normalized === "image/png") return "png";
+  if (normalized === "image/webp") return "webp";
+  if (normalized === "image/gif") return "gif";
+  if (normalized === "image/avif") return "avif";
+  return "jpg";
+}
+
+function fileNameFromUrl(url: string, index: number, mimeType: string | null) {
+  let base = `url-image-${index + 1}`;
+  try {
+    const parsed = new URL(url);
+    const last = parsed.pathname.split("/").filter(Boolean).pop();
+    if (last) base = decodeURIComponent(last);
+  } catch {}
+
+  base = base
+    .replace(/\.[a-z0-9]{2,5}$/i, "")
+    .replace(/[/\\?%*:|"<>]/g, "_")
+    .slice(0, 80);
+
+  return `${base || `url-image-${index + 1}`}.${extensionFromMime(mimeType)}`;
+}
+
 /* ─────────── 页面主组件 ─────────── */
 
 export default function RecolorPage() {
@@ -139,12 +191,26 @@ export default function RecolorPage() {
   const [files, setFiles] = useState<File[]>([]);
   const [compressedBlobs, setCompressedBlobs] = useState<Blob[]>([]);
   const [croppedFlags, setCroppedFlags] = useState<boolean[]>([]);
+  const [fileSources, setFileSources] = useState<ProductImageSource[]>([]);
   const [croppingIndex, setCroppingIndex] = useState<number | null>(null);
   /**
    * 用户选文件夹上传时抠出的根文件夹名（如 "DRESS-001"）。
    * 用作下载文件名 / ZIP 名前缀。null = 普通选图模式
    */
   const [sourceFolderName, setSourceFolderName] = useState<string | null>(null);
+  const [uploadMode, setUploadMode] = useState<UploadMode>("url");
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [scrapeLoading, setScrapeLoading] = useState(false);
+  const [scrapedImages, setScrapedImages] = useState<ScrapedImage[]>([]);
+  const [selectedScrapedUrls, setSelectedScrapedUrls] = useState<Set<string>>(
+    new Set(),
+  );
+  const [savingScraped, setSavingScraped] = useState(false);
+  const [originalPreview, setOriginalPreview] =
+    useState<OriginalPreview | null>(null);
+  const scrapedClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   // ─── 解析 ───
   const [analyzing, setAnalyzing] = useState(false);
@@ -152,7 +218,7 @@ export default function RecolorPage() {
 
   // ─── 配置 ───
   const [aspectRatio, setAspectRatio] = useState<string>("3:4");
-  const [qualityLevel, setQualityLevel] = useState<QualityLevel>("2k");
+  const [qualityLevel, setQualityLevel] = useState<QualityLevel>("hd");
   const [userSeed, setUserSeed] = useState("");
 
   // ─── 素材库 ───
@@ -247,6 +313,29 @@ export default function RecolorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (!originalPreview) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOriginalPreview(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [originalPreview]);
+
+  useEffect(() => {
+    return () => {
+      if (originalPreview?.revokeUrl) URL.revokeObjectURL(originalPreview.src);
+    };
+  }, [originalPreview]);
+
+  useEffect(() => {
+    return () => {
+      if (scrapedClickTimerRef.current) {
+        clearTimeout(scrapedClickTimerRef.current);
+      }
+    };
+  }, []);
+
   /* ─── 持久化 ─── */
   useEffect(() => {
     slotStore.merge({
@@ -277,6 +366,22 @@ export default function RecolorPage() {
     const c = selectedColorIds.size + customColors.length;
     return files.length * c;
   }, [files.length, selectedColorIds, customColors.length]);
+
+  const localFileIndexes = useMemo(
+    () =>
+      files
+        .map((_, i) => i)
+        .filter((i) => (fileSources[i] ?? "local") === "local"),
+    [files, fileSources],
+  );
+
+  const urlFileIndexes = useMemo(
+    () =>
+      files
+        .map((_, i) => i)
+        .filter((i) => fileSources[i] === "url"),
+    [files, fileSources],
+  );
 
   /* ─── 临时颜色操作 ─── */
   function addCustomColor() {
@@ -388,15 +493,37 @@ export default function RecolorPage() {
 
   /* ─── 文件处理 ─── */
   async function onPickFiles(picked: File[]) {
+    const keepIndexes = files
+      .map((_, i) => i)
+      .filter((i) => (fileSources[i] ?? "local") !== "local");
+    const keepFiles = keepIndexes.map((i) => files[i]);
+    const keepBlobs = keepIndexes.map((i) => compressedBlobs[i]);
+    const keepFlags = keepIndexes.map((i) => croppedFlags[i]);
+    const keepSources = keepIndexes.map((i) => fileSources[i] ?? "local");
+
     if (picked.length === 0) {
-      setFiles([]);
-      setCompressedBlobs([]);
+      setFiles(keepFiles);
+      setCompressedBlobs(keepBlobs);
+      setCroppedFlags(keepFlags);
+      setFileSources(keepSources);
       setGarmentAttrs(null);
       setSelectedMaterialIds([]);
       setSourceFolderName(null);
       return;
     }
-    const trimmed = picked.slice(0, 50);
+
+    const remaining = Math.max(50 - keepFiles.length, 0);
+    const trimmed = picked.slice(0, remaining);
+    if (trimmed.length === 0) {
+      notifyHelpers.warn(push, "最多只能上传 50 张产品图");
+      return;
+    }
+    if (picked.length > remaining) {
+      notifyHelpers.warn(
+        push,
+        `已达到 50 张上限，只导入前 ${remaining} 张`,
+      );
+    }
 
     // 文件夹选择模式：抠出根文件夹名作为下载命名前缀
     // （普通文件 / 拖拽时 webkitRelativePath 是空的，extractFolderName 返回 null）
@@ -412,22 +539,201 @@ export default function RecolorPage() {
       setSourceFolderName(null);
     }
 
-    setFiles(trimmed);
-    setCompressedBlobs([]);
-    setCroppedFlags(new Array(trimmed.length).fill(false));
+    setFiles([...keepFiles, ...trimmed]);
+    setCompressedBlobs(keepBlobs);
+    setCroppedFlags([...keepFlags, ...new Array(trimmed.length).fill(false)]);
+    setFileSources([
+      ...keepSources,
+      ...new Array<ProductImageSource>(trimmed.length).fill("local"),
+    ]);
     setGarmentAttrs(null);
     setSelectedMaterialIds([]);
     try {
       const blobs = await Promise.all(
         trimmed.map((f) => resizeImage(f, 2048)),
       );
-      setCompressedBlobs(blobs);
+      setCompressedBlobs([...keepBlobs, ...blobs]);
     } catch (e) {
       notifyHelpers.error(
         push,
         "图片读取失败",
         e instanceof Error ? e.message : String(e),
       );
+    }
+  }
+
+  async function appendFiles(
+    picked: File[],
+    source: ProductImageSource = "url",
+  ) {
+    if (picked.length === 0) return;
+    const remaining = 50 - files.length;
+    if (remaining <= 0) {
+      notifyHelpers.warn(push, "最多只能上传 50 张产品图");
+      return;
+    }
+
+    const incoming = picked.slice(0, remaining);
+    if (picked.length > remaining) {
+      notifyHelpers.warn(
+        push,
+        `已达到 50 张上限，只保存前 ${remaining} 张`,
+      );
+    }
+
+    setFiles((prev) => [...prev, ...incoming].slice(0, 50));
+    setCroppedFlags((prev) =>
+      [...prev, ...new Array(incoming.length).fill(false)].slice(0, 50),
+    );
+    setFileSources((prev) =>
+      [
+        ...prev,
+        ...new Array<ProductImageSource>(incoming.length).fill(source),
+      ].slice(0, 50),
+    );
+    setGarmentAttrs(null);
+    setSelectedMaterialIds([]);
+
+    try {
+      const blobs = await Promise.all(
+        incoming.map((f) => resizeImage(f, 2048)),
+      );
+      setCompressedBlobs((prev) => [...prev, ...blobs].slice(0, 50));
+    } catch (e) {
+      notifyHelpers.error(
+        push,
+        "图片读取失败",
+        e instanceof Error ? e.message : String(e),
+      );
+    }
+  }
+
+  async function handleScrapeImages() {
+    const url = sourceUrl.trim();
+    if (!url) {
+      notifyHelpers.warn(push, "请先输入网页 URL");
+      return;
+    }
+
+    setScrapeLoading(true);
+    setSelectedScrapedUrls(new Set());
+    try {
+      const res = await fetch("/api/scrape-images", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const data = (await res.json()) as {
+        images?: ScrapedImage[];
+        error?: string;
+      };
+      if (!res.ok) throw new Error(data.error || "抓取失败");
+
+      const images = data.images || [];
+      setScrapedImages(images);
+      if (images.length === 0) {
+        notifyHelpers.warn(push, "没有抓取到可用图片");
+      } else {
+        notifyHelpers.success(push, `已抓取 ${images.length} 张网页图片`);
+      }
+    } catch (e) {
+      setScrapedImages([]);
+      notifyHelpers.error(
+        push,
+        "网页图片抓取失败",
+        e instanceof Error ? e.message : String(e),
+      );
+    } finally {
+      setScrapeLoading(false);
+    }
+  }
+
+  function toggleScrapedImage(url: string) {
+    setSelectedScrapedUrls((prev) => {
+      const next = new Set(prev);
+      if (next.has(url)) next.delete(url);
+      else next.add(url);
+      return next;
+    });
+  }
+
+  function scheduleScrapedImageSelect(url: string) {
+    if (scrapedClickTimerRef.current) {
+      clearTimeout(scrapedClickTimerRef.current);
+    }
+    scrapedClickTimerRef.current = setTimeout(() => {
+      toggleScrapedImage(url);
+      scrapedClickTimerRef.current = null;
+    }, 220);
+  }
+
+  function cancelScrapedImageSelect() {
+    if (!scrapedClickTimerRef.current) return;
+    clearTimeout(scrapedClickTimerRef.current);
+    scrapedClickTimerRef.current = null;
+  }
+
+  function openOriginalPreview(preview: OriginalPreview) {
+    setOriginalPreview(preview);
+  }
+
+  function openSavedFilePreview(fileIndex: number, title: string) {
+    const source = compressedBlobs[fileIndex] || files[fileIndex];
+    if (!source) return;
+    openOriginalPreview({
+      src: URL.createObjectURL(source),
+      alt: title,
+      title,
+      revokeUrl: true,
+    });
+  }
+
+  async function saveSelectedScrapedImages() {
+    const selected = scrapedImages.filter((img) =>
+      selectedScrapedUrls.has(img.url),
+    );
+    if (selected.length === 0) {
+      notifyHelpers.warn(push, "请先选择要保存的图片");
+      return;
+    }
+
+    setSavingScraped(true);
+    try {
+      const downloaded: File[] = [];
+      for (const img of selected) {
+        const res = await fetch(img.proxyUrl);
+        if (!res.ok) continue;
+        const mimeType = res.headers.get("content-type") || "image/jpeg";
+        const blob = await res.blob();
+        downloaded.push(
+          new File(
+            [blob],
+            fileNameFromUrl(img.url, downloaded.length, mimeType),
+            { type: mimeType },
+          ),
+        );
+      }
+
+      if (downloaded.length === 0) {
+        notifyHelpers.error(push, "保存失败", "选中的图片无法下载");
+        return;
+      }
+
+      await appendFiles(downloaded, "url");
+      setSelectedScrapedUrls((prev) => {
+        const next = new Set(prev);
+        for (const img of selected) next.delete(img.url);
+        return next;
+      });
+      notifyHelpers.success(push, `已保存 ${downloaded.length} 张图片`);
+    } catch (e) {
+      notifyHelpers.error(
+        push,
+        "保存失败",
+        e instanceof Error ? e.message : String(e),
+      );
+    } finally {
+      setSavingScraped(false);
     }
   }
 
@@ -449,6 +755,7 @@ export default function RecolorPage() {
     setFiles((prev) => prev.filter((_, idx) => idx !== i));
     setCompressedBlobs((prev) => prev.filter((_, idx) => idx !== i));
     setCroppedFlags((prev) => prev.filter((_, idx) => idx !== i));
+    setFileSources((prev) => prev.filter((_, idx) => idx !== i));
   }
 
   /* ─── 解析 ─── */
@@ -461,6 +768,7 @@ export default function RecolorPage() {
     try {
       const fd = new FormData();
       fd.append("image0", compressedBlobs[0], files[0].name);
+      if (model) fd.append("model", model);
       const res = await fetch("/api/analyze", { method: "POST", body: fd });
       if (!res.ok) {
         throw new Error((await res.json()).error || res.statusText);
@@ -641,6 +949,7 @@ export default function RecolorPage() {
     setFiles([]);
     setCompressedBlobs([]);
     setCroppedFlags([]);
+    setFileSources([]);
     setGarmentAttrs(null);
     setSelectedMaterialIds([]);
     setSelectedColorIds(new Set());
@@ -649,6 +958,9 @@ export default function RecolorPage() {
     setUserSeed("");
     setColorQuery("");
     setSourceFolderName(null);
+    setSourceUrl("");
+    setScrapedImages([]);
+    setSelectedScrapedUrls(new Set());
     setActiveJobId(null);
     slotStore.reset();
     notifyHelpers.info(push, "已清空当前任务");
@@ -777,105 +1089,311 @@ export default function RecolorPage() {
             {/* Step 1: 上传 */}
             <CollapsibleSection
               title="① 上传产品图"
-              description="最多 50 张同款不同角度 · 拖拽 / 点击 / Ctrl+V 粘贴"
+              description="最多 50 张同款不同角度 · 拖拽 / 点击 / Ctrl+V 粘贴 / URL 抓取"
               defaultOpen
             >
-              {files.length === 0 ? (
-                <Dropzone
-                  accept="image/*"
-                  multiple
-                  enableDirectoryPicker
-                  onFiles={onPickFiles}
-                  icon={<Upload size={28} strokeWidth={1.6} />}
-                  title="拖拽 / 点击 / Ctrl+V 粘贴上传产品图"
-                  description="支持多张同时上传（最多 50 张），或选择整个文件夹"
-                />
-              ) : (
-                <div className="space-y-3">
-                  {sourceFolderName ? (
-                    <div className="flex items-center gap-2 text-[12px] text-fg-secondary">
-                      <span className="chip chip-brand text-[11px]">
-                        📁 {sourceFolderName}
-                      </span>
-                      <span className="text-fg-tertiary">
-                        下载会用此文件夹名命名
-                      </span>
-                    </div>
-                  ) : null}
-                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2.5">
-                    {files.map((f, i) => (
-                      <Thumbnail
-                        key={i}
-                        src={
-                          compressedBlobs[i]
-                            ? URL.createObjectURL(compressedBlobs[i])
-                            : URL.createObjectURL(f)
-                        }
-                        alt={`原图 ${i + 1}`}
-                        ratio="3/4"
-                        fit="contain"
-                        selected={croppedFlags[i]}
-                        checkbox={
-                          <span
-                            className="w-5 h-5 rounded text-white text-[10px] flex items-center justify-center"
-                            style={{ background: "rgba(0, 0, 0, 0.6)" }}
-                          >
-                            {i + 1}
-                          </span>
-                        }
-                        badge={
-                          croppedFlags[i] ? (
-                            <ThumbnailBadge tone="green">已裁</ThumbnailBadge>
-                          ) : undefined
-                        }
-                        hoverOverlay={
-                          <div className="flex flex-col gap-1">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setCroppingIndex(i);
-                              }}
-                              className="px-3 py-1 bg-white/95 text-gray-900 text-xs rounded hover:bg-white flex items-center gap-1"
-                            >
-                              <CropIcon size={11} strokeWidth={2.2} />
-                              裁剪
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                removeFile(i);
-                              }}
-                              className="px-3 py-1 text-white text-xs rounded flex items-center gap-1"
-                              style={{ background: "var(--danger)" }}
-                            >
-                              <X size={11} strokeWidth={2.2} />
-                              删除
-                            </button>
-                          </div>
-                        }
-                      />
-                    ))}
-                  </div>
-                  {files.length < 50 && (
-                    <Dropzone
-                      accept="image/*"
-                      multiple
-                      onFiles={(more) =>
-                        onPickFiles([...files, ...more].slice(0, 50))
-                      }
-                      compact
-                      className="aspect-[5/1] flex items-center justify-center"
-                    >
-                      <div className="absolute inset-0 flex items-center justify-center text-[12px] text-fg-tertiary pointer-events-none gap-2">
-                        <Upload size={14} strokeWidth={1.8} />
-                        继续添加（{50 - files.length} 张剩余 · 支持 Ctrl+V）
-                      </div>
-                    </Dropzone>
-                  )}
+              <div className="space-y-4">
+                <div className="inline-flex overflow-hidden rounded-md border border-border-default bg-bg-secondary">
+                  {(
+                    [
+                      ["url", "URL"],
+                      ["local", "本地上传"],
+                    ] as const
+                  ).map(([mode, label]) => {
+                    const active = uploadMode === mode;
+                    return (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => setUploadMode(mode)}
+                        className={`h-10 min-w-[116px] px-5 text-[13px] font-medium transition-colors ${
+                          active
+                            ? "bg-bg-card text-fg-primary"
+                            : "text-fg-tertiary hover:bg-bg-hover hover:text-fg-secondary"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
                 </div>
-              )}
+
+                {uploadMode === "url" ? (
+                  <div className="space-y-4">
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <input
+                        type="url"
+                        value={sourceUrl}
+                        onChange={(e) => setSourceUrl(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            handleScrapeImages();
+                          }
+                        }}
+                        placeholder="https://example.com/product-page"
+                        className="input h-10 flex-1 text-[13px]"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleScrapeImages}
+                        disabled={scrapeLoading || !sourceUrl.trim()}
+                        className="btn btn-secondary btn-md sm:w-[112px]"
+                      >
+                        {scrapeLoading ? "抓取中..." : "抓取"}
+                      </button>
+                    </div>
+
+                    {scrapedImages.length > 0 ? (
+                      <div className="space-y-3">
+                        <div className="text-[13px] font-medium text-fg-secondary">
+                          抓取到的网页图片
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                          {scrapedImages.map((img, i) => {
+                            const active = selectedScrapedUrls.has(img.url);
+                            return (
+                              <button
+                                key={img.url}
+                                type="button"
+                                onClick={() => scheduleScrapedImageSelect(img.url)}
+                                onDoubleClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  cancelScrapedImageSelect();
+                                  openOriginalPreview({
+                                    src: img.proxyUrl,
+                                    alt: img.alt || `网页图片 ${i + 1}`,
+                                    title: `网页图片 ${i + 1}`,
+                                  });
+                                }}
+                                title="双击查看原尺寸"
+                                className="relative min-h-[180px] rounded-md bg-bg-tertiary border border-border-subtle p-2 flex items-center justify-center transition-colors hover:border-border-default"
+                              >
+                                <span
+                                  className="absolute top-1 left-1 z-20 w-5 h-5 rounded text-white text-[10px] flex items-center justify-center"
+                                  style={{ background: "rgba(0, 0, 0, 0.6)" }}
+                                >
+                                  {i + 1}
+                                </span>
+                                <span className="relative inline-block max-w-full align-middle">
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    src={img.proxyUrl}
+                                    alt={img.alt || `网页图片 ${i + 1}`}
+                                    loading="lazy"
+                                    decoding="async"
+                                    draggable={false}
+                                    className={`block max-h-[280px] w-auto max-w-full rounded-md object-contain ${
+                                      active
+                                        ? "border-2 border-[var(--success)]"
+                                        : "border-2 border-transparent"
+                                    }`}
+                                  />
+                                  {active ? (
+                                    <span
+                                      className="absolute top-1 right-1 w-5 h-5 rounded-full text-white flex items-center justify-center"
+                                      style={{ background: "var(--success)" }}
+                                    >
+                                      <Check size={13} strokeWidth={3} />
+                                    </span>
+                                  ) : null}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <div className="text-[11px] text-fg-tertiary">
+                          ↑ 被选中图片右上角显示绿色 √
+                        </div>
+                        <button
+                          type="button"
+                          onClick={saveSelectedScrapedImages}
+                          disabled={savingScraped || selectedScrapedUrls.size === 0}
+                          className="btn btn-primary btn-md"
+                        >
+                          {savingScraped
+                            ? "保存中..."
+                            : `保存选中图片${
+                                selectedScrapedUrls.size
+                                  ? `（${selectedScrapedUrls.size}）`
+                                  : ""
+                              }`}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : localFileIndexes.length === 0 ? (
+                  <Dropzone
+                    accept="image/*"
+                    multiple
+                    enableDirectoryPicker
+                    onFiles={onPickFiles}
+                    icon={<Upload size={28} strokeWidth={1.6} />}
+                    title="拖拽 / 点击 / Ctrl+V 粘贴上传产品图"
+                    description="支持多张同时上传（最多 50 张），或选择整个文件夹"
+                  />
+                ) : (
+                  <div className="space-y-3">
+                    {sourceFolderName ? (
+                      <div className="flex items-center gap-2 text-[12px] text-fg-secondary">
+                        <span className="chip chip-brand text-[11px]">
+                          📁 {sourceFolderName}
+                        </span>
+                        <span className="text-fg-tertiary">
+                          下载会用此文件夹名命名
+                        </span>
+                      </div>
+                    ) : null}
+                    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2.5">
+                      {localFileIndexes.map((fileIndex, localIdx) => {
+                        const f = files[fileIndex];
+                        return (
+                        <Thumbnail
+                          key={fileIndex}
+                          src={
+                            compressedBlobs[fileIndex]
+                              ? URL.createObjectURL(compressedBlobs[fileIndex])
+                              : URL.createObjectURL(f)
+                          }
+                          alt={`原图 ${localIdx + 1}`}
+                          ratio="3/4"
+                          fit="contain"
+                          selected={croppedFlags[fileIndex]}
+                          checkbox={
+                            <span
+                              className="w-5 h-5 rounded text-white text-[10px] flex items-center justify-center"
+                              style={{ background: "rgba(0, 0, 0, 0.6)" }}
+                            >
+                              {localIdx + 1}
+                            </span>
+                          }
+                          badge={
+                            croppedFlags[fileIndex] ? (
+                              <ThumbnailBadge tone="green">已裁</ThumbnailBadge>
+                            ) : undefined
+                          }
+                          hoverOverlay={
+                            <div className="flex flex-col gap-1">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setCroppingIndex(fileIndex);
+                                }}
+                                className="px-3 py-1 bg-white/95 text-gray-900 text-xs rounded hover:bg-white flex items-center gap-1"
+                              >
+                                <CropIcon size={11} strokeWidth={2.2} />
+                                裁剪
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  removeFile(fileIndex);
+                                }}
+                                className="px-3 py-1 text-white text-xs rounded flex items-center gap-1"
+                                style={{ background: "var(--danger)" }}
+                              >
+                                <X size={11} strokeWidth={2.2} />
+                                删除
+                              </button>
+                            </div>
+                          }
+                        />
+                        );
+                      })}
+                    </div>
+                    {files.length < 50 && (
+                      <Dropzone
+                        accept="image/*"
+                        multiple
+                        onFiles={(more) => appendFiles(more, "local")}
+                        compact
+                        className="aspect-[5/1] flex items-center justify-center"
+                      >
+                        <div className="absolute inset-0 flex items-center justify-center text-[12px] text-fg-tertiary pointer-events-none gap-2">
+                          <Upload size={14} strokeWidth={1.8} />
+                          继续添加（{50 - files.length} 张剩余 · 支持 Ctrl+V）
+                        </div>
+                      </Dropzone>
+                    )}
+                  </div>
+                )}
+
+                {uploadMode === "url" && urlFileIndexes.length > 0 ? (
+                  <div className="space-y-3">
+                    <div className="text-[13px] font-medium text-fg-secondary">
+                      已保存产品图
+                    </div>
+                    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2.5">
+                      {urlFileIndexes.map((fileIndex, urlIdx) => {
+                        const f = files[fileIndex];
+                        return (
+                        <Thumbnail
+                          key={`${f.name}-${fileIndex}`}
+                          src={
+                            compressedBlobs[fileIndex]
+                              ? URL.createObjectURL(compressedBlobs[fileIndex])
+                              : URL.createObjectURL(f)
+                          }
+                          alt={`原图 ${urlIdx + 1}`}
+                          ratio="3/4"
+                          fit="contain"
+                          selected={croppedFlags[fileIndex]}
+                          onDoubleClick={() =>
+                            openSavedFilePreview(
+                              fileIndex,
+                              f.name || `已保存产品图 ${urlIdx + 1}`,
+                            )
+                          }
+                          checkbox={
+                            <span
+                              className="w-5 h-5 rounded text-white text-[10px] flex items-center justify-center"
+                              style={{ background: "rgba(0, 0, 0, 0.6)" }}
+                            >
+                              {urlIdx + 1}
+                            </span>
+                          }
+                          badge={
+                            croppedFlags[fileIndex] ? (
+                              <ThumbnailBadge tone="green">已裁剪</ThumbnailBadge>
+                            ) : undefined
+                          }
+                          hoverOverlay={
+                            <div className="flex flex-col gap-1">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setCroppingIndex(fileIndex);
+                                }}
+                                className="px-3 py-1 bg-white/95 text-gray-900 text-xs rounded hover:bg-white flex items-center gap-1"
+                              >
+                                <CropIcon size={11} strokeWidth={2.2} />
+                                裁剪
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  removeFile(fileIndex);
+                                }}
+                                className="px-3 py-1 text-white text-xs rounded flex items-center gap-1"
+                                style={{ background: "var(--danger)" }}
+                              >
+                                <X size={11} strokeWidth={2.2} />
+                                删除
+                              </button>
+                            </div>
+                          }
+                        />
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             </CollapsibleSection>
 
             {croppingIndex !== null && compressedBlobs[croppingIndex] && (
@@ -1248,6 +1766,46 @@ export default function RecolorPage() {
           </div>
         </div>
       )}
+      {originalPreview ? (
+        <div
+          className="fixed inset-0 z-[100] bg-black/85 backdrop-blur-sm"
+          onClick={() => setOriginalPreview(null)}
+        >
+          <div
+            className="absolute left-4 right-4 top-3 z-10 flex items-center justify-between gap-3 text-white"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="min-w-0">
+              <div className="truncate text-sm font-medium">
+                {originalPreview.title}
+              </div>
+              <div className="text-[11px] text-white/60">
+                原尺寸预览 · Esc 关闭
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setOriginalPreview(null)}
+              className="h-9 w-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center"
+              aria-label="关闭原尺寸预览"
+            >
+              <X size={18} strokeWidth={2.2} />
+            </button>
+          </div>
+          <div className="absolute inset-x-0 bottom-0 top-14 overflow-auto p-6">
+            <div className="min-w-max min-h-full flex items-start justify-center">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={originalPreview.src}
+                alt={originalPreview.alt}
+                className="block max-w-none h-auto rounded-md bg-white shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+                draggable={false}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </AppShell>
   );
 }
