@@ -170,18 +170,21 @@ export function LeftNav({
           label="HEX 换色"
           Icon={Palette}
           active={isActive("/recolor")}
+          manualRefresh
         />
         <CollapsedIcon
           href="/batch-photo"
           label="批量摄影"
           Icon={Camera}
           active={isActive("/batch-photo")}
+          manualRefresh
         />
         <CollapsedIcon
           href="/product-listing"
           label="产品上架"
           Icon={ShoppingBag}
           active={isActive("/product-listing")}
+          manualRefresh
         />
         <CollapsedIcon
           href="/history"
@@ -296,6 +299,7 @@ export function LeftNav({
             Icon={Palette}
             label="HEX 换色"
             active={isActive("/recolor")}
+            manualRefresh
           />
           <NavItem
             href="/batch-photo"
@@ -303,18 +307,21 @@ export function LeftNav({
             label="批量摄影"
             active={isActive("/batch-photo")}
             badge={activeJobCount > 0 ? String(activeJobCount) : undefined}
+            manualRefresh
           />
           <NavItem
             href="/scene-tools"
             Icon={Sparkles}
             label="服饰场景图"
             active={isActive("/scene-tools")}
+            manualRefresh
           />
           <NavItem
             href="/product-listing"
             Icon={ShoppingBag}
             label="产品上架"
             active={isActive("/product-listing")}
+            manualRefresh
           />
           <NavItem
             href="/history"
@@ -459,16 +466,22 @@ function NavItem({
   label,
   active,
   badge,
+  manualRefresh = false,
 }: {
   href: string;
   Icon: IconCmp;
   label: string;
   active: boolean;
   badge?: string;
+  manualRefresh?: boolean;
 }) {
   return (
     <Link
       href={href}
+      prefetch={manualRefresh ? false : undefined}
+      onClick={(e) => {
+        if (manualRefresh && active) e.preventDefault();
+      }}
       className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors ${
         active
           ? "text-brand-400 font-medium"
@@ -577,16 +590,22 @@ function CollapsedIcon({
   Icon,
   active,
   badge,
+  manualRefresh = false,
 }: {
   href: string;
   label: string;
   Icon: IconCmp;
   active: boolean;
   badge?: number;
+  manualRefresh?: boolean;
 }) {
   return (
     <Link
       href={href}
+      prefetch={manualRefresh ? false : undefined}
+      onClick={(e) => {
+        if (manualRefresh && active) e.preventDefault();
+      }}
       title={label}
       className={`relative w-9 h-9 rounded-md flex items-center justify-center mb-1 transition-colors ${
         active

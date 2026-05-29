@@ -302,14 +302,14 @@ export async function POST(req: NextRequest) {
       "image_gen",
       typeof modelRaw === "string" ? modelRaw : undefined,
     );
-    // 画质：'1K' | '2K' | '4K'，默认 4K（高质量）
+    // 画质：'1K' | '2K' | '4K'，默认 1K（最便宜）
     // Gemini 用 imageSize（'1K' | '2K' | '4K'）
     // OpenAI 用 quality（low / medium / high）+ size（具体像素）—— image-gen dispatcher 会自动映射
     const qualityRaw = formData.get("image_size");
     const imageSize: "1K" | "2K" | "4K" =
       qualityRaw === "1K" || qualityRaw === "2K" || qualityRaw === "4K"
         ? qualityRaw
-        : "4K";
+        : "1K";
 
     // ─── 构造 items：N 产品 × 每个场景按 (常规变体 + 特写多选) 展开 ───
     // 每个场景产出 = count 张常规 + closeup_presets.length 张特写
@@ -662,7 +662,7 @@ async function sceneToolsItemHandler(
         prompt,
         modelId: ctx.job.model,
         aspectRatio: p.aspect_ratio,
-        imageSize: p.image_size || "4K",
+        imageSize: p.image_size || "1K",
         temperature: 0.4,
       }),
     {
@@ -689,7 +689,7 @@ async function sceneToolsItemHandler(
       ? estimateImageCostUSD({
           modelId: ctx.job.model,
           aspectRatio: p.aspect_ratio,
-          imageSize: p.image_size || "4K",
+          imageSize: p.image_size || "1K",
         })
       : undefined;
 

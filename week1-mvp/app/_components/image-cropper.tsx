@@ -15,6 +15,8 @@ export interface ImageCropperProps {
   imageSrc: string;
   /** 建议初始比例。0 = 自由比例（默认） */
   initialAspect?: number;
+  /** 确认按钮文案 */
+  confirmLabel?: string;
   /** 确认裁剪后返回 Blob */
   onConfirm: (blob: Blob) => void;
   /** 取消 */
@@ -41,6 +43,7 @@ const ASPECT_PRESETS: Array<{ label: string; value: number }> = [
 export function ImageCropper({
   imageSrc,
   initialAspect = 0,
+  confirmLabel = "确认裁剪",
   onConfirm,
   onCancel,
 }: ImageCropperProps) {
@@ -235,7 +238,7 @@ export function ImageCropper({
                 disabled={!completedCrop || processing}
                 className="btn btn-primary btn-md"
               >
-                {processing ? "处理中..." : "确认裁剪"}
+                {processing ? "处理中..." : confirmLabel}
               </button>
             </div>
           </div>

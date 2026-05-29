@@ -17,6 +17,7 @@ import { useJobPolling } from "@/lib/hooks/use-job-polling";
 import { Dropzone } from "@/app/_components/ui";
 import { ImageCropper } from "@/app/_components/image-cropper";
 import { TaskViewport } from "@/app/_components/task-viewport";
+import { PageRefreshButton } from "@/app/_components/page-refresh-button";
 import {
   TEXT_SCENE_PRESETS as STATIC_PRESETS,
   type TextScenePreset,
@@ -123,6 +124,7 @@ const POSE_MODES: Array<{ value: PoseMode; label: string; hint: string }> = [
 
 const ASPECT_RATIOS = [
   { value: "3:4", label: "3:4 竖（推荐）" },
+  { value: "2:3", label: "2:3 竖" },
   { value: "9:16", label: "9:16 竖手机" },
   { value: "1:1", label: "1:1 方" },
   { value: "16:9", label: "16:9 横" },
@@ -305,7 +307,7 @@ export default function SceneToolsPage() {
   const [aspectRatio, setAspectRatio] = useState("3:4");
   const [userHint, setUserHint] = useState("");
   const [modelId, setModelId] = useState("gemini-3-pro-image-preview");
-  const [imageSize, setImageSize] = useState<"1K" | "2K" | "4K">("2K");
+  const [imageSize, setImageSize] = useState<"1K" | "2K" | "4K">("1K");
   const [focusMode, setFocusMode] = useState<FocusMode>("model_first");
   const [poseMode, setPoseMode] = useState<PoseMode>("editorial");
 
@@ -568,7 +570,7 @@ export default function SceneToolsPage() {
     }
     if (newProducts.length === 0) return;
     setProducts((prev) => [...prev, ...newProducts]);
-    setOpenProductChannel("selected");
+    setOpenProductChannel(source === "web" ? "selected" : "local");
     setError(null);
   }
 
@@ -848,6 +850,7 @@ export default function SceneToolsPage() {
   const needsBackRef = scenes.some((s) =>
     s.closeup_presets.some((k) => BACK_KEYS.has(k)),
   );
+  const selectedProducts = products.filter((p) => p.source === "web");
   const localProducts = products.filter((p) => p.source === "local");
   const croppingProduct =
     croppingProductId !== null
@@ -992,7 +995,8 @@ export default function SceneToolsPage() {
       <header className="mb-6">
         <h1 className="text-2xl font-bold text-fg-primary flex items-center gap-2">
           <Sparkles size={20} className="text-brand-400" strokeWidth={2.2} />
-          服饰场景图
+          <span>服饰场景图</span>
+          <PageRefreshButton />
         </h1>
         <p className="mt-1 text-sm text-fg-tertiary">
           上传产品图 + 选场景（每个场景独立配「常规变体张数 + 特写镜头多选」）→ 输出 N 产品 × Σ(每场景张数 + 特写数) 张图。
@@ -1025,7 +1029,7 @@ export default function SceneToolsPage() {
             <span>① 产品图（{products.length}）</span>
           </h2>
           <div className="text-[12px] text-fg-tertiary mb-3">
-            网页 / 已选 / 本地 · 随心搭
+            网页已选 / 本地上传 · 任选一种来源
           </div>
 
           <div className="border-t border-border-subtle">
@@ -1137,11 +1141,11 @@ export default function SceneToolsPage() {
 
             <ProductUploadChannelPanel
               title="已选"
-              count={products.length}
+              count={selectedProducts.length}
               open={openProductChannel === "selected"}
               onToggle={() => toggleProductChannel("selected")}
             >
-              {products.length > 0 ? (
+              {selectedProducts.length > 0 ? (
                 <>
                   {needsBackRef && (
                     <div className="mb-2 p-2 rounded text-[10px] bg-[var(--brand-50-bg)] border border-brand-200 text-brand-700">
@@ -1149,24 +1153,32 @@ export default function SceneToolsPage() {
                     </div>
                   )}
                   <div className="grid grid-cols-3 gap-2 max-h-[480px] overflow-y-auto pr-1">
-                    {products.map((p, idx) => (
-                      <SceneProductCard
-                        key={p.id}
-                        product={p}
-                        index={idx}
-                        needsBackRef={needsBackRef}
-                        onRemove={() => removeProduct(p.id)}
-                        onStartCrop={() => setCroppingProductId(p.id)}
-                        onSetBackRef={(file) => setProductBackRef(p.id, file)}
-                        onRemoveBackRef={() => removeProductBackRef(p.id)}
-                        onPreview={() => openProductPreview(p, `已选产品图 P${idx + 1}`)}
-                      />
-                    ))}
+                    {selectedProducts.map((p) => {
+                      const idx = products.findIndex((item) => item.id === p.id);
+                      return (
+                        <SceneProductCard
+                          key={p.id}
+                          product={p}
+                          index={idx >= 0 ? idx : 0}
+                          needsBackRef={needsBackRef}
+                          onRemove={() => removeProduct(p.id)}
+                          onStartCrop={() => setCroppingProductId(p.id)}
+                          onSetBackRef={(file) => setProductBackRef(p.id, file)}
+                          onRemoveBackRef={() => removeProductBackRef(p.id)}
+                          onPreview={() =>
+                            openProductPreview(
+                              p,
+                              `已选产品图 P${idx >= 0 ? idx + 1 : 1}`,
+                            )
+                          }
+                        />
+                      );
+                    })}
                   </div>
                 </>
               ) : (
                 <div className="text-[12px] text-fg-tertiary p-3 rounded-md border border-dashed border-border-default bg-bg-tertiary">
-                  暂无已选图片，可从「网页」添加，或在「本地」上传。
+                  暂无已选图片，可从「网页」添加。
                 </div>
               )}
             </ProductUploadChannelPanel>

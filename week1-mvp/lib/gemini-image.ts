@@ -214,8 +214,8 @@ export interface RecolorPromptOptions {
   realismConstraints?: string;
   /** 用户自定义追加指令 */
   userSeed?: string;
-  /** 输出清晰度档位：'hd' | '2k' | '4k'。会转成强约束文字进 prompt */
-  qualityLevel?: "hd" | "2k" | "4k";
+  /** 输出清晰度档位：'1k' | 'hd' | '2k' | '4k'。会转成强约束文字进 prompt */
+  qualityLevel?: "1k" | "hd" | "2k" | "4k";
   /**
    * 原图的"主色调"（中文）。从 garment_attrs.主色调 抠出来。
    *
@@ -250,8 +250,17 @@ export function hexToRgb(
  * 输出质量指令 · 关键：告诉模型**重绘而不是改图**，按目标分辨率渲染
  * 这是让"糊图变清晰"的核心——模型不会拘泥于原图的像素，而是按指令级别重新生成
  */
-function buildQualityHint(level: "hd" | "2k" | "4k" = "hd"): string {
-  const levelLabel = level === "4k" ? "4K 超清" : level === "2k" ? "2K 高清" : "HD 清晰";
+function buildQualityHint(
+  level: "1k" | "hd" | "2k" | "4k" = "1k",
+): string {
+  const levelLabel =
+    level === "4k"
+      ? "4K 超清"
+      : level === "2k"
+        ? "2K 高清"
+        : level === "1k"
+          ? "1K 清晰"
+          : "HD 清晰";
   return `【输出质量 / Output Quality】${levelLabel}
 - 必须输出 ${level.toUpperCase()} 级别的清晰锐利图像（${level.toUpperCase()} ultra-high resolution, tack-sharp）
 - **即使输入图片模糊、有噪点、是截图或低像素，你必须 REDRAW / 重新渲染整张图，让它变得锐利清晰**
@@ -350,8 +359,8 @@ export function buildRecolorPrompt(
     parts.push("", options.realismConstraints);
   }
 
-  // 清晰度指令（关键）——告诉模型按 2K/4K 重绘，不要复刻输入图的模糊
-  parts.push("", buildQualityHint(options.qualityLevel ?? "hd"));
+  // 清晰度指令（关键）——告诉模型按所选档位重绘，不要复刻输入图的模糊
+  parts.push("", buildQualityHint(options.qualityLevel ?? "1k"));
 
   parts.push(
     "",

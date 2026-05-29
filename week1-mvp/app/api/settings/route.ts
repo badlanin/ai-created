@@ -36,6 +36,9 @@ interface SettingRow {
 const ALLOWED_PATCH_KEYS = new Set([
   "gemini_api_key",
   "openai_api_key",
+  "gpt_api_key",
+  "gpt_base_url",
+  "gpt_proxy_url",
   "openai_proxy_url",
   "openai_ipm_limit",
   "usd_to_cny",
@@ -45,7 +48,7 @@ const ALLOWED_PATCH_KEYS = new Set([
   "image_concurrency",
 ]);
 
-const SECRET_KEYS = new Set(["gemini_api_key", "openai_api_key"]);
+const SECRET_KEYS = new Set(["gemini_api_key", "openai_api_key", "gpt_api_key"]);
 
 function maskSecret(value: string): string {
   if (!value) return "";
@@ -88,7 +91,8 @@ export async function PATCH(req: NextRequest) {
     const body = (await req.json()) as Record<string, unknown>;
 
     const updates: Array<{ key: string; value: string }> = [];
-    for (const [k, v] of Object.entries(body)) {
+    for (const [k, rawValue] of Object.entries(body)) {
+      let v = rawValue;
       if (!ALLOWED_PATCH_KEYS.has(k)) continue;
       // gemini_api_key：允许空字符串（= 清空）；非空时简单格式校验（AIza 开头，39 字符）
       if (k === "gemini_api_key" && typeof v === "string" && v.length > 0) {
@@ -113,6 +117,58 @@ export async function PATCH(req: NextRequest) {
             { status: 400 },
           );
         }
+      }
+      // gpt_api_key：'sk-' 开头，格式与 OpenAI API Key 一致
+      if (k === "gpt_api_key" && typeof v === "string" && v.length > 0) {
+        if (!/^sk-[A-Za-z0-9_-]{20,}$/.test(v)) {
+          return NextResponse.json(
+            {
+              error:
+                "gpt_api_key 格式不正确，应为 'sk-' 开头。去 https://platform.openai.com/api-keys 申请。",
+            },
+            { status: 400 },
+          );
+        }
+      }
+      // openai_proxy_url：必须是 http:// 或 https:// 开头（可空）
+      if (k === "openai_proxy_url" && typeof v === "string" && v.length > 0) {
+        if (!/^https?:\/\//.test(v)) {
+          return NextResponse.json(
+            {
+              error:
+                "openai_proxy_url 必须以 http:// 或 https:// 开头，例如 http://127.0.0.1:7892",
+            },
+            { status: 400 },
+          );
+        }
+      }
+      // gpt_base_url：GPT API 中转站 / OpenAI compatible base URL（可空）
+      if (k === "gpt_base_url" && typeof v === "string" && v.length > 0) {
+        const candidate = normalizeGptBaseUrl(v);
+        if (!candidate) {
+          return NextResponse.json(
+            {
+              error:
+                "gpt_base_url 格式不正确，例如 https://api.example.com/v1",
+            },
+            { status: 400 },
+          );
+        }
+        v = candidate;
+      }
+      // gpt_proxy_url：旧字段兼容，也按中转站 URL 处理（可空）
+      if (k === "gpt_proxy_url" && typeof v === "string" && v.length > 0) {
+        const candidate = normalizeGptBaseUrl(v);
+        if (!candidate) {
+          return NextResponse.json(
+            {
+              error:
+                "gpt_proxy_url 格式不正确，例如 https://api.example.com/v1",
+            },
+            { status: 400 },
+          );
+        }
+        v = candidate;
       }
       // openai_proxy_url：必须是 http:// 或 https:// 开头（可空）
       if (k === "openai_proxy_url" && typeof v === "string" && v.length > 0) {
@@ -184,5 +240,23 @@ export async function PATCH(req: NextRequest) {
       { error: e instanceof Error ? e.message : String(e) },
       { status },
     );
+  }
+}
+
+function normalizeGptBaseUrl(value: string): string {
+  const trimmed = value.trim().replace(/\/+$/, "");
+  if (!trimmed) return "";
+  const withScheme = /^https?:\/\//i.test(trimmed)
+    ? trimmed
+    : `https://${trimmed}`;
+  try {
+    const url = new URL(withScheme);
+    if (!url.hostname) return "";
+    if (url.pathname === "" || url.pathname === "/") {
+      url.pathname = "/v1";
+    }
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return "";
   }
 }

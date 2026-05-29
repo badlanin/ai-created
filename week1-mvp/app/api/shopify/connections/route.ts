@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import {
-  deleteShopifyConnection,
   getShopifyConnection,
   listShopifyConnections,
   saveShopifyConnection,
@@ -13,8 +12,11 @@ export const runtime = "nodejs";
 export async function GET() {
   try {
     const user = await requireUser();
-    const connection = getShopifyConnection(user.id);
-    return NextResponse.json(connection || { bound: false });
+    const active = getShopifyConnection(user.id);
+    return NextResponse.json({
+      active,
+      connections: listShopifyConnections(user.id),
+    });
   } catch (e) {
     const status = (e as { status?: number }).status || 500;
     return NextResponse.json(
@@ -62,28 +64,8 @@ export async function POST(req: NextRequest) {
     });
     return NextResponse.json({
       ok: true,
-      connection: getShopifyConnection(user.id),
+      active: getShopifyConnection(user.id),
       connections: listShopifyConnections(user.id),
-    });
-  } catch (e) {
-    const status = (e as { status?: number }).status || 500;
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : String(e) },
-      { status },
-    );
-  }
-}
-
-export async function DELETE() {
-  try {
-    const user = await requireUser();
-    deleteShopifyConnection(user.id);
-    const connection = getShopifyConnection(user.id);
-    return NextResponse.json({
-      ok: true,
-      connection,
-      connections: listShopifyConnections(user.id),
-      bound: Boolean(connection),
     });
   } catch (e) {
     const status = (e as { status?: number }).status || 500;

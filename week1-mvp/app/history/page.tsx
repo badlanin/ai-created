@@ -14,6 +14,7 @@ import {
   ExternalLink,
   Eye,
   Search,
+  ShoppingBag,
   Users,
   Loader2,
   Sparkles,
@@ -34,6 +35,12 @@ import {
   downloadImagesAsZip,
   downloadSingleImage,
 } from "@/lib/download-zip";
+import {
+  appendProductListingMedia,
+  PRODUCT_LISTING_MEDIA_STORAGE_KEY,
+  PRODUCT_LISTING_NOTICE_STORAGE_KEY,
+  type ProductListingMediaItem,
+} from "@/lib/product-listing-draft";
 
 type Me = {
   id: number;
@@ -160,6 +167,23 @@ function formatConfig(job: JobRow): string {
   return chips.join(" · ");
 }
 
+function readListingMediaDraft(): ProductListingMediaItem[] {
+  try {
+    const raw = window.localStorage.getItem(PRODUCT_LISTING_MEDIA_STORAGE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as ProductListingMediaItem[]) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeListingMediaDraft(media: ProductListingMediaItem[]) {
+  window.localStorage.setItem(
+    PRODUCT_LISTING_MEDIA_STORAGE_KEY,
+    JSON.stringify(media),
+  );
+}
+
 export default function HistoryPage() {
   const [me, setMe] = useState<Me | null>(null);
   const [items, setItems] = useState<JobRow[]>([]);
@@ -191,6 +215,7 @@ export default function HistoryPage() {
   const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(new Set());
   const [zipping, setZipping] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [listingJobId, setListingJobId] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/me")
@@ -354,6 +379,67 @@ export default function HistoryPage() {
     }
   }
 
+  async function addJobToProductListing(job: JobRow) {
+    setListingJobId(job.id);
+    try {
+      const bindingRes = await fetch("/api/shopify/connection");
+      const binding = (await bindingRes.json().catch(() => ({}))) as {
+        bound?: boolean;
+      };
+      if (!bindingRes.ok || !binding.bound) {
+        window.sessionStorage.setItem(
+          PRODUCT_LISTING_NOTICE_STORAGE_KEY,
+          "请输入 Shopify 密钥",
+        );
+        window.location.href = "/product-listing?shopify=missing";
+        return;
+      }
+
+      const r = await fetch(`/api/jobs/${job.id}`);
+      if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+      const body = (await r.json()) as {
+        items: Array<{
+          id: number;
+          idx: number;
+          status: string;
+          label: string | null;
+          result_image_url: string | null;
+        }>;
+      };
+      const completed = body.items.filter(
+        (it) => it.status === "completed" && it.result_image_url,
+      );
+      if (completed.length === 0) {
+        alert("这条记录里没有可加入的成功图片");
+        return;
+      }
+
+      const { media, addedCount } = appendProductListingMedia(
+        readListingMediaDraft(),
+        completed.map((it, index) => ({
+          url: it.result_image_url!,
+          alt: it.label || `${FEATURE_LABELS[job.feature]} ${index + 1}`,
+          role: index === 0 ? "main" : index === 2 ? "back" : "detail",
+          sourceJobId: job.id,
+          sourceItemId: it.id,
+          sourceLabel: it.label,
+        })),
+      );
+      writeListingMediaDraft(media);
+      window.sessionStorage.setItem(
+        PRODUCT_LISTING_NOTICE_STORAGE_KEY,
+        addedCount > 0
+          ? `已加入 ${addedCount} 张图片到媒体 Media`
+          : "这些图片已经在媒体 Media 中",
+      );
+      window.location.href = "/product-listing?media=added";
+    } catch (e) {
+      alert("加入产品上架失败：" + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setListingJobId(null);
+    }
+  }
+
   return (
     <main className="max-w-6xl mx-auto p-4 md:p-8">
       <header className="mb-5">
@@ -474,6 +560,8 @@ export default function HistoryPage() {
               selected={selectedJobIds.has(job.id)}
               onToggleSelect={() => toggleJob(job.id)}
               onOpenDetail={() => setDetailJobId(job.id)}
+              onProductListing={() => addJobToProductListing(job)}
+              productListingLoading={listingJobId === job.id}
             />
           ))}
         </div>
@@ -523,12 +611,16 @@ function JobCard({
   selected,
   onToggleSelect,
   onOpenDetail,
+  onProductListing,
+  productListingLoading,
 }: {
   job: JobRow;
   showUser: boolean;
   selected: boolean;
   onToggleSelect: () => void;
   onOpenDetail: () => void;
+  onProductListing: () => void;
+  productListingLoading: boolean;
 }) {
   const featureIcon = (() => {
     switch (job.feature) {
@@ -670,6 +762,16 @@ function JobCard({
 
         {/* 右侧价 + 操作 */}
         <div className="shrink-0 flex items-center gap-3">
+          <Button
+            size="sm"
+            variant="primary"
+            leftIcon={<ShoppingBag size={13} strokeWidth={2} />}
+            loading={productListingLoading}
+            disabled={job.completed_count === 0}
+            onClick={onProductListing}
+          >
+            产品上架
+          </Button>
           <div className="text-right">
             <div className="text-[11px] text-fg-tertiary leading-tight">
               花费

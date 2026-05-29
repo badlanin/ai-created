@@ -108,17 +108,23 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ─── 纯色背景（必填，默认浅米）───
+    // ─── 纯色背景（必填，用户主动选择）───
     const solidColorHexRaw = formData.get("solid_color_hex");
-    const solidColorHex = (() => {
-      const v = typeof solidColorHexRaw === "string" ? solidColorHexRaw.trim() : "";
-      return /^#[0-9A-Fa-f]{6}$/.test(v) ? v.toUpperCase() : "#F5F1EA";
-    })();
+    const solidColorHex =
+      typeof solidColorHexRaw === "string"
+        ? solidColorHexRaw.trim().toUpperCase()
+        : "";
+    if (!/^#[0-9A-Fa-f]{6}$/.test(solidColorHex)) {
+      return NextResponse.json({ error: "请选择主背景纯色" }, { status: 400 });
+    }
     const solidColorNameRaw = formData.get("solid_color_name");
     const solidColorName =
       typeof solidColorNameRaw === "string" && solidColorNameRaw.trim()
         ? solidColorNameRaw.trim().slice(0, 20)
-        : "浅米色";
+        : "";
+    if (!solidColorName) {
+      return NextResponse.json({ error: "请选择主背景纯色" }, { status: 400 });
+    }
 
     // ─── 额外场景 + 数量（可选 ≤2 张场景，每张 1..5 张图）───
     // 新版语义：不再绑定固定 pose，姿势由模型按场景物件自由互动生成。
@@ -236,10 +242,13 @@ export async function POST(req: NextRequest) {
         : undefined;
 
     const qualityLevelRaw = formData.get("quality_level");
-    const qualityLevel: "hd" | "2k" | "4k" =
-      qualityLevelRaw === "hd" || qualityLevelRaw === "4k"
+    const qualityLevel: "1k" | "hd" | "2k" | "4k" =
+      qualityLevelRaw === "1k" ||
+      qualityLevelRaw === "hd" ||
+      qualityLevelRaw === "2k" ||
+      qualityLevelRaw === "4k"
         ? qualityLevelRaw
-        : "2k";
+        : "1k";
 
     const userSeed =
       typeof formData.get("user_seed") === "string"
@@ -566,7 +575,7 @@ async function batchPhotoItemHandler(
 }> {
   const p = ctx.params as {
     aspect_ratio?: string | null;
-    quality_level?: "hd" | "2k" | "4k";
+    quality_level?: "1k" | "hd" | "2k" | "4k";
     user_seed?: string;
     batch_seed?: number;
     identity: { id: number; name: string; image_path: string };
@@ -748,9 +757,15 @@ ${FRAMING_TIGHT_SINGLE}`;
     });
   }
 
-  const qualityLevel = p.quality_level || "2k";
+  const qualityLevel = p.quality_level || "1k";
   const qualityHintText = `【输出质量 / Output Quality】${
-    qualityLevel === "4k" ? "4K 超清" : qualityLevel === "2k" ? "2K 高清" : "HD 清晰"
+    qualityLevel === "4k"
+      ? "4K 超清"
+      : qualityLevel === "2k"
+        ? "2K 高清"
+        : qualityLevel === "1k"
+          ? "1K 清晰"
+          : "HD 清晰"
   }
 - 必须输出 ${qualityLevel.toUpperCase()} 级别的清晰锐利图像
 - 即使输入模糊也要 REDRAW / 重新渲染整张图，让它清晰锐利
@@ -799,7 +814,7 @@ ${FRAMING_TIGHT_SINGLE}`;
     : [...productInputs, identityInput];
 
   const imageSize: "1K" | "2K" | "4K" =
-    qualityLevel === "4k" ? "4K" : qualityLevel === "hd" ? "1K" : "2K";
+    qualityLevel === "4k" ? "4K" : qualityLevel === "2k" ? "2K" : "1K";
 
   const gen = await retryWithBackoff(
     () =>

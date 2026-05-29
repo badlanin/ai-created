@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 
 /**
  * POST /api/billing/estimate
- * body: { model, quality_level: 'hd'|'2k'|'4k', image_count: number }
+ * body: { model, quality_level: '1k'|'hd'|'2k'|'4k', image_count: number }
  *
  * 返回：估价 + 当前余额 + 是否能负担
  */
@@ -24,12 +24,13 @@ export async function POST(req: NextRequest) {
     };
 
     const model = (body.model || "").trim();
-    const quality: "hd" | "2k" | "4k" =
+    const quality: "1k" | "hd" | "2k" | "4k" =
+      body.quality_level === "1k" ||
       body.quality_level === "hd" ||
       body.quality_level === "2k" ||
       body.quality_level === "4k"
         ? body.quality_level
-        : "hd";
+        : "1k";
     const imageCount = Math.max(0, Math.floor(Number(body.image_count) || 0));
 
     const estimate = estimateBatchCost(model, quality, imageCount);

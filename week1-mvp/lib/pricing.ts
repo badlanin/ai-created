@@ -220,7 +220,7 @@ export function assertWithinBudget(
  */
 export function estimateImageCost(
   modelId: string,
-  qualityLevel: "hd" | "2k" | "4k",
+  qualityLevel: "1k" | "hd" | "2k" | "4k",
 ): { cost_usd: number; cost_cny: number; price_found: boolean } {
   const usdToCny = getUsdToCny();
 
@@ -234,16 +234,19 @@ export function estimateImageCost(
       modelId.startsWith("gpt-image") && !modelId.startsWith("gpt-image-2");
     const sizeMap = isLegacy
       ? {
+          "1k": "1024x1536" as const,
           hd: "1024x1536" as const,
           "2k": "1024x1536" as const, // legacy 2K 被 clamp 回 1024x1536
           "4k": "1024x1536" as const, // legacy 4K 被 clamp 回 1024x1536
         }
       : {
+          "1k": "1024x1536" as const,
           hd: "1024x1536" as const,
           "2k": "1440x2560" as const,
           "4k": "2144x3824" as const,
         };
     const qualityMap = {
+      "1k": "medium" as const,
       hd: "medium" as const,
       "2k": "high" as const,
       "4k": "high" as const,
@@ -300,7 +303,7 @@ export function estimateImageCost(
  */
 export function estimateBatchCost(
   modelId: string,
-  qualityLevel: "hd" | "2k" | "4k",
+  qualityLevel: "1k" | "hd" | "2k" | "4k",
   imageCount: number,
 ): {
   image_count: number;

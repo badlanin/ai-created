@@ -12,6 +12,15 @@ export interface SessionData {
   username?: string;
   role?: "admin" | "user";
   loggedInAt?: number;
+  shopifyOAuth?: {
+    state: string;
+    shopDomain: string;
+    clientId: string;
+    clientSecret: string;
+    redirectUri: string;
+    userId: number;
+    createdAt: number;
+  };
 }
 
 const SESSION_SECRET =

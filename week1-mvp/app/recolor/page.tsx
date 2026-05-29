@@ -21,6 +21,7 @@ import { TaskViewport } from "@/app/_components/task-viewport";
 import { TaskDock } from "@/app/_components/task-dock";
 import { Thumbnail, ThumbnailBadge } from "@/app/_components/thumbnail";
 import { ResetButton } from "@/app/_components/reset-button";
+import { PageRefreshButton } from "@/app/_components/page-refresh-button";
 import {
   CollapsibleSection,
   Dropzone,
@@ -102,15 +103,16 @@ const ASPECT_RATIOS = [
   { value: "16:9", label: "16:9 横" },
 ] as const;
 
-type QualityLevel = "hd" | "2k" | "4k";
+type QualityLevel = "1k" | "hd" | "2k" | "4k";
 const QUALITY_LEVELS: Array<{
   value: QualityLevel;
   label: string;
   desc: string;
 }> = [
+  { value: "1k", label: "1K 清晰（推荐）", desc: "约 1024×1536 · 基础清晰" },
   { value: "2k", label: "2K 高清", desc: "约 1792×2400" },
   { value: "4k", label: "4K 超清", desc: "约 3584×4800 · 贵 15x" },
-  { value: "hd", label: "HD 清晰（推荐）", desc: "约 896×1200 · 最省" },
+  { value: "hd", label: "HD 清晰", desc: "约 896×1200 · 最省" },
 ];
 
 // v2 色卡 9 色系展示顺序（label 文本，跟 api/colors 的 COLOR_GROUP_LABELS 对齐）
@@ -218,7 +220,7 @@ export default function RecolorPage() {
 
   // ─── 配置 ───
   const [aspectRatio, setAspectRatio] = useState<string>("3:4");
-  const [qualityLevel, setQualityLevel] = useState<QualityLevel>("hd");
+  const [qualityLevel, setQualityLevel] = useState<QualityLevel>("1k");
   const [userSeed, setUserSeed] = useState("");
 
   // ─── 素材库 ───
@@ -1073,9 +1075,12 @@ export default function RecolorPage() {
               <Palette size={18} strokeWidth={2.2} />
             </span>
             <div>
-              <h1 className="text-[22px] font-bold text-fg-primary tracking-tight">
-                HEX 精准换色
-              </h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-[22px] font-bold text-fg-primary tracking-tight">
+                  HEX 精准换色
+                </h1>
+                <PageRefreshButton />
+              </div>
               <p className="mt-0.5 text-[13px] text-fg-tertiary">
                 上传 → 解析款式 + 识别材质 → 选颜色批量生成
               </p>

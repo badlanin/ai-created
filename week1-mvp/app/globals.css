@@ -203,6 +203,12 @@ body {
   border-radius: var(--radius-xs);
 }
 
+.category-metafield-control :focus,
+.category-metafield-control :focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
 /* 默认链接 */
 a {
   color: inherit;

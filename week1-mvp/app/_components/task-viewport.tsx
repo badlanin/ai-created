@@ -11,15 +11,29 @@ import {
   Ban,
   Download,
   Copy,
+  ShoppingBag,
 } from "lucide-react";
 import { Button, Chip, SegmentedProgressBar, Card } from "./ui";
 import { Thumbnail } from "./thumbnail";
+import { ImageCropper } from "./image-cropper";
+import {
+  OriginalImagePreview,
+  ResultImageHoverToolbar,
+  downloadBlob,
+  makeCroppedFilename,
+} from "./result-image-tools";
 import type { PolledJob, PolledJobItem } from "@/lib/hooks/use-job-polling";
 import { cancelJob } from "@/lib/hooks/use-job-polling";
 import {
   downloadImagesAsZip,
   downloadSingleImage,
 } from "@/lib/download-zip";
+import {
+  appendProductListingMedia,
+  PRODUCT_LISTING_MEDIA_STORAGE_KEY,
+  PRODUCT_LISTING_NOTICE_STORAGE_KEY,
+  type ProductListingMediaItem,
+} from "@/lib/product-listing-draft";
 
 export interface TaskViewportProps {
   job: PolledJob;
@@ -57,6 +71,9 @@ export function TaskViewport({
   const [cancelling, setCancelling] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [zipping, setZipping] = useState(false);
+  const [listingLoading, setListingLoading] = useState(false);
+  const [croppingItem, setCroppingItem] = useState<PolledJobItem | null>(null);
+  const [previewItem, setPreviewItem] = useState<PolledJobItem | null>(null);
   const [zipProgress, setZipProgress] = useState<{
     done: number;
     total: number;
@@ -164,6 +181,73 @@ export function TaskViewport({
       setZipping(false);
       setZipProgress(null);
     }
+  }
+
+  function readListingMediaDraft(): ProductListingMediaItem[] {
+    try {
+      const raw = window.localStorage.getItem(PRODUCT_LISTING_MEDIA_STORAGE_KEY);
+      const parsed = raw ? (JSON.parse(raw) as ProductListingMediaItem[]) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async function addCompletedToProductListing() {
+    setListingLoading(true);
+    try {
+      const bindingRes = await fetch("/api/shopify/connection");
+      const binding = (await bindingRes.json().catch(() => ({}))) as {
+        bound?: boolean;
+      };
+      if (!bindingRes.ok || !binding.bound) {
+        window.sessionStorage.setItem(
+          PRODUCT_LISTING_NOTICE_STORAGE_KEY,
+          "请输入 Shopify 密钥",
+        );
+        window.location.href = "/product-listing?shopify=missing";
+        return;
+      }
+
+      const targetItems =
+        selectedIds.size > 0
+          ? completed.filter((it) => selectedIds.has(it.id))
+          : completed;
+      const { media, addedCount } = appendProductListingMedia(
+        readListingMediaDraft(),
+        targetItems
+          .filter((it) => it.result_image_url)
+          .map((it, index) => ({
+            url: it.result_image_url!,
+            alt: it.label || `生成图 ${it.idx + 1}`,
+            role: index === 0 ? "main" : index === 2 ? "back" : "detail",
+            sourceJobId: job.id,
+            sourceItemId: it.id,
+            sourceLabel: it.label,
+          })),
+      );
+      window.localStorage.setItem(
+        PRODUCT_LISTING_MEDIA_STORAGE_KEY,
+        JSON.stringify(media),
+      );
+      window.sessionStorage.setItem(
+        PRODUCT_LISTING_NOTICE_STORAGE_KEY,
+        addedCount > 0
+          ? `已加入 ${addedCount} 张图片到媒体 Media`
+          : "这些图片已经在媒体 Media 中",
+      );
+      window.location.href = "/product-listing?media=added";
+    } catch (e) {
+      alert("加入产品上架失败：" + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setListingLoading(false);
+    }
+  }
+
+  function downloadCroppedResult(blob: Blob) {
+    if (!croppingItem) return;
+    downloadBlob(blob, makeCroppedFilename(resolveFilename(croppingItem)));
+    setCroppingItem(null);
   }
 
   return (
@@ -322,6 +406,15 @@ export function TaskViewport({
               <Button
                 variant="primary"
                 size="sm"
+                leftIcon={<ShoppingBag size={14} strokeWidth={2} />}
+                loading={listingLoading}
+                onClick={addCompletedToProductListing}
+              >
+                产品上架
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
                 leftIcon={<Download size={14} strokeWidth={2} />}
                 loading={zipping}
                 onClick={() => {
@@ -365,6 +458,7 @@ export function TaskViewport({
                       fit="contain"
                       selected={isSel}
                       onClick={() => toggleSelect(it.id)}
+                      onDoubleClick={() => setPreviewItem(it)}
                       checkbox={
                         <button
                           onClick={(e) => {
@@ -381,19 +475,15 @@ export function TaskViewport({
                         </button>
                       }
                       hoverOverlay={
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
+                        <ResultImageHoverToolbar
+                          onCrop={() => setCroppingItem(it)}
+                          onDownload={() =>
                             downloadSingleImage(
                               it.result_image_url!,
                               resolveFilename(it),
-                            );
-                          }}
-                          className="btn btn-secondary btn-sm"
-                        >
-                          <Download size={12} strokeWidth={2} />
-                          下载
-                        </button>
+                            )
+                          }
+                        />
                       }
                     />
                   );
@@ -455,6 +545,21 @@ export function TaskViewport({
           ) : null}
         </div>
       </div>
+      {previewItem?.result_image_url ? (
+        <OriginalImagePreview
+          src={previewItem.result_image_url}
+          alt={previewItem.label || `#${previewItem.idx + 1}`}
+          onClose={() => setPreviewItem(null)}
+        />
+      ) : null}
+      {croppingItem?.result_image_url ? (
+        <ImageCropper
+          imageSrc={croppingItem.result_image_url}
+          confirmLabel="裁剪并下载"
+          onConfirm={downloadCroppedResult}
+          onCancel={() => setCroppingItem(null)}
+        />
+      ) : null}
     </div>
   );
 }

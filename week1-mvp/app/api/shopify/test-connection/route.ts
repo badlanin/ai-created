@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import {
-  getStoredShopifyToken,
+  getStoredShopifyAccessToken,
   testShopifyConnection,
   updateShopifyLastTested,
 } from "@/lib/shopify";
@@ -12,16 +12,27 @@ export async function POST(req: NextRequest) {
   try {
     const user = await requireUser();
     const body = (await req.json()) as {
+      authMode?: "access_token" | "oauth_app" | "client_credentials";
       shopDomain?: string;
       accessToken?: string;
+      clientId?: string;
+      clientSecret?: string;
       useStored?: boolean;
     };
 
+    const authMode =
+      body.authMode === "oauth_app"
+        ? "oauth_app"
+        : body.authMode === "client_credentials"
+          ? "client_credentials"
+          : "access_token";
     let shopDomain = String(body.shopDomain || "").trim();
     let accessToken = String(body.accessToken || "").trim();
+    let clientId = String(body.clientId || "").trim();
+    let clientSecret = String(body.clientSecret || "").trim();
 
     if (body.useStored) {
-      const stored = getStoredShopifyToken(user.id);
+      const stored = await getStoredShopifyAccessToken(user.id);
       if (!stored) {
         return NextResponse.json(
           { error: "尚未绑定 Shopify" },
@@ -30,9 +41,17 @@ export async function POST(req: NextRequest) {
       }
       shopDomain = stored.shopDomain;
       accessToken = stored.accessToken;
+      clientId = "";
+      clientSecret = "";
     }
 
-    const result = await testShopifyConnection({ shopDomain, accessToken });
+    const result = await testShopifyConnection({
+      authMode: body.useStored ? "access_token" : authMode,
+      shopDomain,
+      accessToken,
+      clientId,
+      clientSecret,
+    });
     if (body.useStored) {
       updateShopifyLastTested(user.id, result);
     }

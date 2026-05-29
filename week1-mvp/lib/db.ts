@@ -376,18 +376,24 @@ function migrate(db: Database.Database) {
       ON announcements(enabled, created_at DESC);
 
     -- ==========================================
-    -- Shopify 产品上架绑定（按用户保存）
+    -- Shopify 产品上架绑定（按用户保存，可保留多店铺历史）
     -- ==========================================
     CREATE TABLE IF NOT EXISTS shopify_connections (
-      user_id          INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       shop_domain      TEXT NOT NULL,
       access_token_enc TEXT NOT NULL,
+      auth_mode        TEXT NOT NULL DEFAULT 'access_token',
+      client_id        TEXT,
+      token_expires_at INTEGER,
       shop_name        TEXT,
       myshopify_domain TEXT,
       primary_domain   TEXT,
+      is_active        INTEGER NOT NULL DEFAULT 1,
       created_at       INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at       INTEGER NOT NULL DEFAULT (unixepoch()),
-      last_tested_at   INTEGER
+      last_tested_at   INTEGER,
+      UNIQUE(user_id, shop_domain)
     );
   `);
 
@@ -410,6 +416,15 @@ function migrate(db: Database.Database) {
     "usage",
     "TEXT NOT NULL DEFAULT 'single'",
   );
+  ensureColumn(
+    db,
+    "shopify_connections",
+    "auth_mode",
+    "TEXT NOT NULL DEFAULT 'access_token'",
+  );
+  ensureColumn(db, "shopify_connections", "client_id", "TEXT");
+  ensureColumn(db, "shopify_connections", "token_expires_at", "INTEGER");
+  migrateShopifyConnectionsMultiStore(db);
   // 新增索引
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_models_category ON models(kind, category, sort_order);
@@ -417,6 +432,8 @@ function migrate(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_scenes_category ON scenes(category, sort_order);
     CREATE INDEX IF NOT EXISTS idx_poses_hero ON poses(is_hero, sort_order);
     CREATE INDEX IF NOT EXISTS idx_scenes_usage ON scenes(usage, sort_order);
+    CREATE INDEX IF NOT EXISTS idx_shopify_connections_user_active
+      ON shopify_connections(user_id, is_active, updated_at DESC);
   `);
 
   // 启动时恢复：把被进程重启打断的 item 标为 failed
@@ -491,6 +508,79 @@ function ensureColumn(
   if (cols.some((c) => c.name === column)) return;
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   console.log(`[db] ALTER TABLE ${table} ADD COLUMN ${column}`);
+}
+
+/**
+ * 老版本 shopify_connections 以 user_id 为主键，只能保存一个店铺。
+ * 新版改成 id 主键 + UNIQUE(user_id, shop_domain)，同一个用户可保留多个历史店铺，
+ * 其中一条 is_active=1 作为当前同步目标。
+ */
+function migrateShopifyConnectionsMultiStore(db: Database.Database) {
+  const cols = db
+    .prepare(`PRAGMA table_info(shopify_connections)`)
+    .all() as Array<{ name: string }>;
+  const hasId = cols.some((c) => c.name === "id");
+  const hasIsActive = cols.some((c) => c.name === "is_active");
+  if (hasId && hasIsActive) return;
+
+  db.transaction(() => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS shopify_connections_multi (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        shop_domain      TEXT NOT NULL,
+        access_token_enc TEXT NOT NULL,
+        auth_mode        TEXT NOT NULL DEFAULT 'access_token',
+        client_id        TEXT,
+        token_expires_at INTEGER,
+        shop_name        TEXT,
+        myshopify_domain TEXT,
+        primary_domain   TEXT,
+        is_active        INTEGER NOT NULL DEFAULT 1,
+        created_at       INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at       INTEGER NOT NULL DEFAULT (unixepoch()),
+        last_tested_at   INTEGER,
+        UNIQUE(user_id, shop_domain)
+      );
+
+      INSERT OR IGNORE INTO shopify_connections_multi (
+        user_id,
+        shop_domain,
+        access_token_enc,
+        auth_mode,
+        client_id,
+        token_expires_at,
+        shop_name,
+        myshopify_domain,
+        primary_domain,
+        is_active,
+        created_at,
+        updated_at,
+        last_tested_at
+      )
+      SELECT
+        user_id,
+        shop_domain,
+        access_token_enc,
+        COALESCE(auth_mode, 'access_token'),
+        client_id,
+        token_expires_at,
+        shop_name,
+        myshopify_domain,
+        primary_domain,
+        1,
+        created_at,
+        updated_at,
+        last_tested_at
+      FROM shopify_connections;
+
+      DROP TABLE shopify_connections;
+      ALTER TABLE shopify_connections_multi RENAME TO shopify_connections;
+      CREATE INDEX IF NOT EXISTS idx_shopify_connections_user_active
+        ON shopify_connections(user_id, is_active, updated_at DESC);
+    `);
+  })();
+  console.log("[db] migrated shopify_connections to multi-store schema");
 }
 
 /**
@@ -2017,6 +2107,30 @@ function seedSettings(db: Database.Database) {
       value: "",
       notes:
         "OpenAI API key（gpt-image-2 用）。从 https://platform.openai.com/api-keys 创建。",
+    },
+    {
+      key: "gpt_api_key",
+      value: "",
+      notes:
+        "Gpt API key（文字大模型用）。从 https://platform.openai.com/api-keys 创建。",
+    },
+    {
+      key: "gpt_base_url",
+      value: "",
+      notes:
+        "Gpt API 中转站 URL / Base URL，如 https://api.example.com/v1。留空则使用 OpenAI 官方接口。",
+    },
+    {
+      key: "gpt_text_model",
+      value: "gpt-5.4",
+      notes:
+        "产品上架文字解析使用的 GPT 模型。默认 gpt-5.4。",
+    },
+    {
+      key: "gpt_proxy_url",
+      value: "",
+      notes:
+        "旧版 Gpt 代理 URL 字段，保留用于兼容；新配置请使用 gpt_base_url。",
     },
     {
       key: "openai_proxy_url",

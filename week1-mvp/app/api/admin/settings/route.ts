@@ -11,7 +11,11 @@ export const runtime = "nodejs";
  *
  * 想增加敏感 key 在这里添加即可，所有渲染 settings 列表的页面都会自动安全。
  */
-const SENSITIVE_KEYS = new Set<string>(["gemini_api_key"]);
+const SENSITIVE_KEYS = new Set<string>([
+  "gemini_api_key",
+  "openai_api_key",
+  "gpt_api_key",
+]);
 
 /**
  * 把明文按"前 4 + ✱ + 后 4"格式 mask，与 lib/genai-client.ts 的 geminiApiKeyMask 一致。

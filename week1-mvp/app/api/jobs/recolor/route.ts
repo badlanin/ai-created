@@ -135,12 +135,13 @@ export async function POST(req: NextRequest) {
         : undefined;
 
     const qualityLevelRaw = formData.get("quality_level");
-    const qualityLevel: "hd" | "2k" | "4k" =
+    const qualityLevel: "1k" | "hd" | "2k" | "4k" =
+      qualityLevelRaw === "1k" ||
       qualityLevelRaw === "hd" ||
       qualityLevelRaw === "2k" ||
       qualityLevelRaw === "4k"
         ? qualityLevelRaw
-        : "hd";
+        : "1k";
 
     // ─── 解析颜色列表 ───
     let colorsToApply: ColorRow[] = [];
@@ -341,7 +342,7 @@ async function recolorItemHandler(
 }> {
   const p = ctx.params as {
     aspect_ratio?: string | null;
-    quality_level?: "hd" | "2k" | "4k";
+    quality_level?: "1k" | "hd" | "2k" | "4k";
     user_seed?: string;
     batch_seed?: number;
     garment_attrs_text?: string;
@@ -430,7 +431,7 @@ async function recolorItemHandler(
       materialDetails: p.material_details_text || undefined,
       realismConstraints: p.realism_constraints_text || undefined,
       userSeed: p.user_seed || undefined,
-      qualityLevel: p.quality_level || "hd",
+      qualityLevel: p.quality_level || "1k",
       originalColorName: p.original_color_name || undefined,
       hasSwatch: swatchInput !== null,
     }) + multiImageHint;
@@ -438,9 +439,9 @@ async function recolorItemHandler(
   const imageSize: "1K" | "2K" | "4K" =
     p.quality_level === "4k"
       ? "4K"
-      : p.quality_level === "hd"
-        ? "1K"
-        : "2K";
+      : p.quality_level === "2k"
+        ? "2K"
+        : "1K";
 
   // ─── 主模型 5 次重试 + 兜底切换到 Pro Image ───
   // 现象：Nano Banana Flash 对某些图 + 颜色组合（如绿色 velvet → Gold）会持续拒绝出图，

@@ -15,6 +15,9 @@ interface ProviderInfo {
   geminiApiKeyMask: string;
   hasOpenaiApiKey?: boolean;
   openaiApiKeyMask?: string;
+  hasGptApiKey?: boolean;
+  gptApiKeyMask?: string;
+  gptBaseUrl?: string;
   openaiProxyUrl?: string;
 }
 
@@ -54,6 +57,12 @@ export default function SettingsAdminPage() {
   const [openaiKeyTouched, setOpenaiKeyTouched] = useState(false);
   const [openaiProxyInput, setOpenaiProxyInput] = useState("");
   const [openaiProxyTouched, setOpenaiProxyTouched] = useState(false);
+
+  // Gpt API Key 表单
+  const [gptKeyInput, setGptKeyInput] = useState("");
+  const [gptKeyTouched, setGptKeyTouched] = useState(false);
+  const [gptBaseUrlInput, setGptBaseUrlInput] = useState("");
+  const [gptBaseUrlTouched, setGptBaseUrlTouched] = useState(false);
 
   // 限流/并发表单
   const [rateForm, setRateForm] = useState({
@@ -98,6 +107,7 @@ export default function SettingsAdminPage() {
       });
       // OpenAI 代理 URL 从 settings 表读（key 本身不回显，因为是 secret）
       setOpenaiProxyInput(map.get("openai_proxy_url") ?? "");
+      setGptBaseUrlInput(map.get("gpt_base_url") ?? map.get("gpt_proxy_url") ?? "");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -181,6 +191,31 @@ export default function SettingsAdminPage() {
     await load();
   }
 
+  async function handleSaveGpt(e: React.FormEvent) {
+    e.preventDefault();
+    const body: Record<string, unknown> = {};
+    if (gptKeyTouched && gptKeyInput.trim()) {
+      body.gpt_api_key = gptKeyInput.trim();
+    }
+    if (gptBaseUrlTouched) {
+      body.gpt_base_url = gptBaseUrlInput.trim();
+    }
+    if (Object.keys(body).length === 0) {
+      setError("没有要保存的修改");
+      return;
+    }
+    await patchSettings(body, "Gpt 配置已保存。");
+    setGptKeyInput("");
+    setGptKeyTouched(false);
+    setGptBaseUrlTouched(false);
+  }
+
+  async function handleClearGptKey() {
+    if (!confirm("确定清空 Gpt API Key？清空后依赖该 Key 的文字大模型功能会报错。")) return;
+    await patchSettings({ gpt_api_key: "" }, "已清空 Gpt API Key");
+    await load();
+  }
+
   async function handleSaveRate(e: React.FormEvent) {
     e.preventDefault();
     const body: Record<string, unknown> = {};
@@ -217,7 +252,7 @@ export default function SettingsAdminPage() {
       <header className="mb-6">
         <h1 className="text-2xl font-bold text-fg-primary">系统设置</h1>
         <p className="mt-1 text-sm text-fg-tertiary">
-          Gemini API key、限流/并发、汇率等全局参数
+          Gemini API key、OpenAI / Gpt API Key、限流/并发、汇率等全局参数
         </p>
       </header>
 
@@ -413,6 +448,107 @@ export default function SettingsAdminPage() {
                 className="px-4 py-2 bg-brand-600 text-white text-sm rounded-md hover:bg-brand-700 disabled:opacity-50"
               >
                 {saving ? "保存中…" : "保存 OpenAI 配置"}
+              </button>
+            </div>
+          </form>
+        )}
+      </section>
+
+      {/* ===== Gpt API Key ===== */}
+      <section className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle p-6 mb-6">
+        <h2 className="text-base font-semibold text-fg-primary mb-1">
+          Gpt API Key
+        </h2>
+        <p className="text-xs text-fg-tertiary mb-4">
+          Gpt API Key 用于文字大模型能力，格式与 OpenAI API Key 一致。
+          配合中转站 URL 调用 OpenAI 兼容接口。
+        </p>
+
+        {loading ? (
+          <div className="text-sm text-fg-tertiary">加载中…</div>
+        ) : (
+          <form onSubmit={handleSaveGpt} className="space-y-4">
+            {provider && (
+              <div className="p-3 rounded bg-bg-tertiary border border-border-subtle text-xs text-fg-secondary">
+                当前 API Key：
+                <span className="ml-1 font-mono font-semibold text-fg-primary">
+                  {provider.hasGptApiKey
+                    ? provider.gptApiKeyMask
+                    : "(未配置 - Gpt 不可用)"}
+                </span>
+              </div>
+            )}
+
+            <div>
+              <label className="block text-sm font-medium text-fg-secondary mb-1">
+                {provider?.hasGptApiKey ? "替换 Gpt Key" : "填入 Gpt Key"}
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  value={gptKeyInput}
+                  onChange={(e) => {
+                    setGptKeyInput(e.target.value);
+                    setGptKeyTouched(true);
+                  }}
+                  placeholder={
+                    provider?.hasGptApiKey
+                      ? "留空 = 不修改；输入新值 = 替换"
+                      : "sk-... (从 https://platform.openai.com/api-keys 创建)"
+                  }
+                  className="flex-1 px-3 py-2 border border-border-default rounded-md text-sm font-mono"
+                  autoComplete="off"
+                />
+                {provider?.hasGptApiKey && (
+                  <button
+                    type="button"
+                    onClick={handleClearGptKey}
+                    disabled={saving}
+                    className="px-3 py-2 text-xs text-danger border border-[rgba(239,68,68,0.3)] rounded hover:bg-[var(--danger-bg)] disabled:opacity-50"
+                  >
+                    清空
+                  </button>
+                )}
+              </div>
+              <p className="mt-1 text-xs text-fg-tertiary">
+                创建地址：
+                <a
+                  href="https://platform.openai.com/api-keys"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-brand-400 underline"
+                >
+                  OpenAI API Keys
+                </a>
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-fg-secondary mb-1">
+                中转站 URL（可选）
+              </label>
+              <input
+                type="text"
+                value={gptBaseUrlInput}
+                onChange={(e) => {
+                  setGptBaseUrlInput(e.target.value);
+                  setGptBaseUrlTouched(true);
+                }}
+                placeholder="例如 https://api.example.com/v1（OpenAI 兼容中转站）"
+                className="w-full px-3 py-2 border border-border-default rounded-md text-sm font-mono"
+              />
+              <p className="mt-1 text-xs text-fg-tertiary">
+                这是 API 中转站 Base URL，不是本地网络代理。留空则使用 OpenAI 官方接口。
+              </p>
+            </div>
+
+            <div>
+              <button
+                type="submit"
+                disabled={saving || (!gptKeyTouched && !gptBaseUrlTouched)}
+                className="px-4 py-2 bg-brand-600 text-white text-sm rounded-md hover:bg-brand-700 disabled:opacity-50"
+              >
+                {saving ? "保存中…" : "保存 Gpt 配置"}
               </button>
             </div>
           </form>

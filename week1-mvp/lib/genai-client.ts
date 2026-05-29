@@ -53,6 +53,9 @@ export function getCurrentProviderInfo(): {
   geminiApiKeyMask: string;
   hasOpenaiApiKey: boolean;
   openaiApiKeyMask: string;
+  hasGptApiKey: boolean;
+  gptApiKeyMask: string;
+  gptBaseUrl: string;
   openaiProxyUrl: string;
 } {
   const s = readProviderSettings();
@@ -64,16 +67,22 @@ export function getCurrentProviderInfo(): {
 
   // 顺便读 OpenAI key + proxy
   let openaiKey = "";
+  let gptKey = "";
+  let gptBaseUrl = "";
+  let legacyGptProxy = "";
   let openaiProxy = "";
   try {
     const db = getDb();
     const rows = db
       .prepare(
-        `SELECT key, value FROM settings WHERE key IN ('openai_api_key', 'openai_proxy_url')`,
+        `SELECT key, value FROM settings WHERE key IN ('openai_api_key', 'gpt_api_key', 'gpt_base_url', 'gpt_proxy_url', 'openai_proxy_url')`,
       )
       .all() as Array<{ key: string; value: string }>;
     for (const r of rows) {
       if (r.key === "openai_api_key") openaiKey = (r.value || "").trim();
+      if (r.key === "gpt_api_key") gptKey = (r.value || "").trim();
+      if (r.key === "gpt_base_url") gptBaseUrl = (r.value || "").trim();
+      if (r.key === "gpt_proxy_url") legacyGptProxy = (r.value || "").trim();
       if (r.key === "openai_proxy_url") openaiProxy = (r.value || "").trim();
     }
   } catch {}
@@ -83,6 +92,9 @@ export function getCurrentProviderInfo(): {
     geminiApiKeyMask: mask(s.geminiApiKey),
     hasOpenaiApiKey: openaiKey.length > 0,
     openaiApiKeyMask: mask(openaiKey),
+    hasGptApiKey: gptKey.length > 0,
+    gptApiKeyMask: mask(gptKey),
+    gptBaseUrl: gptBaseUrl || legacyGptProxy,
     openaiProxyUrl: openaiProxy,
   };
 }

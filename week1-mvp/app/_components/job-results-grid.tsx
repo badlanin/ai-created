@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Sliders, Download } from "lucide-react";
+import { Sliders } from "lucide-react";
 import {
   downloadImagesAsZip,
   downloadSingleImage,
@@ -9,6 +9,13 @@ import {
 import type { PolledJobItem } from "@/lib/hooks/use-job-polling";
 import { Thumbnail, ThumbnailBadge } from "./thumbnail";
 import { RecolorAdjustModal } from "./recolor-adjust-modal";
+import { ImageCropper } from "./image-cropper";
+import {
+  OriginalImagePreview,
+  ResultImageHoverToolbar,
+  downloadBlob,
+  makeCroppedFilename,
+} from "./result-image-tools";
 
 export interface JobResultsGridProps {
   items: PolledJobItem[];
@@ -48,6 +55,8 @@ export function JobResultsGrid({
   const [adjustingItem, setAdjustingItem] = useState<PolledJobItem | null>(
     null,
   );
+  const [croppingItem, setCroppingItem] = useState<PolledJobItem | null>(null);
+  const [previewItem, setPreviewItem] = useState<PolledJobItem | null>(null);
   /** 本地覆盖：保存校色后立刻反映新图，不等下次轮询 */
   const [localOverrides, setLocalOverrides] = useState<
     Record<number, { result_image_url: string; correction_meta?: string }>
@@ -144,6 +153,12 @@ export function JobResultsGrid({
     );
   }
 
+  function downloadCroppedResult(blob: Blob) {
+    if (!croppingItem) return;
+    downloadBlob(blob, makeCroppedFilename(resolveFilename(croppingItem)));
+    setCroppingItem(null);
+  }
+
   if (successful.length === 0) {
     return (
       <div className="text-sm text-fg-tertiary p-6 text-center bg-bg-tertiary rounded-md border border-dashed border-border-default">
@@ -219,6 +234,7 @@ export function JobResultsGrid({
                       fit="contain"
                       selected={isSelected}
                       onClick={() => toggle(it.id)}
+                      onDoubleClick={() => setPreviewItem(it)}
                       className="rounded-none border-0"
                       checkbox={
                         <button
@@ -242,37 +258,34 @@ export function JobResultsGrid({
                           </ThumbnailBadge>
                         ) : undefined
                       }
+                      hoverOverlay={
+                        <ResultImageHoverToolbar
+                          extraActions={
+                            it.raw_image_path
+                              ? [
+                                  {
+                                    key: "adjust",
+                                    label: "调色",
+                                    title: "打开手动校色滑块",
+                                    icon: (
+                                      <Sliders size={13} strokeWidth={2.2} />
+                                    ),
+                                    onClick: () => setAdjustingItem(it),
+                                    tone: "brand",
+                                  },
+                                ]
+                              : []
+                          }
+                          onCrop={() => setCroppingItem(it)}
+                          onDownload={() =>
+                            downloadSingleImage(
+                              it.result_image_url!,
+                              resolveFilename(it),
+                            )
+                          }
+                        />
+                      }
                     />
-                    {/* 持久可见的操作栏 */}
-                    <div className="flex border-t border-border-subtle bg-bg-secondary">
-                      {it.raw_image_path ? (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setAdjustingItem(it);
-                          }}
-                          className="flex-1 px-2 py-2 text-[12px] text-brand-400 hover:bg-bg-hover flex items-center justify-center gap-1.5 border-r border-border-subtle"
-                          title="打开手动校色滑块"
-                        >
-                          <Sliders size={12} strokeWidth={2.2} />
-                          调整颜色
-                        </button>
-                      ) : null}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          downloadSingleImage(
-                            it.result_image_url!,
-                            resolveFilename(it),
-                          );
-                        }}
-                        className="flex-1 px-2 py-2 text-[12px] text-fg-secondary hover:bg-bg-hover hover:text-fg-primary flex items-center justify-center gap-1.5"
-                        title="下载这张图"
-                      >
-                        <Download size={12} strokeWidth={2.2} />
-                        下载
-                      </button>
-                    </div>
                   </div>
                 );
               })}
@@ -296,6 +309,21 @@ export function JobResultsGrid({
             }));
             setAdjustingItem(null);
           }}
+        />
+      ) : null}
+      {previewItem?.result_image_url ? (
+        <OriginalImagePreview
+          src={previewItem.result_image_url}
+          alt={previewItem.label || `#${previewItem.idx + 1}`}
+          onClose={() => setPreviewItem(null)}
+        />
+      ) : null}
+      {croppingItem?.result_image_url ? (
+        <ImageCropper
+          imageSrc={croppingItem.result_image_url}
+          confirmLabel="裁剪并下载"
+          onConfirm={downloadCroppedResult}
+          onCancel={() => setCroppingItem(null)}
         />
       ) : null}
     </section>

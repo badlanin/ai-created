@@ -10,6 +10,7 @@ import { TaskViewport } from "@/app/_components/task-viewport";
 import { TaskDock } from "@/app/_components/task-dock";
 import { Thumbnail, ThumbnailBadge } from "@/app/_components/thumbnail";
 import { ResetButton } from "@/app/_components/reset-button";
+import { PageRefreshButton } from "@/app/_components/page-refresh-button";
 import {
   CollapsibleSection,
   Dropzone,
@@ -138,13 +139,14 @@ const ASPECT_RATIOS = [
   { value: "1:1", label: "1:1 方" },
 ] as const;
 
-type QualityLevel = "hd" | "2k" | "4k";
+type QualityLevel = "1k" | "hd" | "2k" | "4k";
 const QUALITY_LEVELS: Array<{
   value: QualityLevel;
   label: string;
   desc: string;
 }> = [
-  { value: "2k", label: "2K 高清（推荐）", desc: "~1792×2400 · 性价比最佳" },
+  { value: "1k", label: "1K 清晰（推荐）", desc: "~1024×1536 · 基础清晰" },
+  { value: "2k", label: "2K 高清", desc: "~1792×2400 · 性价比最佳" },
   { value: "4k", label: "4K 超清", desc: "~3584×4800 · 贵 15x" },
   { value: "hd", label: "HD 清晰", desc: "~896×1200 · 最省" },
 ];
@@ -313,12 +315,13 @@ function BatchPhotoTab({
   // ─── 选择 ───
   const [identityId, setIdentityId] = useState<number | null>(null);
   // Step 4 改造（N 纯色姿势 + 1-2 张场景的混合输出模式）：
-  // - solidColorHex/Name：所有 pose 的纯色背景（必填，默认浅米）
+  // - solidColorHex/Name：所有 pose 的纯色背景（必填，用户主动选择）
   // - extraScenePairs：额外场景 + 数量（≤ 2 张场景，每张出 count 张图）
   //   旧版本：每张场景必须绑定一个固定 pose；新版本改成"选场景 + 选数量"，
   //   姿势完全交给模型按场景物件自由互动生成（跟 v3 prompt 配合）
-  const [solidColorHex, setSolidColorHex] = useState<string>("#F5F1EA");
-  const [solidColorName, setSolidColorName] = useState<string>("浅米色");
+  const [solidColorHex, setSolidColorHex] = useState<string>("");
+  const [solidColorName, setSolidColorName] = useState<string>("");
+  const [solidColorTouched, setSolidColorTouched] = useState(false);
   const [extraScenePairs, setExtraScenePairs] = useState<
     Array<{ scene_id: number; count: number }>
   >([]);
@@ -339,7 +342,7 @@ function BatchPhotoTab({
   );
   const [modelId, setModelId] = useState<string>("");
   const [aspectRatio, setAspectRatio] = useState<string>("3:4");
-  const [qualityLevel, setQualityLevel] = useState<QualityLevel>("2k");
+  const [qualityLevel, setQualityLevel] = useState<QualityLevel>("1k");
   const [userSeed, setUserSeed] = useState("");
 
   // ─── 估价 + 提交 ───
@@ -375,6 +378,7 @@ function BatchPhotoTab({
         if (typeof params.aspect_ratio === "string")
           setAspectRatio(params.aspect_ratio);
         if (
+          params.quality_level === "1k" ||
           params.quality_level === "hd" ||
           params.quality_level === "2k" ||
           params.quality_level === "4k"
@@ -383,10 +387,19 @@ function BatchPhotoTab({
         if (typeof data.job.model === "string") setModelId(data.job.model);
         if (typeof params.user_seed === "string")
           setUserSeed(params.user_seed || "");
-        if (typeof params.solid_color_hex === "string")
-          setSolidColorHex(params.solid_color_hex);
-        if (typeof params.solid_color_name === "string")
-          setSolidColorName(params.solid_color_name);
+        const prefillSolidHex =
+          typeof params.solid_color_hex === "string"
+            ? params.solid_color_hex.trim().toUpperCase()
+            : "";
+        const prefillSolidName =
+          typeof params.solid_color_name === "string"
+            ? params.solid_color_name.trim()
+            : "";
+        if (/^#[0-9A-Fa-f]{6}$/.test(prefillSolidHex) && prefillSolidName) {
+          setSolidColorHex(prefillSolidHex);
+          setSolidColorName(prefillSolidName);
+          setSolidColorTouched(true);
+        }
         // 模特、模板、摄影参数、真实感、表情：直接拿 id
         const identity = params.identity as { id?: number } | undefined;
         if (identity?.id) setIdentityId(identity.id);
@@ -523,10 +536,24 @@ function BatchPhotoTab({
     const savedIdentity = slotStore.get<number>("identityId");
     if (savedIdentity) setIdentityId(savedIdentity);
     const savedSolidHex = slotStore.get<string>("solidColorHex");
-    if (savedSolidHex && /^#[0-9A-Fa-f]{6}$/.test(savedSolidHex))
-      setSolidColorHex(savedSolidHex);
     const savedSolidName = slotStore.get<string>("solidColorName");
-    if (savedSolidName) setSolidColorName(savedSolidName);
+    const savedSolidHexNormalized =
+      typeof savedSolidHex === "string" ? savedSolidHex.trim().toUpperCase() : "";
+    const savedSolidNameNormalized =
+      typeof savedSolidName === "string" ? savedSolidName.trim() : "";
+    const savedSolidTouched = slotStore.get<boolean>("solidColorTouched") === true;
+    const savedSolidIsLegacyDefault =
+      savedSolidHexNormalized === "#F5F1EA" &&
+      savedSolidNameNormalized === "浅米色";
+    const canRestoreSavedSolid =
+      /^#[0-9A-Fa-f]{6}$/.test(savedSolidHexNormalized) &&
+      savedSolidNameNormalized.length > 0 &&
+      (savedSolidTouched || !savedSolidIsLegacyDefault);
+    if (canRestoreSavedSolid) {
+      setSolidColorHex(savedSolidHexNormalized);
+      setSolidColorName(savedSolidNameNormalized);
+      setSolidColorTouched(true);
+    }
     // slot 数据可能是老 shape（{scene_id, pose_id}）也可能是新 shape（{scene_id, count}）
     // 老数据自动迁移：pose_id → count=1（用户之前选过的场景保留，姿势绑定丢掉走自由互动）
     const savedExtra = slotStore.get<
@@ -589,6 +616,7 @@ function BatchPhotoTab({
       identityId,
       solidColorHex,
       solidColorName,
+      solidColorTouched,
       extraScenePairs,
       templateId,
       photographyId,
@@ -609,6 +637,7 @@ function BatchPhotoTab({
     identityId,
     solidColorHex,
     solidColorName,
+    solidColorTouched,
     extraScenePairs,
     templateId,
     photographyId,
@@ -654,6 +683,14 @@ function BatchPhotoTab({
     (sum, t) => sum + (t.count || 0),
     0,
   );
+  const hasSolidBackground =
+    solidColorTouched &&
+    /^#[0-9A-Fa-f]{6}$/.test(solidColorHex) &&
+    solidColorName.trim().length > 0;
+  const solidBackgroundLabel = hasSolidBackground ? solidColorName : "未选择";
+  const solidColorPickerValue = /^#[0-9A-Fa-f]{6}$/.test(solidColorHex)
+    ? solidColorHex
+    : "#F5F1EA";
   const totalImageCount =
     selectedPoseIds.size + validExtraCount + validExtraTextCount;
   useEffect(() => {
@@ -1033,6 +1070,7 @@ function BatchPhotoTab({
   /* ─── 派生 ─── */
   const filledSlots = slots.filter((s): s is SlotFile => s !== null);
   const hasProductImages = filledSlots.length > 0;
+  const webSlotCount = slotSources.filter((source) => source === "web").length;
   const localSlotCount = slotSources.filter((source) => source === "local").length;
 
   const selectedMaterials = selectedMaterialIds
@@ -1130,16 +1168,21 @@ function BatchPhotoTab({
     hasProductImages &&
     identityId !== null &&
     templateId !== null &&
+    hasSolidBackground &&
     selectedPoseIds.size > 0 &&
     allExtraPairsConfigured &&
     Boolean(modelId);
 
   /* ─── 提交 ─── */
   async function handleSubmit() {
+    if (!hasSolidBackground) {
+      notifyHelpers.warn(push, "请先选择主背景纯色");
+      return;
+    }
     if (!canSubmit) {
       notifyHelpers.warn(
         push,
-        "请完成所有必填项（至少正面图 + 模特 / Prompt / 姿势；额外场景需各自配一个姿势）",
+        "请完成所有必填项（至少正面图 + 模特 / Prompt / 主背景 / 姿势）",
       );
       return;
     }
@@ -1165,8 +1208,8 @@ function BatchPhotoTab({
       });
       fd.append("identity_id", String(identityId));
       fd.append("template_id", String(templateId));
-      fd.append("solid_color_hex", solidColorHex);
-      fd.append("solid_color_name", solidColorName);
+      fd.append("solid_color_hex", solidColorHex.toUpperCase());
+      fd.append("solid_color_name", solidColorName.trim());
       // 场景 + 数量（新版字段名，跟旧 pose 绑定模式区分）
       // 后端按 count 把每张场景展开成 N 个 item，每个 item 走"自由互动"姿势
       const validPairs = extraScenePairs
@@ -1259,7 +1302,9 @@ function BatchPhotoTab({
     setScrapedImages([]);
     setSelectedScrapedUrls(new Set());
     setOpenUploadChannels({ web: false, selected: false, local: false });
-    // 纯色色值不重置（用户可能希望每次都用同一个底色）
+    setSolidColorHex("");
+    setSolidColorName("");
+    setSolidColorTouched(false);
     setActiveJobId(null);
     slotStore.reset();
     notifyHelpers.info(push, "已清空当前任务");
@@ -1390,9 +1435,12 @@ function BatchPhotoTab({
               <Camera size={18} strokeWidth={2.2} />
             </span>
             <div>
-              <h1 className="text-[22px] font-bold text-fg-primary tracking-tight">
-                批量摄影
-              </h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-[22px] font-bold text-fg-primary tracking-tight">
+                  批量摄影
+                </h1>
+                <PageRefreshButton />
+              </div>
               <p className="mt-0.5 text-[13px] text-fg-tertiary">
                 产品图 → 解析款式 → 选模特/场景/姿势 → 批量生成模特穿着图
               </p>
@@ -1418,7 +1466,7 @@ function BatchPhotoTab({
             {/* Step 1: 产品图上传（紧凑：3 槽限宽不撑满）*/}
             <CollapsibleSection
               title="① 上传产品图"
-              description="网页 / 已选 / 本地 · 随心搭"
+              description="网页已选 / 本地上传 · 任选一种来源"
               defaultOpen
             >
               <div className="space-y-1">
@@ -1530,14 +1578,14 @@ function BatchPhotoTab({
 
                 <UploadChannelPanel
                   title="已选"
-                  count={filledSlots.length}
+                  count={webSlotCount}
                   open={openUploadChannels.selected}
                   onToggle={() => toggleUploadChannel("selected")}
                 >
-                  {hasProductImages ? (
+                  {webSlotCount > 0 ? (
                     <div className="grid grid-cols-3 gap-2.5 max-w-[540px]">
                       {PRODUCT_SLOTS.map((cfg, i) =>
-                        slots[i] ? (
+                        slotSources[i] === "web" && slots[i] ? (
                           <ProductSlot
                             key={cfg.key}
                             label={cfg.label}
@@ -1570,7 +1618,7 @@ function BatchPhotoTab({
                     </div>
                   ) : (
                     <div className="text-[12px] text-fg-tertiary p-3 rounded-md border border-dashed border-border-default bg-bg-tertiary">
-                      暂无已选图片，可从「网页」添加，或在「本地」上传。
+                      暂无已选图片，可从「网页」添加。
                     </div>
                   )}
                 </UploadChannelPanel>
@@ -1796,16 +1844,16 @@ function BatchPhotoTab({
             {/* Step 4: 背景设置（纯色 + 可选额外场景）*/}
             <CollapsibleSection
               title="④ 背景设置"
-              description={`纯色 ${solidColorName}${
+              description={`纯色 ${solidBackgroundLabel}${
                 validExtraCount > 0
                   ? ` + ${validExtraCount} 张场景`
                   : "（可加 1-2 张场景图）"
               }`}
-              badge="✓"
+              badge={hasSolidBackground ? "✓" : undefined}
               defaultOpen={false}
             >
               <div className="space-y-5">
-                {/* 4.1 纯色背景（必填，默认浅米）*/}
+                {/* 4.1 纯色背景（必填，用户主动选择）*/}
                 <div>
                   <div className="text-[12px] text-fg-secondary mb-2 font-medium">
                     🎨 主背景：纯色
@@ -1816,13 +1864,21 @@ function BatchPhotoTab({
                   <div className="flex items-center gap-2 flex-wrap">
                     {SOLID_COLOR_PRESETS.map((c) => (
                       <button
+                        type="button"
                         key={c.hex}
                         onClick={() => {
+                          if (hasSolidBackground && solidColorHex === c.hex) {
+                            setSolidColorHex("");
+                            setSolidColorName("");
+                            setSolidColorTouched(false);
+                            return;
+                          }
                           setSolidColorHex(c.hex);
                           setSolidColorName(c.name);
+                          setSolidColorTouched(true);
                         }}
                         className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-[12px] transition-colors ${
-                          solidColorHex === c.hex
+                          hasSolidBackground && solidColorHex === c.hex
                             ? "border-brand-400 bg-bg-active text-fg-primary"
                             : "border-border-subtle hover:border-border-strong bg-bg-tertiary text-fg-secondary"
                         }`}
@@ -1838,23 +1894,21 @@ function BatchPhotoTab({
                       <span>自定义</span>
                       <input
                         type="color"
-                        value={solidColorHex}
+                        value={solidColorPickerValue}
                         onChange={(e) => {
-                          setSolidColorHex(e.target.value.toUpperCase());
-                          // 如果当前 name 不在预设里，标"自定义"
-                          if (
-                            !SOLID_COLOR_PRESETS.some(
-                              (p) => p.hex.toLowerCase() === e.target.value.toLowerCase(),
-                            )
-                          ) {
-                            setSolidColorName("自定义");
-                          }
+                          const nextHex = e.target.value.toUpperCase();
+                          const preset = SOLID_COLOR_PRESETS.find(
+                            (p) => p.hex.toLowerCase() === nextHex.toLowerCase(),
+                          );
+                          setSolidColorHex(nextHex);
+                          setSolidColorName(preset?.name ?? "自定义");
+                          setSolidColorTouched(true);
                         }}
                         className="w-5 h-5 cursor-pointer rounded border-0"
                         style={{ padding: 0 }}
                       />
                       <span className="text-fg-muted text-[10px]">
-                        {solidColorHex}
+                        {hasSolidBackground ? solidColorHex : "选择颜色"}
                       </span>
                     </label>
                   </div>
