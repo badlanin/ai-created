@@ -1339,6 +1339,15 @@ function variantPriceForSync(variantPrice: string, productPrice: string): string
     : variantPrice;
 }
 
+function normalizeShopifyLaunchShop(value: string | null): string {
+  const raw = (value || "").trim();
+  if (!raw) return "";
+  const withoutProtocol = raw.replace(/^https?:\/\//i, "");
+  const host = withoutProtocol.split(/[/?#]/)[0]?.trim().toLowerCase() || "";
+  if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i.test(host)) return "";
+  return host;
+}
+
 export default function ProductListingPage() {
   const searchParams = useSearchParams();
   const [binding, setBinding] = useState<ShopifyBinding | null>(null);
@@ -1430,6 +1439,22 @@ export default function ProductListingPage() {
       setLastAction("已从历史记录加入媒体 Media，确认商品信息后可同步到 Shopify");
     }
   }, [searchParams]);
+
+  useEffect(() => {
+    const launchShopDomain = normalizeShopifyLaunchShop(
+      searchParams?.get("shop") || null,
+    );
+    if (!launchShopDomain || loadingBinding || binding) return;
+    setShopDomain(launchShopDomain);
+    setAuthMode(DEFAULT_SHOPIFY_AUTH_MODE);
+    setAccessToken("");
+    setClientId("");
+    setClientSecret("");
+    setConnectionMessage((current) =>
+      current ||
+      "已从 Shopify 打开应用链接识别店铺域名，请填写客户端 ID 和客户端密钥后开始授权。",
+    );
+  }, [binding, loadingBinding, searchParams]);
 
   function applyShopifyConnectionState(data: {
     active?: ShopifyBinding | null;
