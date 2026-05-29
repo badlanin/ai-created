@@ -108,23 +108,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ─── 纯色背景（必填，用户主动选择）───
+    // ─── 主背景纯色（可选，未选时由模型自由生成干净主背景）───
     const solidColorHexRaw = formData.get("solid_color_hex");
-    const solidColorHex =
+    const requestedSolidColorHex =
       typeof solidColorHexRaw === "string"
         ? solidColorHexRaw.trim().toUpperCase()
         : "";
-    if (!/^#[0-9A-Fa-f]{6}$/.test(solidColorHex)) {
-      return NextResponse.json({ error: "请选择主背景纯色" }, { status: 400 });
-    }
     const solidColorNameRaw = formData.get("solid_color_name");
-    const solidColorName =
+    const requestedSolidColorName =
       typeof solidColorNameRaw === "string" && solidColorNameRaw.trim()
         ? solidColorNameRaw.trim().slice(0, 20)
         : "";
-    if (!solidColorName) {
-      return NextResponse.json({ error: "请选择主背景纯色" }, { status: 400 });
-    }
+    const hasSolidColor =
+      /^#[0-9A-Fa-f]{6}$/.test(requestedSolidColorHex) &&
+      requestedSolidColorName.length > 0;
+    const solidColorHex = hasSolidColor ? requestedSolidColorHex : null;
+    const solidColorName = hasSolidColor ? requestedSolidColorName : null;
 
     // ─── 额外场景 + 数量（可选 ≤2 张场景，每张 1..5 张图）───
     // 新版语义：不再绑定固定 pose，姿势由模型按场景物件自由互动生成。
@@ -403,9 +402,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ─── items = N 纯色姿势 + 所有图片场景变体 + 所有文字场景变体 ───
+    // ─── items = N 主背景姿势 + 所有图片场景变体 + 所有文字场景变体 ───
     const solidItems = poses.map((p) => ({
-      label: `${p.name} · ${solidColorName}`,
+      label: `${p.name} · ${solidColorName || "自由主背景"}`,
     }));
     const extraItems = resolvedExtraItems.map((it) => ({
       label:
@@ -447,6 +446,7 @@ export async function POST(req: NextRequest) {
         //   solid+image_scene..end: 文字场景变体（extra_text_items[i]）
         solid_pose_count: poses.length,
         image_scene_count: resolvedExtraItems.length,
+        solid_background_enabled: hasSolidColor,
         solid_color_hex: solidColorHex,
         solid_color_name: solidColorName,
         extra_items: resolvedExtraItems,
@@ -564,6 +564,25 @@ Output should look like a clean e-commerce product-on-model photograph
 shot in a studio with this exact backdrop color.`;
 }
 
+/** 未选择主背景纯色时，让模型自由生成干净电商主背景 */
+function buildAutoMainBgInstruction(): string {
+  return `══════════════════════════════════════════════════════════
+🎨 BACKGROUND — Clean product hero background (NO scene image is provided)
+══════════════════════════════════════════════════════════
+
+Create a clean, premium e-commerce product-on-model background:
+- Choose a tasteful neutral or softly coordinated studio backdrop yourself
+- Keep the background simple, uncluttered, and product-focused
+- NO busy props, NO furniture, NO architectural distractions
+- NO dark corners, NO noisy texture, NO harsh shadows
+
+Lighting: soft frontal studio key light + gentle fill, even illumination
+on the model. Subject is centered with realistic body proportion.
+Full-body or 3/4-body framing depending on pose.
+
+Output should look like a clean Shopify product hero photo.`;
+}
+
 async function batchPhotoItemHandler(
   ctx: HandlerContext,
   outputsDir: string,
@@ -581,8 +600,9 @@ async function batchPhotoItemHandler(
     identity: { id: number; name: string; image_path: string };
     solid_pose_count: number;
     image_scene_count?: number; // 新增：图片场景变体数量（用于分段 idx）
-    solid_color_hex: string;
-    solid_color_name: string;
+    solid_background_enabled?: boolean;
+    solid_color_hex?: string | null;
+    solid_color_name?: string | null;
     // 新版：每个 extra item 是"场景 + 变体 idx"，没有绑定 pose
     extra_items?: Array<{
       scene_id: number;
@@ -637,9 +657,17 @@ async function batchPhotoItemHandler(
     const po = p.poses[idx];
     if (!po) throw new Error(`solid pose[${idx}] 丢失`);
     pose = po;
-    sceneNameForPrompt = `纯色背景（${p.solid_color_name}，${p.solid_color_hex}）`;
+    const hasSolidColor =
+      Boolean(p.solid_background_enabled) &&
+      Boolean(p.solid_color_hex) &&
+      Boolean(p.solid_color_name);
+    sceneNameForPrompt = hasSolidColor
+      ? `纯色背景（${p.solid_color_name}，${p.solid_color_hex}）`
+      : "自由主背景（干净电商影棚背景）";
     sceneImagePath = null;
-    framingBlock = buildSolidBgInstruction(p.solid_color_name, p.solid_color_hex);
+    framingBlock = hasSolidColor
+      ? buildSolidBgInstruction(String(p.solid_color_name), String(p.solid_color_hex))
+      : buildAutoMainBgInstruction();
   } else if (isImageScene) {
     const extraIdx = idx - solidCount;
     // 优先用新版 extra_items；老 job 的 params 走 extra_pairs 兜底
@@ -872,7 +900,7 @@ ${FRAMING_TIGHT_SINGLE}`;
       identity: p.identity.name,
       kind: isSolid ? "solid" : "scene",
       scene: isSolid ? null : sceneNameForPrompt,
-      solid_color_hex: isSolid ? p.solid_color_hex : null,
+      solid_color_hex: isSolid ? p.solid_color_hex || null : null,
       aspect_ratio: p.aspect_ratio,
       quality_level: qualityLevel,
       image_size: imageSize,

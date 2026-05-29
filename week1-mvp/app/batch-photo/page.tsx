@@ -315,7 +315,7 @@ function BatchPhotoTab({
   // ─── 选择 ───
   const [identityId, setIdentityId] = useState<number | null>(null);
   // Step 4 改造（N 纯色姿势 + 1-2 张场景的混合输出模式）：
-  // - solidColorHex/Name：所有 pose 的纯色背景（必填，用户主动选择）
+  // - solidColorHex/Name：所有 pose 的纯色背景（可选；未选时由模型自由生成干净主背景）
   // - extraScenePairs：额外场景 + 数量（≤ 2 张场景，每张出 count 张图）
   //   旧版本：每张场景必须绑定一个固定 pose；新版本改成"选场景 + 选数量"，
   //   姿势完全交给模型按场景物件自由互动生成（跟 v3 prompt 配合）
@@ -1168,21 +1168,16 @@ function BatchPhotoTab({
     hasProductImages &&
     identityId !== null &&
     templateId !== null &&
-    hasSolidBackground &&
     selectedPoseIds.size > 0 &&
     allExtraPairsConfigured &&
     Boolean(modelId);
 
   /* ─── 提交 ─── */
   async function handleSubmit() {
-    if (!hasSolidBackground) {
-      notifyHelpers.warn(push, "请先选择主背景纯色");
-      return;
-    }
     if (!canSubmit) {
       notifyHelpers.warn(
         push,
-        "请完成所有必填项（至少正面图 + 模特 / Prompt / 主背景 / 姿势）",
+        "请完成所有必填项（至少正面图 + 模特 / Prompt / 姿势）",
       );
       return;
     }
@@ -1208,8 +1203,10 @@ function BatchPhotoTab({
       });
       fd.append("identity_id", String(identityId));
       fd.append("template_id", String(templateId));
-      fd.append("solid_color_hex", solidColorHex.toUpperCase());
-      fd.append("solid_color_name", solidColorName.trim());
+      if (hasSolidBackground) {
+        fd.append("solid_color_hex", solidColorHex.toUpperCase());
+        fd.append("solid_color_name", solidColorName.trim());
+      }
       // 场景 + 数量（新版字段名，跟旧 pose 绑定模式区分）
       // 后端按 count 把每张场景展开成 N 个 item，每个 item 走"自由互动"姿势
       const validPairs = extraScenePairs
@@ -1853,7 +1850,7 @@ function BatchPhotoTab({
               defaultOpen={false}
             >
               <div className="space-y-5">
-                {/* 4.1 纯色背景（必填，用户主动选择）*/}
+                {/* 4.1 纯色背景（可选，用户主动选择）*/}
                 <div>
                   <div className="text-[12px] text-fg-secondary mb-2 font-medium">
                     🎨 主背景：纯色
