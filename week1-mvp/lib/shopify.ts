@@ -688,17 +688,18 @@ export function saveShopifyConnection(opts: {
   const domain = normalizeShopDomain(opts.shopDomain);
   const authMode = normalizeAuthMode(opts.authMode);
   const clientId = cleanField(opts.clientId);
-  const secret = cleanField(opts.accessToken);
-  if (authMode === "client_credentials") {
-    throw new Error("新版 Dev Dashboard 应用不能用客户端密钥直接绑定，请使用 OAuth 授权安装。");
-  }
-  if (authMode === "oauth_app" && !clientId) {
+  const clientSecret = cleanField(opts.clientSecret);
+  const secret =
+    authMode === "client_credentials" ? clientSecret : cleanField(opts.accessToken);
+  if ((authMode === "oauth_app" || authMode === "client_credentials") && !clientId) {
     throw new Error("客户端 ID 不能为空");
   }
   if (!secret) {
     throw new Error(
       authMode === "oauth_app"
         ? "Shopify OAuth 未返回 Admin API Access Token"
+        : authMode === "client_credentials"
+          ? "加密密钥不能为空"
         : "Admin API Access Token 不能为空",
     );
   }
@@ -743,7 +744,7 @@ export function saveShopifyConnection(opts: {
       domain,
       encrypted,
       authMode,
-      authMode === "oauth_app" ? clientId : null,
+      authMode !== "access_token" ? clientId : null,
       opts.testResult.shopName,
       opts.testResult.myshopifyDomain,
       opts.testResult.primaryDomain,
@@ -902,7 +903,19 @@ export async function getStoredShopifyAccessToken(userId: number): Promise<{
   const domain = normalizeShopDomain(row.shop_domain);
   const secret = decryptToken(row.access_token_enc);
   if (normalizeAuthMode(row.auth_mode) === "client_credentials") {
-    throw new Error("旧的客户端密钥直连方式不可用，请解除绑定后重新走 Shopify OAuth 授权。");
+    const clientId = cleanField(row.client_id);
+    if (!clientId) {
+      throw new Error("Shopify 客户端 ID 缺失，请解除绑定后重新保存店铺。");
+    }
+    const accessToken = await createClientCredentialsAccessToken({
+      shopDomain: domain,
+      clientId,
+      clientSecret: secret,
+    });
+    return {
+      shopDomain: domain,
+      accessToken,
+    };
   }
 
   return {
@@ -922,8 +935,50 @@ async function createClientCredentialsAccessToken(opts: {
   clientId: string;
   clientSecret: string;
 }): Promise<string> {
-  void opts;
-  throw new Error("新版 Dev Dashboard 应用不能用客户端密钥直接换 Admin API token，请使用 Shopify OAuth 授权安装。");
+  const domain = normalizeShopDomain(opts.shopDomain);
+  const clientId = cleanField(opts.clientId);
+  const clientSecret = cleanField(opts.clientSecret);
+  if (!clientId) throw new Error("客户端 ID 不能为空");
+  if (!clientSecret) throw new Error("加密密钥不能为空");
+
+  const response = await fetch(`https://${domain}/admin/oauth/access_token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "client_credentials",
+      client_id: clientId,
+      client_secret: clientSecret,
+    }),
+    signal: AbortSignal.timeout(20_000),
+  });
+
+  const text = await response.text();
+  let json: ShopifyClientCredentialsResponse | null = null;
+  try {
+    json = text ? (JSON.parse(text) as ShopifyClientCredentialsResponse) : null;
+  } catch {
+    json = null;
+  }
+
+  if (!response.ok || json?.error) {
+    if (looksLikeHtml(text)) {
+      throw new Error(
+        "Shopify 返回了网页而不是 token。请确认店铺域名是原始 *.myshopify.com 域名。",
+      );
+    }
+    const message =
+      json?.error_description ||
+      json?.error ||
+      text.slice(0, 300) ||
+      response.statusText;
+    throw new Error(
+      `Shopify 客户端凭据换取 token 失败：${message}。请确认应用已安装到该店铺，并且客户端 ID / 加密密钥来自同一个 Dev Dashboard 应用。`,
+    );
+  }
+  if (!json?.access_token) {
+    throw new Error("Shopify 未返回 Admin API Access Token。");
+  }
+  return json.access_token;
 }
 
 export function buildShopifyOAuthAuthorizeUrl(opts: {
@@ -986,7 +1041,7 @@ export async function exchangeShopifyOAuthCode(opts: {
   const clientSecret = cleanField(opts.clientSecret);
   const code = cleanField(opts.code);
   if (!clientId) throw new Error("客户端 ID 不能为空");
-  if (!clientSecret) throw new Error("客户端密钥不能为空");
+  if (!clientSecret) throw new Error("加密密钥不能为空");
   if (!code) throw new Error("Shopify OAuth code 为空");
 
   const response = await fetch(`https://${domain}/admin/oauth/access_token`, {
@@ -1042,10 +1097,14 @@ export async function testShopifyConnection(opts: {
 }): Promise<ShopifyConnectionTestResult> {
   const domain = normalizeShopDomain(opts.shopDomain);
   const authMode = normalizeAuthMode(opts.authMode);
+  let token = cleanField(opts.accessToken);
   if (authMode === "client_credentials") {
-    throw new Error("新版 Dev Dashboard 应用需要 OAuth 授权安装，不能只用客户端 ID 和密钥测试连接。");
+    token = await createClientCredentialsAccessToken({
+      shopDomain: domain,
+      clientId: cleanField(opts.clientId),
+      clientSecret: cleanField(opts.clientSecret),
+    });
   }
-  const token = cleanField(opts.accessToken);
   if (!token) throw new Error("Admin API Access Token 不能为空");
 
   if (isTestShopifyCredentials(domain, token)) {

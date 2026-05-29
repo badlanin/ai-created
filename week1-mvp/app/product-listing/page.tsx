@@ -68,7 +68,7 @@ type ShopifyBinding = {
   lastTestedAt: number | null;
 };
 
-const DEFAULT_SHOPIFY_AUTH_MODE: ShopifyBinding["authMode"] = "oauth_app";
+const DEFAULT_SHOPIFY_AUTH_MODE: ShopifyBinding["authMode"] = "client_credentials";
 
 type SyncState = "idle" | "draft" | "syncing" | "synced";
 type SyncAction = "draft" | "publish" | null;
@@ -1452,7 +1452,7 @@ export default function ProductListingPage() {
     setClientSecret("");
     setConnectionMessage((current) =>
       current ||
-      "已从 Shopify 打开应用链接识别店铺域名，请填写客户端 ID 和客户端密钥后开始授权。",
+      "已从 Shopify 打开应用链接识别店铺域名，请填写客户端 ID 和加密密钥后保存绑定。",
     );
   }, [binding, loadingBinding, searchParams]);
 
@@ -1536,10 +1536,6 @@ export default function ProductListingPage() {
   }, [newStoreAccessToken, newStoreAuthMode, newStoreClientSecret]);
 
   async function testConnection() {
-    if (!binding && authMode === "oauth_app") {
-      setConnectionMessage("新版 Dev Dashboard 应用需要先点击“开始 Shopify 授权”，授权成功后再测试连接。");
-      return;
-    }
     setTesting(true);
     setConnectionMessage(null);
     try {
@@ -1580,7 +1576,7 @@ export default function ProductListingPage() {
     ) {
       setConnectionMessage(
         authMode !== "access_token"
-          ? "请填写店铺域名、客户端 ID 和客户端密钥。"
+          ? "请填写店铺域名、客户端 ID 和加密密钥。"
           : "请填写店铺域名和 Admin API Access Token。",
       );
       return;
@@ -1588,7 +1584,7 @@ export default function ProductListingPage() {
     setSavingBinding(true);
     setConnectionMessage(null);
     try {
-      if (authMode === "oauth_app" || authMode === "client_credentials") {
+      if (authMode === "oauth_app") {
         const res = await fetch("/api/shopify/oauth/start", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1639,7 +1635,7 @@ export default function ProductListingPage() {
     ) {
       setConnectionMessage(
         newStoreAuthMode !== "access_token"
-          ? "请填写店铺域名、客户端 ID 和客户端密钥。"
+          ? "请填写店铺域名、客户端 ID 和加密密钥。"
           : "请填写店铺域名和 Admin API Access Token。",
       );
       return;
@@ -1647,7 +1643,7 @@ export default function ProductListingPage() {
     setSavingBinding(true);
     setConnectionMessage(null);
     try {
-      if (newStoreAuthMode === "oauth_app" || newStoreAuthMode === "client_credentials") {
+      if (newStoreAuthMode === "oauth_app") {
         const res = await fetch("/api/shopify/oauth/start", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -2407,7 +2403,7 @@ function UnboundView({
               请绑定 Shopify 凭据
             </h2>
             <p className="mt-2 text-sm text-fg-tertiary leading-relaxed">
-              新版 Dev Dashboard 应用请使用 OAuth 授权安装；旧版自定义应用也可以继续使用 shpat Token。
+              新版 Dev Dashboard 应用请使用客户端 ID 和加密密钥绑定；旧版自定义应用也可以继续使用 shpat Token。
             </p>
             <button
               type="button"
@@ -2436,7 +2432,7 @@ function UnboundView({
                 onAuthModeChange(e.target.value as ShopifyBinding["authMode"])
               }
             >
-              <option value="oauth_app">新版：Shopify OAuth 授权安装</option>
+              <option value="client_credentials">新版：Shopify 客户端凭据授权</option>
               <option value="access_token">旧版：Admin API Access Token</option>
             </Select>
             <div>
@@ -2463,7 +2459,7 @@ function UnboundView({
                   leftAddon={<KeyRound size={14} />}
                 />
                 <Input
-                  label="客户端密钥"
+                  label="加密密钥"
                   value={clientSecret}
                   onChange={(e) => onClientSecretChange(e.target.value)}
                   placeholder="shpss_..."
@@ -2511,7 +2507,7 @@ function UnboundView({
               loading={savingBinding}
               onClick={onSaveBinding}
             >
-              {authMode === "access_token" ? "保存" : "开始 Shopify 授权"}
+              {authMode === "access_token" ? "保存" : "保存并验证"}
             </Button>
             </div>
           </div>
@@ -2556,7 +2552,7 @@ function BoundStatusCard({
                 {binding.authMode === "oauth_app"
                   ? "Shopify OAuth"
                   : binding.authMode === "client_credentials"
-                    ? "客户端凭据"
+                    ? "Shopify 客户端凭据"
                     : "Access Token"}
               </span>
               <span>店铺域名：{binding.shopDomain}</span>
@@ -2731,7 +2727,11 @@ function StoreConnectionList({
               </div>
               <div className="mt-1.5 flex min-w-0 gap-2.5 text-[11px] leading-4 text-fg-tertiary">
                 <span>
-                  {item.authMode === "oauth_app" ? "OAuth" : "Access Token"}
+                  {item.authMode === "oauth_app"
+                    ? "OAuth"
+                    : item.authMode === "client_credentials"
+                      ? "客户端凭据"
+                      : "Access Token"}
                 </span>
                 <span className="truncate">{item.tokenPreview}</span>
               </div>
@@ -2826,7 +2826,7 @@ function StoreConnectionDialog({
             loading={saving}
             onClick={onSave}
           >
-            {authMode === "access_token" ? "保存并切换" : "开始 Shopify 授权"}
+            保存并切换
           </Button>
         </>
       }
@@ -2839,7 +2839,7 @@ function StoreConnectionDialog({
             onAuthModeChange(e.target.value as ShopifyBinding["authMode"])
           }
         >
-          <option value="oauth_app">新版：Shopify OAuth 授权安装</option>
+          <option value="client_credentials">新版：Shopify 客户端凭据授权</option>
           <option value="access_token">旧版：Admin API Access Token</option>
         </Select>
         <Input
@@ -2861,7 +2861,7 @@ function StoreConnectionDialog({
               leftAddon={<KeyRound size={14} />}
             />
             <Input
-              label="客户端密钥"
+              label="加密密钥"
               value={clientSecret}
               onChange={(e) => onClientSecretChange(e.target.value)}
               placeholder="shpss_..."
