@@ -449,6 +449,10 @@ export async function POST(req: NextRequest) {
         solid_background_enabled: hasSolidColor,
         solid_color_hex: solidColorHex,
         solid_color_name: solidColorName,
+        main_background_text:
+          !hasSolidColor && extraTextPairs.length > 0
+            ? extraTextPairs[0].text
+            : null,
         extra_items: resolvedExtraItems,
         extra_text_items: resolvedExtraTextItems,
         template: {
@@ -564,14 +568,21 @@ Output should look like a clean e-commerce product-on-model photograph
 shot in a studio with this exact backdrop color.`;
 }
 
-/** 未选择主背景纯色时，让模型自由生成干净电商主背景 */
-function buildAutoMainBgInstruction(): string {
+/** 未选择主背景纯色时，让模型生成干净电商主背景；可用文字场景作为主背景描述 */
+function buildAutoMainBgInstruction(sceneText?: string): string {
+  const sceneDirective = sceneText
+    ? `Use this background scene for the product hero photo:
+${sceneText}
+
+Keep the scene recognizable, but simplify it into a clean premium e-commerce backdrop.`
+    : `Create a clean, premium e-commerce product-on-model background:
+- Choose a tasteful neutral or softly coordinated studio backdrop yourself`;
+
   return `══════════════════════════════════════════════════════════
 🎨 BACKGROUND — Clean product hero background (NO scene image is provided)
 ══════════════════════════════════════════════════════════
 
-Create a clean, premium e-commerce product-on-model background:
-- Choose a tasteful neutral or softly coordinated studio backdrop yourself
+${sceneDirective}
 - Keep the background simple, uncluttered, and product-focused
 - NO busy props, NO furniture, NO architectural distractions
 - NO dark corners, NO noisy texture, NO harsh shadows
@@ -603,6 +614,7 @@ async function batchPhotoItemHandler(
     solid_background_enabled?: boolean;
     solid_color_hex?: string | null;
     solid_color_name?: string | null;
+    main_background_text?: string | null;
     // 新版：每个 extra item 是"场景 + 变体 idx"，没有绑定 pose
     extra_items?: Array<{
       scene_id: number;
@@ -661,13 +673,19 @@ async function batchPhotoItemHandler(
       Boolean(p.solid_background_enabled) &&
       Boolean(p.solid_color_hex) &&
       Boolean(p.solid_color_name);
+    const mainBackgroundText =
+      typeof p.main_background_text === "string"
+        ? p.main_background_text.trim()
+        : "";
     sceneNameForPrompt = hasSolidColor
       ? `纯色背景（${p.solid_color_name}，${p.solid_color_hex}）`
-      : "自由主背景（干净电商影棚背景）";
+      : mainBackgroundText
+        ? "文字主背景（来自额外文字场景）"
+        : "自由主背景（干净电商影棚背景）";
     sceneImagePath = null;
     framingBlock = hasSolidColor
       ? buildSolidBgInstruction(String(p.solid_color_name), String(p.solid_color_hex))
-      : buildAutoMainBgInstruction();
+      : buildAutoMainBgInstruction(mainBackgroundText || undefined);
   } else if (isImageScene) {
     const extraIdx = idx - solidCount;
     // 优先用新版 extra_items；老 job 的 params 走 extra_pairs 兜底
