@@ -1,0 +1,18 @@
+## 仓库根级 .gitignore（应用级 gitignore 在 week1-mvp/.gitignore 里）
+
+# 部署目标列表（含具体 GCP 项目 / 实例名，每个开发者本地一份）
+deploy.targets
+
+# 万一在 repo 内建了备份目录（标准位置在 repo 同级，但保险起见排除）
+backups/
+
+# 操作系统垃圾文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+week1-mvp/seed-assets/scenes-v4-output/ 

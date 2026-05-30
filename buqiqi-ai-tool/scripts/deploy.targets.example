@@ -1,0 +1,16 @@
+# 部署目标列表（模板）
+#
+# 用法：复制本文件改名为 ../deploy.targets（仓库根目录），填入你的 VM 信息。
+# 该文件已被 .gitignore，不会被推到 GitHub。
+#
+# 字段顺序：project_id  zone  [user@]instance  remote_dir
+# 字段间用空白分隔，# 开头表示注释，每行一台 VM。
+#
+# instance 字段支持 user@instance 形式，覆盖 gcloud 默认 SSH 用户名。
+# 当部署是别人创建的 Linux 用户管理的、而你登录的 gcloud 账号 username
+# 又对不上时，必须显式指定（典型场景：多人协作、跨 GCP 账号）。
+
+# project_id              zone                [user@]instance               remote_dir
+# buqiqi-batch-image-tool asia-southeast1-c   ruchenbd@buqiqi-ai-tool-2     ~/buqiqi-ai-tool/week1-mvp
+# buqiqi-batch-1          asia-southeast1-a   ruchenbd@buqiqi-app-1-sg      ~/buqiqi-ai-tool/week1-mvp
+# buqiqi-batch-2          asia-southeast1-c   ruchenbd@buqiqi-app-2-sg      ~/buqiqi-ai-tool/week1-mvp

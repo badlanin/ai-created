@@ -1,0 +1,47 @@
+{
+    email {$ADMIN_EMAIL}
+}
+
+{$DOMAIN} {
+    # 静态资源（生成的图、上传素材）长期缓存
+    # 文件名都包含时间戳+随机后缀，更新会换文件名，不会缓存冲突
+    @assets path /assets/*
+    handle @assets {
+        header Cache-Control "public, max-age=31536000, immutable"
+        header Vary "Accept-Encoding"
+        reverse_proxy app:3000 {
+            header_up X-Real-IP {remote_host}
+        }
+    }
+
+    # 缩略图 API：内容不变（路径+参数 = 唯一），可永久缓存
+    @thumb path /api/thumb*
+    handle @thumb {
+        header Cache-Control "public, max-age=31536000, immutable"
+        reverse_proxy app:3000 {
+            header_up X-Real-IP {remote_host}
+        }
+    }
+
+    # 其他所有请求（页面、API）正常代理
+    handle {
+        reverse_proxy app:3000 {
+            header_up X-Real-IP {remote_host}
+        }
+    }
+
+    encode gzip zstd
+
+    # 客户端上传大小限制
+    # scene-tools / batch-photo 可能一次传多张产品图（route 限单张 20MB × 最多 30 张），
+    # 给 200MB 余量；之前给 20MB 会卡住多图上传 → 前端报 "Unexpected end of JSON input"
+    # （Caddy 413 截断连接，没回 JSON body，浏览器 res.json() 解析失败）
+    request_body {
+        max_size 200MB
+    }
+
+    log {
+        output stdout
+        format console
+    }
+}

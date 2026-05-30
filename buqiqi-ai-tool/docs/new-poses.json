@@ -1,0 +1,111 @@
+{
+  "_meta": {
+    "description": "新姿势库（6 全身 + 4 特写）。可直接 import 进 poses 表。",
+    "source_folder": "D:\\cluade_BUQIQI_批量图片工具\\BUQIQI_批量图片工具\\预设\\新姿势\\",
+    "field_mapping": {
+      "name": "短名（UI 上显示的按钮文字，4-8 字）",
+      "text": "完整 prompt 描述（注入模型 prompt 里的姿势段）",
+      "type": "full | half | closeup",
+      "tags": "用逗号分隔标签，给 admin 筛选用",
+      "is_hero": "1 = 首图候选；0 = 普通姿势",
+      "sort_order": "排序"
+    }
+  },
+  "poses": [
+    {
+      "name": "背身回眸",
+      "text": "Model stands with her back to the camera, head turned slightly over her left shoulder looking softly back at the lens. Spine elongated, shoulders relaxed and slightly squared. One hand resting naturally at her side, the other lightly touching her hip. Hair gathered low at the nape or in a low bun to expose the neckline and back of the dress. Calm composed expression with a hint of a smile. Frames the back of the gown / bodice fully.",
+      "type": "full",
+      "tags": "全身,背身,回眸,展示后背",
+      "is_hero": 1,
+      "sort_order": 100,
+      "_source_image": "anastelle-sb11663c-6.jpg"
+    },
+    {
+      "name": "自然正面站",
+      "text": "Model stands facing the camera straight-on, weight evenly distributed across both feet, body axis perfectly vertical. Both arms relaxed and naturally falling at her sides, slightly away from the body so the silhouette of the dress is fully visible. Shoulders open, chin slightly raised, gaze direct and confident. Subtle natural smile or neutral elegant expression. Hair flowing freely over shoulders. The pose maximally shows off the full front view of the garment.",
+      "type": "full",
+      "tags": "全身,正面,自然站立,基础",
+      "is_hero": 1,
+      "sort_order": 110,
+      "_source_image": "anastelle-sb11663c-8.jpg"
+    },
+    {
+      "name": "单手叉腰正面",
+      "text": "Model stands facing the camera with weight shifted slightly to one leg (contrapposto). One hand placed lightly on her hip with the elbow angled outward, the other arm falling gracefully at her side. Shoulders open and relaxed, head straight with a soft confident gaze and gentle closed-lip smile. Hair cascading naturally over one shoulder. The pose creates a subtle S-curve through the body that flatters the dress's waist and skirt drape.",
+      "type": "full",
+      "tags": "全身,正面,叉腰,S形",
+      "is_hero": 1,
+      "sort_order": 120,
+      "_source_image": "house-of-cb-calista-front-view.jpg"
+    },
+    {
+      "name": "背身撩发",
+      "text": "Model with her back to the camera, head and torso turned gently to one side as she lifts one hand up to lightly touch or sweep her hair behind her ear or along her temple. The lifted arm creates a soft elegant curve framing her face in three-quarter profile. Other arm relaxed at her side or resting at her lower back. Shoulders relaxed, spine elongated. Calm contemplative expression with eyes looking softly downward or off-camera.",
+      "type": "full",
+      "tags": "全身,背身,撩发,优雅",
+      "is_hero": 1,
+      "sort_order": 130,
+      "_source_image": "0ff2a2c0a2416a014252cb0d1fb4798f.png"
+    },
+    {
+      "name": "双手扶腰",
+      "text": "Model stands facing the camera with both hands placed lightly on her hips, fingers spread naturally, elbows angled outward. Weight slightly forward, body axis vertical. Shoulders squared and open, posture confident but relaxed. Head straight or slightly tilted, gaze direct with a neutral or subtly amused expression. This pose emphasizes the waistline and hip silhouette of the dress, ideal for showing off cinched-waist or A-line cuts.",
+      "type": "full",
+      "tags": "全身,正面,双手叉腰,自信",
+      "is_hero": 0,
+      "sort_order": 140,
+      "_source_image": "DM_20260511112647_001.png"
+    },
+    {
+      "name": "S形侧立",
+      "text": "Model stands in a soft S-curve pose: one hip pushed gently to the side, weight on the back leg, front leg slightly forward and crossed. One hand lightly rests near the collarbone or touches the strap of the dress, the other falls naturally at the hip. Torso gently twisted toward the camera in three-quarter view. Head tilted slightly, looking directly at the lens with a sultry or warm expression. The pose creates an hourglass silhouette emphasizing waist and bust.",
+      "type": "full",
+      "tags": "全身,S形,侧身,性感",
+      "is_hero": 0,
+      "sort_order": 150,
+      "_source_image": "sabrine-sb12121a.jpg"
+    },
+    {
+      "name": "腰部以上双叉腰",
+      "text": "Tightly cropped half-body view from approximately mid-thigh up. Model facing the camera with both hands placed on the hips just above the waist, elbows angled outward creating a strong triangular frame. Crop excludes the face (cut just below the chin) to emphasize the bodice, neckline, fabric texture, and waist construction of the dress. Strong confident stance, shoulders square.",
+      "type": "half",
+      "tags": "半身,叉腰,展示版型,无脸",
+      "is_hero": 0,
+      "sort_order": 200,
+      "_source_image": "260204-hcb-flatlays7475.jpg"
+    },
+    {
+      "name": "侧身腰部细节",
+      "text": "Cropped to focus on the bodice and high-slit detail from collarbone to upper thigh. Model standing in three-quarter angle with body slightly turned away from camera. One hand resting on the waist where the corset / waistline detail is, the other hand subtly lifting the slit edge of the skirt to reveal the leg. Crop excludes the face. Emphasizes the corset structure, lace inset, and slit construction.",
+      "type": "half",
+      "tags": "半身,侧身,腰部细节,开衩,无脸",
+      "is_hero": 0,
+      "sort_order": 210,
+      "_source_image": "sabrine-b-sb12944-3.jpg"
+    },
+    {
+      "name": "锁骨胸前特写",
+      "text": "Tight close-up from upper chest to lower waist, framed to highlight the bodice details: neckline cut, lace trim, embroidery placement, beading, and any decorative bow / ribbon at the bust. Model's hands gently positioned: one hand may lightly touch the strap or pull a ribbon loose; the other rests on the corseted waist. Crop excludes the face. Photographed against soft warm light to emphasize fabric texture and lace sheerness.",
+      "type": "closeup",
+      "tags": "特写,锁骨,胸前,蕾丝细节",
+      "is_hero": 0,
+      "sort_order": 300,
+      "_source_image": "house-of-cb-calista-lookbook-indoor-2.jpg"
+    },
+    {
+      "name": "全身侧光开衩",
+      "text": "Full-body standing pose photographed slightly from the side, light coming from the front-right creating soft shadow on the left side of the body. Model facing camera with head turned slightly down and to one side in a contemplative gaze. One leg stepping forward through a high front slit, revealing the thigh and the dress's lining. Both arms relaxed at sides, hands hanging naturally. This pose showcases the slit construction and the ruched / draped fabric detail at the waist.",
+      "type": "full",
+      "tags": "全身,正面,侧光,开衩展示,自然",
+      "is_hero": 0,
+      "sort_order": 160,
+      "_source_image": "DM_20260511112341_001.jpg"
+    }
+  ],
+  "_import_instructions": {
+    "manual": "在 admin/poses 页面手动一条条新增（看 text 字段复制粘贴）",
+    "seed_migration": "更好做法：把这个 JSON 加进 lib/db.ts 的 migrateInsertNewPoses() 函数（参考 migrateInsertNewScenes）。flag 升 v2。",
+    "deprecate_old": "如果想替换老姿势：admin/poses 页面把旧的 sort_order 调到 9000+，让新姿势排在前面；或者标 is_deprecated=1 隐藏（需要 schema 加这个字段）"
+  }
+}
