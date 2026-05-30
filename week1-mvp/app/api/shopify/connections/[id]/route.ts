@@ -5,25 +5,32 @@ import {
   getShopifyConnection,
   listShopifyConnections,
 } from "@/lib/shopify";
+import {
+  normalizeShopifyDeviceKey,
+  SHOPIFY_DEVICE_HEADER,
+} from "@/lib/shopify-device";
 
 export const runtime = "nodejs";
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const user = await requireUser();
+    const deviceKey = normalizeShopifyDeviceKey(
+      req.headers.get(SHOPIFY_DEVICE_HEADER),
+    );
     const { id } = await params;
     const connectionId = Number(id);
     if (!Number.isFinite(connectionId)) {
       return NextResponse.json({ error: "店铺记录 id 无效" }, { status: 400 });
     }
-    deleteShopifyConnection(user.id, connectionId);
+    deleteShopifyConnection(user.id, deviceKey, connectionId);
     return NextResponse.json({
       ok: true,
-      active: getShopifyConnection(user.id),
-      connections: listShopifyConnections(user.id),
+      active: getShopifyConnection(user.id, deviceKey),
+      connections: listShopifyConnections(user.id, deviceKey),
     });
   } catch (e) {
     const status = (e as { status?: number }).status || 500;

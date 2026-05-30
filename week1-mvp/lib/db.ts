@@ -381,6 +381,7 @@ function migrate(db: Database.Database) {
     CREATE TABLE IF NOT EXISTS shopify_connections (
       id               INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      device_key       TEXT NOT NULL DEFAULT 'legacy-global',
       shop_domain      TEXT NOT NULL,
       access_token_enc TEXT NOT NULL,
       auth_mode        TEXT NOT NULL DEFAULT 'access_token',
@@ -393,7 +394,7 @@ function migrate(db: Database.Database) {
       created_at       INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at       INTEGER NOT NULL DEFAULT (unixepoch()),
       last_tested_at   INTEGER,
-      UNIQUE(user_id, shop_domain)
+      UNIQUE(user_id, device_key, shop_domain)
     );
   `);
 
@@ -425,6 +426,7 @@ function migrate(db: Database.Database) {
   ensureColumn(db, "shopify_connections", "client_id", "TEXT");
   ensureColumn(db, "shopify_connections", "token_expires_at", "INTEGER");
   migrateShopifyConnectionsMultiStore(db);
+  migrateShopifyConnectionsDeviceKeys(db);
   // 新增索引
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_models_category ON models(kind, category, sort_order);
@@ -433,7 +435,7 @@ function migrate(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_poses_hero ON poses(is_hero, sort_order);
     CREATE INDEX IF NOT EXISTS idx_scenes_usage ON scenes(usage, sort_order);
     CREATE INDEX IF NOT EXISTS idx_shopify_connections_user_active
-      ON shopify_connections(user_id, is_active, updated_at DESC);
+      ON shopify_connections(user_id, device_key, is_active, updated_at DESC);
   `);
 
   // 启动时恢复：把被进程重启打断的 item 标为 failed
@@ -528,6 +530,7 @@ function migrateShopifyConnectionsMultiStore(db: Database.Database) {
       CREATE TABLE IF NOT EXISTS shopify_connections_multi (
         id               INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        device_key       TEXT NOT NULL DEFAULT 'legacy-global',
         shop_domain      TEXT NOT NULL,
         access_token_enc TEXT NOT NULL,
         auth_mode        TEXT NOT NULL DEFAULT 'access_token',
@@ -540,11 +543,12 @@ function migrateShopifyConnectionsMultiStore(db: Database.Database) {
         created_at       INTEGER NOT NULL DEFAULT (unixepoch()),
         updated_at       INTEGER NOT NULL DEFAULT (unixepoch()),
         last_tested_at   INTEGER,
-        UNIQUE(user_id, shop_domain)
+        UNIQUE(user_id, device_key, shop_domain)
       );
 
       INSERT OR IGNORE INTO shopify_connections_multi (
         user_id,
+        device_key,
         shop_domain,
         access_token_enc,
         auth_mode,
@@ -560,6 +564,7 @@ function migrateShopifyConnectionsMultiStore(db: Database.Database) {
       )
       SELECT
         user_id,
+        'legacy-global',
         shop_domain,
         access_token_enc,
         COALESCE(auth_mode, 'access_token'),
@@ -577,10 +582,97 @@ function migrateShopifyConnectionsMultiStore(db: Database.Database) {
       DROP TABLE shopify_connections;
       ALTER TABLE shopify_connections_multi RENAME TO shopify_connections;
       CREATE INDEX IF NOT EXISTS idx_shopify_connections_user_active
-        ON shopify_connections(user_id, is_active, updated_at DESC);
+        ON shopify_connections(user_id, device_key, is_active, updated_at DESC);
     `);
   })();
   console.log("[db] migrated shopify_connections to multi-store schema");
+}
+
+function migrateShopifyConnectionsDeviceKeys(db: Database.Database) {
+  const done = db
+    .prepare(`SELECT value FROM settings WHERE key = 'shopify_device_key_schema_v1'`)
+    .get() as { value: string } | undefined;
+  const cols = db
+    .prepare(`PRAGMA table_info(shopify_connections)`)
+    .all() as Array<{ name: string }>;
+  const hasDeviceKey = cols.some((c) => c.name === "device_key");
+  if (done?.value === "1" && hasDeviceKey) return;
+
+  const deviceExpr = hasDeviceKey
+    ? "COALESCE(device_key, 'legacy-global')"
+    : "'legacy-global'";
+
+  db.transaction(() => {
+    db.exec(`
+      DROP INDEX IF EXISTS idx_shopify_connections_user_active;
+      DROP TABLE IF EXISTS shopify_connections_device_scoped;
+
+      CREATE TABLE shopify_connections_device_scoped (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        device_key       TEXT NOT NULL DEFAULT 'legacy-global',
+        shop_domain      TEXT NOT NULL,
+        access_token_enc TEXT NOT NULL,
+        auth_mode        TEXT NOT NULL DEFAULT 'access_token',
+        client_id        TEXT,
+        token_expires_at INTEGER,
+        shop_name        TEXT,
+        myshopify_domain TEXT,
+        primary_domain   TEXT,
+        is_active        INTEGER NOT NULL DEFAULT 1,
+        created_at       INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at       INTEGER NOT NULL DEFAULT (unixepoch()),
+        last_tested_at   INTEGER,
+        UNIQUE(user_id, device_key, shop_domain)
+      );
+
+      INSERT OR IGNORE INTO shopify_connections_device_scoped (
+        id,
+        user_id,
+        device_key,
+        shop_domain,
+        access_token_enc,
+        auth_mode,
+        client_id,
+        token_expires_at,
+        shop_name,
+        myshopify_domain,
+        primary_domain,
+        is_active,
+        created_at,
+        updated_at,
+        last_tested_at
+      )
+      SELECT
+        id,
+        user_id,
+        ${deviceExpr},
+        shop_domain,
+        access_token_enc,
+        COALESCE(auth_mode, 'access_token'),
+        client_id,
+        token_expires_at,
+        shop_name,
+        myshopify_domain,
+        primary_domain,
+        COALESCE(is_active, 1),
+        created_at,
+        updated_at,
+        last_tested_at
+      FROM shopify_connections;
+
+      DROP TABLE shopify_connections;
+      ALTER TABLE shopify_connections_device_scoped RENAME TO shopify_connections;
+      CREATE INDEX IF NOT EXISTS idx_shopify_connections_user_active
+        ON shopify_connections(user_id, device_key, is_active, updated_at DESC);
+    `);
+    db.prepare(
+      `INSERT INTO settings (key, value, notes, updated_at)
+       VALUES ('shopify_device_key_schema_v1', '1', 'Shopify connections are scoped by local browser/device key', unixepoch())
+       ON CONFLICT(key) DO UPDATE SET value = '1', updated_at = unixepoch()`,
+    ).run();
+  })();
+  console.log("[db] migrated shopify_connections to device-scoped schema");
 }
 
 /**

@@ -2,6 +2,7 @@ import crypto from "crypto";
 import path from "path";
 import fs from "fs/promises";
 import { DATA_DIR_PATH, getDb } from "./db";
+import { normalizeShopifyDeviceKey } from "./shopify-device";
 
 const SHOPIFY_API_VERSION =
   process.env.SHOPIFY_API_VERSION?.trim() || "2026-04";
@@ -29,6 +30,7 @@ export type ShopifyAuthMode =
 export type ShopifyConnectionRow = {
   id: number;
   user_id: number;
+  device_key: string;
   shop_domain: string;
   access_token_enc: string;
   auth_mode?: ShopifyAuthMode | null;
@@ -46,6 +48,7 @@ export type ShopifyConnectionRow = {
 export type ShopifyConnectionSafe = {
   bound: true;
   id: number;
+  deviceKey: string;
   shopDomain: string;
   authMode: ShopifyAuthMode;
   tokenPreview: string;
@@ -635,6 +638,7 @@ function toSafeConnection(row: ShopifyConnectionRow): ShopifyConnectionSafe {
   return {
     bound: true,
     id: row.id,
+    deviceKey: row.device_key,
     shopDomain: row.shop_domain,
     authMode,
     tokenPreview: maskToken(secret),
@@ -650,33 +654,42 @@ function toSafeConnection(row: ShopifyConnectionRow): ShopifyConnectionSafe {
   };
 }
 
-export function listShopifyConnections(userId: number): ShopifyConnectionSafe[] {
+export function listShopifyConnections(
+  userId: number,
+  deviceKey?: string | null,
+): ShopifyConnectionSafe[] {
   const db = getDb();
+  const scopedDeviceKey = normalizeShopifyDeviceKey(deviceKey);
   const rows = db
     .prepare(
       `SELECT * FROM shopify_connections
-       WHERE user_id = ?
+       WHERE user_id = ? AND device_key = ?
        ORDER BY is_active DESC, updated_at DESC, id DESC`,
     )
-    .all(userId) as ShopifyConnectionRow[];
+    .all(userId, scopedDeviceKey) as ShopifyConnectionRow[];
   return rows.map(toSafeConnection);
 }
 
-export function getShopifyConnection(userId: number): ShopifyConnectionSafe | null {
+export function getShopifyConnection(
+  userId: number,
+  deviceKey?: string | null,
+): ShopifyConnectionSafe | null {
   const db = getDb();
+  const scopedDeviceKey = normalizeShopifyDeviceKey(deviceKey);
   const row = db
     .prepare(
       `SELECT * FROM shopify_connections
-       WHERE user_id = ?
+       WHERE user_id = ? AND device_key = ?
        ORDER BY is_active DESC, updated_at DESC, id DESC
        LIMIT 1`,
     )
-    .get(userId) as ShopifyConnectionRow | undefined;
+    .get(userId, scopedDeviceKey) as ShopifyConnectionRow | undefined;
   return row ? toSafeConnection(row) : null;
 }
 
 export function saveShopifyConnection(opts: {
   userId: number;
+  deviceKey?: string | null;
   shopDomain: string;
   authMode?: ShopifyAuthMode;
   accessToken?: string;
@@ -685,6 +698,7 @@ export function saveShopifyConnection(opts: {
   testResult: ShopifyConnectionTestResult;
 }) {
   const db = getDb();
+  const deviceKey = normalizeShopifyDeviceKey(opts.deviceKey);
   const domain = normalizeShopDomain(opts.shopDomain);
   const authMode = normalizeAuthMode(opts.authMode);
   const clientId = cleanField(opts.clientId);
@@ -709,11 +723,12 @@ export function saveShopifyConnection(opts: {
       `UPDATE shopify_connections
        SET is_active = 0,
            updated_at = unixepoch()
-       WHERE user_id = ?`,
-    ).run(opts.userId);
+       WHERE user_id = ? AND device_key = ?`,
+    ).run(opts.userId, deviceKey);
     db.prepare(
       `INSERT INTO shopify_connections (
          user_id,
+         device_key,
          shop_domain,
          access_token_enc,
          auth_mode,
@@ -727,8 +742,8 @@ export function saveShopifyConnection(opts: {
          updated_at,
          last_tested_at
        )
-       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, 1, unixepoch(), unixepoch(), unixepoch())
-       ON CONFLICT(user_id, shop_domain) DO UPDATE SET
+       VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, 1, unixepoch(), unixepoch(), unixepoch())
+       ON CONFLICT(user_id, device_key, shop_domain) DO UPDATE SET
          access_token_enc = excluded.access_token_enc,
          auth_mode = excluded.auth_mode,
          client_id = excluded.client_id,
@@ -741,6 +756,7 @@ export function saveShopifyConnection(opts: {
          last_tested_at = unixepoch()`,
     ).run(
       opts.userId,
+      deviceKey,
       domain,
       encrypted,
       authMode,
@@ -755,65 +771,85 @@ export function saveShopifyConnection(opts: {
 export function activateShopifyConnection(
   userId: number,
   connectionId: number,
+  deviceKey?: string | null,
 ): ShopifyConnectionSafe {
   const db = getDb();
+  const scopedDeviceKey = normalizeShopifyDeviceKey(deviceKey);
   const target = db
-    .prepare(`SELECT * FROM shopify_connections WHERE user_id = ? AND id = ?`)
-    .get(userId, connectionId) as ShopifyConnectionRow | undefined;
+    .prepare(
+      `SELECT * FROM shopify_connections
+       WHERE user_id = ? AND device_key = ? AND id = ?`,
+    )
+    .get(userId, scopedDeviceKey, connectionId) as
+    | ShopifyConnectionRow
+    | undefined;
   if (!target) throw new Error("未找到该 Shopify 店铺记录");
   db.transaction(() => {
     db.prepare(
       `UPDATE shopify_connections
        SET is_active = CASE WHEN id = ? THEN 1 ELSE 0 END,
            updated_at = unixepoch()
-       WHERE user_id = ?`,
-    ).run(connectionId, userId);
+       WHERE user_id = ? AND device_key = ?`,
+    ).run(connectionId, userId, scopedDeviceKey);
   })();
   const row = db
-    .prepare(`SELECT * FROM shopify_connections WHERE user_id = ? AND id = ?`)
-    .get(userId, connectionId) as ShopifyConnectionRow;
+    .prepare(
+      `SELECT * FROM shopify_connections
+       WHERE user_id = ? AND device_key = ? AND id = ?`,
+    )
+    .get(userId, scopedDeviceKey, connectionId) as ShopifyConnectionRow;
   return toSafeConnection(row);
 }
 
-export function deleteShopifyConnection(userId: number, connectionId?: number) {
+export function deleteShopifyConnection(
+  userId: number,
+  deviceKey?: string | null,
+  connectionId?: number,
+) {
   const db = getDb();
+  const scopedDeviceKey = normalizeShopifyDeviceKey(deviceKey);
   const target = connectionId
     ? (db
-        .prepare(`SELECT id, is_active FROM shopify_connections WHERE user_id = ? AND id = ?`)
-        .get(userId, connectionId) as
+        .prepare(
+          `SELECT id, is_active FROM shopify_connections
+           WHERE user_id = ? AND device_key = ? AND id = ?`,
+        )
+        .get(userId, scopedDeviceKey, connectionId) as
         | { id: number; is_active?: number | null }
         | undefined)
     : (db
         .prepare(
           `SELECT id, is_active FROM shopify_connections
-           WHERE user_id = ?
+           WHERE user_id = ? AND device_key = ?
            ORDER BY is_active DESC, updated_at DESC, id DESC
            LIMIT 1`,
         )
-        .get(userId) as { id: number; is_active?: number | null } | undefined);
+        .get(userId, scopedDeviceKey) as
+        | { id: number; is_active?: number | null }
+        | undefined);
   if (!target) return;
 
   db.transaction(() => {
-    db.prepare(`DELETE FROM shopify_connections WHERE user_id = ? AND id = ?`).run(
-      userId,
-      target.id,
-    );
+    db.prepare(
+      `DELETE FROM shopify_connections
+       WHERE user_id = ? AND device_key = ? AND id = ?`,
+    ).run(userId, scopedDeviceKey, target.id);
     if (target.is_active === 1) {
       const fallback = db
         .prepare(
           `SELECT id FROM shopify_connections
-           WHERE user_id = ?
+           WHERE user_id = ? AND device_key = ?
            ORDER BY updated_at DESC, id DESC
            LIMIT 1`,
         )
-        .get(userId) as { id: number } | undefined;
+        .get(userId, scopedDeviceKey) as { id: number } | undefined;
       if (fallback) {
         db.prepare(
           `UPDATE shopify_connections
            SET is_active = CASE WHEN id = ? THEN 1 ELSE 0 END,
                updated_at = unixepoch()
-           WHERE user_id = ?`,
-        ).run(fallback.id, userId);
+           WHERE user_id = ? AND device_key = ?`,
+        ).run(fallback.id, userId, scopedDeviceKey);
       }
     }
   })();
@@ -822,21 +858,28 @@ export function deleteShopifyConnection(userId: number, connectionId?: number) {
 export function updateShopifyLastTested(
   userId: number,
   testResult: ShopifyConnectionTestResult,
+  deviceKey?: string | null,
   connectionId?: number,
 ) {
   const db = getDb();
+  const scopedDeviceKey = normalizeShopifyDeviceKey(deviceKey);
   const target = connectionId
     ? (db
-        .prepare(`SELECT id FROM shopify_connections WHERE user_id = ? AND id = ?`)
-        .get(userId, connectionId) as { id: number } | undefined)
+        .prepare(
+          `SELECT id FROM shopify_connections
+           WHERE user_id = ? AND device_key = ? AND id = ?`,
+        )
+        .get(userId, scopedDeviceKey, connectionId) as
+        | { id: number }
+        | undefined)
     : (db
         .prepare(
           `SELECT id FROM shopify_connections
-           WHERE user_id = ?
+           WHERE user_id = ? AND device_key = ?
            ORDER BY is_active DESC, updated_at DESC, id DESC
            LIMIT 1`,
         )
-        .get(userId) as { id: number } | undefined);
+        .get(userId, scopedDeviceKey) as { id: number } | undefined);
   if (!target) return;
   db.prepare(
     `UPDATE shopify_connections
@@ -845,29 +888,34 @@ export function updateShopifyLastTested(
          primary_domain = ?,
          last_tested_at = unixepoch(),
          updated_at = unixepoch()
-     WHERE user_id = ? AND id = ?`,
+     WHERE user_id = ? AND device_key = ? AND id = ?`,
   ).run(
     testResult.shopName,
     testResult.myshopifyDomain,
     testResult.primaryDomain,
     userId,
+    scopedDeviceKey,
     target.id,
   );
 }
 
-export function getStoredShopifyToken(userId: number): {
+export function getStoredShopifyToken(
+  userId: number,
+  deviceKey?: string | null,
+): {
   shopDomain: string;
   accessToken: string;
 } | null {
   const db = getDb();
+  const scopedDeviceKey = normalizeShopifyDeviceKey(deviceKey);
   const row = db
     .prepare(
       `SELECT shop_domain, access_token_enc FROM shopify_connections
-       WHERE user_id = ?
+       WHERE user_id = ? AND device_key = ?
        ORDER BY is_active DESC, updated_at DESC, id DESC
        LIMIT 1`,
     )
-    .get(userId) as
+    .get(userId, scopedDeviceKey) as
     | { shop_domain: string; access_token_enc: string }
     | undefined;
   if (!row) return null;
@@ -877,20 +925,24 @@ export function getStoredShopifyToken(userId: number): {
   };
 }
 
-export async function getStoredShopifyAccessToken(userId: number): Promise<{
+export async function getStoredShopifyAccessToken(
+  userId: number,
+  deviceKey?: string | null,
+): Promise<{
   shopDomain: string;
   accessToken: string;
 } | null> {
   const db = getDb();
+  const scopedDeviceKey = normalizeShopifyDeviceKey(deviceKey);
   const row = db
     .prepare(
       `SELECT shop_domain, access_token_enc, auth_mode, client_id
        FROM shopify_connections
-       WHERE user_id = ?
+       WHERE user_id = ? AND device_key = ?
        ORDER BY is_active DESC, updated_at DESC, id DESC
        LIMIT 1`,
     )
-    .get(userId) as
+    .get(userId, scopedDeviceKey) as
     | {
         shop_domain: string;
         access_token_enc: string;
@@ -1195,8 +1247,9 @@ function normalizeShopifyTemplateSuffix(value?: string): string {
 export async function syncShopifyProduct(
   userId: number,
   input: ShopifyProductDraftInput,
+  deviceKey?: string | null,
 ): Promise<ShopifyProductSyncResult> {
-  const stored = await getStoredShopifyAccessToken(userId);
+  const stored = await getStoredShopifyAccessToken(userId, deviceKey);
   if (!stored) throw new Error("尚未绑定 Shopify");
   if (isTestShopifyCredentials(stored.shopDomain, stored.accessToken)) {
     const title = cleanField(input.title) || "BUQIQI Test Product";

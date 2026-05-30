@@ -19,6 +19,7 @@ export interface SessionData {
     clientSecret: string;
     redirectUri: string;
     userId: number;
+    deviceKey?: string;
     createdAt: number;
   };
 }

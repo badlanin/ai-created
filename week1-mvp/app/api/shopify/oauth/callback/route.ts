@@ -7,6 +7,7 @@ import {
   testShopifyConnection,
   verifyShopifyOAuthHmac,
 } from "@/lib/shopify";
+import { normalizeShopifyDeviceKey } from "@/lib/shopify-device";
 
 export const runtime = "nodejs";
 
@@ -56,6 +57,7 @@ export async function GET(req: NextRequest) {
 
     saveShopifyConnection({
       userId: pending.userId,
+      deviceKey: normalizeShopifyDeviceKey(pending.deviceKey),
       shopDomain,
       authMode: "oauth_app",
       accessToken: token.accessToken,

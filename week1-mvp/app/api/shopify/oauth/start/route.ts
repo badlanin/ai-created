@@ -6,12 +6,19 @@ import {
   normalizeShopDomain,
   SHOPIFY_OAUTH_SCOPES,
 } from "@/lib/shopify";
+import {
+  normalizeShopifyDeviceKey,
+  SHOPIFY_DEVICE_HEADER,
+} from "@/lib/shopify-device";
 
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
   try {
     const user = await requireUser();
+    const deviceKey = normalizeShopifyDeviceKey(
+      req.headers.get(SHOPIFY_DEVICE_HEADER),
+    );
     const body = (await req.json()) as {
       shopDomain?: string;
       clientId?: string;
@@ -34,6 +41,7 @@ export async function POST(req: NextRequest) {
       clientSecret,
       redirectUri,
       userId: user.id,
+      deviceKey,
       createdAt: Date.now(),
     };
     await session.save();

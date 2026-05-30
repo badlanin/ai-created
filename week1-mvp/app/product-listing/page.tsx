@@ -52,6 +52,10 @@ import {
   type ProductListingPromptPreset,
   type ProductMediaRole,
 } from "@/lib/product-listing-draft";
+import {
+  normalizeShopifyDeviceKey,
+  SHOPIFY_DEVICE_HEADER,
+} from "@/lib/shopify-device";
 
 type ShopifyBinding = {
   id: number;
@@ -63,12 +67,39 @@ type ShopifyBinding = {
   myshopifyDomain: string | null;
   primaryDomain: string | null;
   isActive: boolean;
+  deviceKey?: string;
   createdAt: number;
   updatedAt: number;
   lastTestedAt: number | null;
 };
 
 const DEFAULT_SHOPIFY_AUTH_MODE: ShopifyBinding["authMode"] = "client_credentials";
+const SHOPIFY_DEVICE_STORAGE_KEY = "buqiqi:shopify-device-key";
+
+function createShopifyDeviceKey(): string {
+  const uuid =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+  return normalizeShopifyDeviceKey(`device:${uuid}`);
+}
+
+function getLocalShopifyDeviceKey(): string {
+  if (typeof window === "undefined") return normalizeShopifyDeviceKey("");
+  const existing = normalizeShopifyDeviceKey(
+    window.localStorage.getItem(SHOPIFY_DEVICE_STORAGE_KEY),
+  );
+  if (existing !== "legacy-global") return existing;
+  const next = createShopifyDeviceKey();
+  window.localStorage.setItem(SHOPIFY_DEVICE_STORAGE_KEY, next);
+  return next;
+}
+
+function shopifyDeviceHeaders(init?: HeadersInit): Headers {
+  const headers = new Headers(init);
+  headers.set(SHOPIFY_DEVICE_HEADER, getLocalShopifyDeviceKey());
+  return headers;
+}
 
 type SyncState = "idle" | "draft" | "syncing" | "synced";
 type SyncAction = "draft" | "publish" | null;
@@ -1487,7 +1518,9 @@ export default function ProductListingPage() {
   }
 
   async function reloadShopifyConnections() {
-    const res = await fetch("/api/shopify/connections");
+    const res = await fetch("/api/shopify/connections", {
+      headers: shopifyDeviceHeaders(),
+    });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || res.statusText);
     applyShopifyConnectionState(data);
@@ -1541,7 +1574,7 @@ export default function ProductListingPage() {
     try {
       const res = await fetch("/api/shopify/test-connection", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: shopifyDeviceHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(
           binding && !accessToken.trim() && !clientId.trim() && !clientSecret.trim()
             ? { useStored: true }
@@ -1587,7 +1620,7 @@ export default function ProductListingPage() {
       if (authMode === "oauth_app") {
         const res = await fetch("/api/shopify/oauth/start", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: shopifyDeviceHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({
             shopDomain,
             clientId,
@@ -1603,7 +1636,7 @@ export default function ProductListingPage() {
 
       const res = await fetch("/api/shopify/connection", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: shopifyDeviceHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           authMode,
           shopDomain,
@@ -1646,7 +1679,7 @@ export default function ProductListingPage() {
       if (newStoreAuthMode === "oauth_app") {
         const res = await fetch("/api/shopify/oauth/start", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: shopifyDeviceHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({
             shopDomain: newStoreShopDomain,
             clientId: newStoreClientId,
@@ -1662,7 +1695,7 @@ export default function ProductListingPage() {
 
       const res = await fetch("/api/shopify/connections", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: shopifyDeviceHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           authMode: newStoreAuthMode,
           shopDomain: newStoreShopDomain,
@@ -1698,7 +1731,7 @@ export default function ProductListingPage() {
     try {
       const res = await fetch(
         `/api/shopify/connections/${connectionId}/activate`,
-        { method: "PATCH" },
+        { method: "PATCH", headers: shopifyDeviceHeaders() },
       );
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
@@ -1727,6 +1760,7 @@ export default function ProductListingPage() {
     try {
       const res = await fetch(`/api/shopify/connections/${connectionId}`, {
         method: "DELETE",
+        headers: shopifyDeviceHeaders(),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
@@ -1758,7 +1792,10 @@ export default function ProductListingPage() {
   async function unbindShopify() {
     setUnbinding(true);
     try {
-      const res = await fetch("/api/shopify/connection", { method: "DELETE" });
+      const res = await fetch("/api/shopify/connection", {
+        method: "DELETE",
+        headers: shopifyDeviceHeaders(),
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
       applyShopifyConnectionState(data);
@@ -1988,7 +2025,7 @@ export default function ProductListingPage() {
     try {
       const res = await fetch("/api/shopify/products", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: shopifyDeviceHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           product: {
             ...form,

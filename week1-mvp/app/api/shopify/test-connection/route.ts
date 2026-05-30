@@ -5,12 +5,19 @@ import {
   testShopifyConnection,
   updateShopifyLastTested,
 } from "@/lib/shopify";
+import {
+  normalizeShopifyDeviceKey,
+  SHOPIFY_DEVICE_HEADER,
+} from "@/lib/shopify-device";
 
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
   try {
     const user = await requireUser();
+    const deviceKey = normalizeShopifyDeviceKey(
+      req.headers.get(SHOPIFY_DEVICE_HEADER),
+    );
     const body = (await req.json()) as {
       authMode?: "access_token" | "oauth_app" | "client_credentials";
       shopDomain?: string;
@@ -32,7 +39,7 @@ export async function POST(req: NextRequest) {
     let clientSecret = String(body.clientSecret || "").trim();
 
     if (body.useStored) {
-      const stored = await getStoredShopifyAccessToken(user.id);
+      const stored = await getStoredShopifyAccessToken(user.id, deviceKey);
       if (!stored) {
         return NextResponse.json(
           { error: "尚未绑定 Shopify" },
@@ -53,7 +60,7 @@ export async function POST(req: NextRequest) {
       clientSecret,
     });
     if (body.useStored) {
-      updateShopifyLastTested(user.id, result);
+      updateShopifyLastTested(user.id, result, deviceKey);
     }
     return NextResponse.json({ ok: true, result });
   } catch (e) {
