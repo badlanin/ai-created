@@ -1,0 +1,383 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+
+type PoseType = "full" | "half" | "closeup";
+type Pose = {
+  id: number;
+  name: string;
+  text: string;
+  type: PoseType;
+  tags: string | null;
+  notes: string | null;
+  is_hero: number;
+  sort_order: number;
+};
+
+const TYPE_LABEL: Record<PoseType, string> = {
+  full: "全身",
+  half: "半身",
+  closeup: "特写",
+};
+
+export default function PosesAdminPage() {
+  const [poses, setPoses] = useState<Pose[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({
+    name: "",
+    text: "",
+    type: "full" as PoseType,
+    tags: "",
+    is_hero: false,
+    sort_order: 0,
+  });
+  const [submitting, setSubmitting] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/poses");
+      if (!res.ok) throw new Error((await res.json()).error || res.statusText);
+      setPoses(await res.json());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const grouped = useMemo(() => {
+    const map: Record<PoseType, Pose[]> = { full: [], half: [], closeup: [] };
+    for (const p of poses) map[p.type].push(p);
+    return map;
+  }, [poses]);
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.name.trim() || !form.text.trim()) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/poses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || res.statusText);
+      setForm({
+        name: "",
+        text: "",
+        type: form.type,
+        tags: "",
+        is_hero: false,
+        sort_order: 0,
+      });
+      setShowForm(false);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleUpdate(id: number, patch: Partial<Pose>) {
+    setError(null);
+    try {
+      const res = await fetch(`/api/poses/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || res.statusText);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function handleDelete(id: number) {
+    if (!confirm("确定删除这个姿势？")) return;
+    try {
+      const res = await fetch(`/api/poses/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error((await res.json()).error || res.statusText);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  return (
+    <main className="max-w-5xl mx-auto p-4 md:p-8">
+      <header className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-fg-primary">姿势库</h1>
+          <p className="mt-1 text-sm text-fg-tertiary">
+            模特摄影的姿势文字描述。按全身 / 半身 / 特写分组，生成时会作为指令注入 Prompt
+          </p>
+        </div>
+        <button
+          onClick={() => setShowForm((v) => !v)}
+          className="px-4 py-2 bg-brand-600 text-white text-sm rounded-md hover:bg-brand-700"
+        >
+          {showForm ? "取消" : "+ 添加姿势"}
+        </button>
+      </header>
+
+      {error && (
+        <div className="mb-4 p-3 bg-[var(--danger-bg)] border border-[rgba(239,68,68,0.3)] text-danger text-sm rounded">
+          {error}
+        </div>
+      )}
+
+      {showForm && (
+        <section className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle p-6 mb-6">
+          <form onSubmit={handleCreate} className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-fg-secondary mb-1">
+                名称 <span className="text-danger">*</span>
+              </label>
+              <input
+                type="text"
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder="如：侧身叉腰"
+                className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-fg-secondary mb-1">
+                类型 <span className="text-danger">*</span>
+              </label>
+              <select
+                value={form.type}
+                onChange={(e) =>
+                  setForm({ ...form, type: e.target.value as PoseType })
+                }
+                className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
+              >
+                <option value="full">全身</option>
+                <option value="half">半身</option>
+                <option value="closeup">特写</option>
+              </select>
+            </div>
+            <div className="col-span-2">
+              <label className="block text-xs text-fg-secondary mb-1">
+                姿势描述 <span className="text-danger">*</span>
+              </label>
+              <textarea
+                value={form.text}
+                onChange={(e) => setForm({ ...form, text: e.target.value })}
+                rows={3}
+                placeholder="用文字详细描述姿势：身体朝向、手的位置、表情、动态感等..."
+                className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-fg-secondary mb-1">标签</label>
+              <input
+                type="text"
+                value={form.tags}
+                onChange={(e) => setForm({ ...form, tags: e.target.value })}
+                placeholder="用逗号分隔：侧身,叉腰"
+                className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-fg-secondary mb-1">排序</label>
+              <input
+                type="number"
+                value={form.sort_order}
+                onChange={(e) =>
+                  setForm({ ...form, sort_order: Number(e.target.value) })
+                }
+                className="w-full px-3 py-2 border border-border-default rounded-md text-sm"
+              />
+            </div>
+            <div className="col-span-2 flex items-center gap-2 text-sm text-fg-secondary">
+              <input
+                id="form-is-hero"
+                type="checkbox"
+                checked={form.is_hero}
+                onChange={(e) =>
+                  setForm({ ...form, is_hero: e.target.checked })
+                }
+              />
+              <label htmlFor="form-is-hero" className="cursor-pointer">
+                标记为「首图（hero）」专用姿势 —— 在批量摄影选姿势时单独分组并支持"🎲 随机首图"
+              </label>
+            </div>
+            <div className="col-span-2">
+              <button
+                type="submit"
+                disabled={submitting}
+                className="px-4 py-2 bg-brand-600 text-white text-sm rounded-md hover:bg-brand-700 disabled:opacity-50"
+              >
+                {submitting ? "保存中..." : "保存"}
+              </button>
+            </div>
+          </form>
+        </section>
+      )}
+
+      {(["full", "half", "closeup"] as PoseType[]).map((type) => (
+        <section
+          key={type}
+          className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle mb-6"
+        >
+          <div className="px-6 py-3 border-b border-border-subtle">
+            <h2 className="text-sm font-semibold text-fg-primary">
+              {TYPE_LABEL[type]}
+              <span className="ml-2 text-fg-tertiary">
+                ({grouped[type].length})
+              </span>
+            </h2>
+          </div>
+          {loading ? (
+            <div className="p-6 text-sm text-fg-tertiary">加载中...</div>
+          ) : grouped[type].length === 0 ? (
+            <div className="p-6 text-sm text-fg-tertiary">暂无</div>
+          ) : (
+            <ul className="divide-y divide-gray-200">
+              {grouped[type].map((p) => (
+                <PoseRow
+                  key={p.id}
+                  pose={p}
+                  onUpdate={handleUpdate}
+                  onDelete={handleDelete}
+                />
+              ))}
+            </ul>
+          )}
+        </section>
+      ))}
+    </main>
+  );
+}
+
+function PoseRow({
+  pose,
+  onUpdate,
+  onDelete,
+}: {
+  pose: Pose;
+  onUpdate: (id: number, patch: Partial<Pose>) => void;
+  onDelete: (id: number) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState({
+    name: pose.name,
+    text: pose.text,
+    tags: pose.tags || "",
+    is_hero: pose.is_hero === 1,
+  });
+
+  if (editing) {
+    return (
+      <li className="px-6 py-4 bg-[var(--brand-50-bg)]">
+        <input
+          className="w-full px-2 py-1 mb-2 border border-border-default rounded text-sm"
+          value={draft.name}
+          onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+        />
+        <textarea
+          className="w-full px-2 py-1 mb-2 border border-border-default rounded text-sm"
+          rows={3}
+          value={draft.text}
+          onChange={(e) => setDraft({ ...draft, text: e.target.value })}
+        />
+        <input
+          className="w-full px-2 py-1 mb-2 border border-border-default rounded text-sm"
+          placeholder="标签（逗号分隔）"
+          value={draft.tags}
+          onChange={(e) => setDraft({ ...draft, tags: e.target.value })}
+        />
+        <label className="flex items-center gap-2 mb-2 text-xs text-fg-secondary">
+          <input
+            type="checkbox"
+            checked={draft.is_hero}
+            onChange={(e) =>
+              setDraft({ ...draft, is_hero: e.target.checked })
+            }
+          />
+          标记为「首图（hero）」
+        </label>
+        <div className="flex gap-2">
+          <button
+            onClick={() => {
+              onUpdate(pose.id, {
+                name: draft.name,
+                text: draft.text,
+                tags: draft.tags,
+                is_hero: draft.is_hero ? 1 : 0,
+              } as Partial<Pose>);
+              setEditing(false);
+            }}
+            className="px-3 py-1 bg-brand-600 text-white text-xs rounded"
+          >
+            保存
+          </button>
+          <button
+            onClick={() => setEditing(false)}
+            className="px-3 py-1 text-fg-secondary text-xs rounded hover:bg-bg-tertiary"
+          >
+            取消
+          </button>
+        </div>
+      </li>
+    );
+  }
+
+  return (
+    <li className="px-6 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-medium text-fg-primary flex items-center gap-1.5">
+            <span>{pose.name}</span>
+            {pose.is_hero === 1 && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-200 font-normal">
+                🌟 首图
+              </span>
+            )}
+          </div>
+          <div className="text-xs text-fg-secondary mt-1 leading-relaxed">
+            {pose.text}
+          </div>
+          {pose.tags && (
+            <div className="flex gap-1 mt-1">
+              {pose.tags.split(",").map((t, i) => (
+                <span
+                  key={i}
+                  className="text-[10px] px-1.5 py-0.5 rounded bg-bg-tertiary text-fg-secondary"
+                >
+                  {t.trim()}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setEditing(true)}
+            className="text-xs text-fg-secondary hover:text-fg-primary px-2 py-1"
+          >
+            编辑
+          </button>
+          <button
+            onClick={() => onDelete(pose.id)}
+            className="text-xs text-danger hover:text-red-800 px-2 py-1"
+          >
+            删除
+          </button>
+        </div>
+      </div>
+    </li>
+  );
+}

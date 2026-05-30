@@ -1,0 +1,30 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# next.js
+.next/
+out/
+build/
+
+# environment
+.env
+.env.local
+.env*.local
+
+# data & logs
+data/
+gcp-credentials/
+*.log
+logs/
+
+# misc
+.DS_Store
+*.pem
+.vscode/
+.idea/
+next-env.d.ts
+
+# typescript
+tsconfig.tsbuildinfo

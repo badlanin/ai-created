@@ -1,0 +1,452 @@
+[
+  {
+    "name": "Sky Blue",
+    "hex": "#CEE7F5",
+    "color_group": "Blues",
+    "color_group_label": "蓝色系",
+    "is_popular": true,
+    "note": "纯净清爽，海滩与夏季婚礼必备。",
+    "sort_order": 1010
+  },
+  {
+    "name": "Mist",
+    "hex": "#D6E0EF",
+    "color_group": "Blues",
+    "color_group_label": "蓝色系",
+    "is_popular": false,
+    "note": "浅薄雾蓝，轻盈自带仙气。",
+    "sort_order": 1020
+  },
+  {
+    "name": "Dusty Blue",
+    "hex": "#8397A6",
+    "color_group": "Blues",
+    "color_group_label": "蓝色系",
+    "is_popular": true,
+    "note": "[TOP 4] 莫兰迪蓝，夏季婚礼转化主力。",
+    "sort_order": 1030
+  },
+  {
+    "name": "Peacock Blue",
+    "hex": "#33A1C9",
+    "color_group": "Blues",
+    "color_group_label": "蓝色系",
+    "is_popular": false,
+    "note": "孔雀蓝，具有异域高级质感。",
+    "sort_order": 1040
+  },
+  {
+    "name": "Steel Blue",
+    "hex": "#4682B4",
+    "color_group": "Blues",
+    "color_group_label": "蓝色系",
+    "is_popular": false,
+    "note": "沉稳低调，极受北美用户青睐。",
+    "sort_order": 1050
+  },
+  {
+    "name": "Slate Blue",
+    "hex": "#6A5ACD",
+    "color_group": "Blues",
+    "color_group_label": "蓝色系",
+    "is_popular": false,
+    "note": "石蓝色，具有极高的搜索权重。",
+    "sort_order": 1060
+  },
+  {
+    "name": "Royal Blue",
+    "hex": "#0F47A9",
+    "color_group": "Blues",
+    "color_group_label": "蓝色系",
+    "is_popular": false,
+    "note": "皇家蓝，适合正式大型庆典。",
+    "sort_order": 1070
+  },
+  {
+    "name": "Stormy",
+    "hex": "#4F5D75",
+    "color_group": "Blues",
+    "color_group_label": "蓝色系",
+    "is_popular": false,
+    "note": "[新加入] 暴风雨蓝，冷淡风高级色。",
+    "sort_order": 1080
+  },
+  {
+    "name": "Navy Blue",
+    "hex": "#182A55",
+    "color_group": "Blues",
+    "color_group_label": "蓝色系",
+    "is_popular": false,
+    "note": "[TOP 10] 正式且显瘦，高客单价常用色。",
+    "sort_order": 1090
+  },
+  {
+    "name": "Dark Navy",
+    "hex": "#000046",
+    "color_group": "Darks",
+    "color_group_label": "深色系",
+    "is_popular": false,
+    "note": "极致显瘦，比黑色更有镜头深度。",
+    "sort_order": 7010
+  },
+  {
+    "name": "Espresso",
+    "hex": "#52443B",
+    "color_group": "Darks",
+    "color_group_label": "深色系",
+    "is_popular": false,
+    "note": "[新加入] 浓缩咖啡色，大地深色天花板。",
+    "sort_order": 7020
+  },
+  {
+    "name": "Black",
+    "hex": "#000000",
+    "color_group": "Darks",
+    "color_group_label": "深色系",
+    "is_popular": true,
+    "note": "[TOP 8] 搜索量最稳定的常青色。",
+    "sort_order": 7030
+  },
+  {
+    "name": "Mint Green",
+    "hex": "#A1D2B4",
+    "color_group": "Greens",
+    "color_group_label": "绿色系",
+    "is_popular": false,
+    "note": "春季清新色，适合年轻伴娘团。",
+    "sort_order": 2010
+  },
+  {
+    "name": "Dusty Sage",
+    "hex": "#A3BF9F",
+    "color_group": "Greens",
+    "color_group_label": "绿色系",
+    "is_popular": true,
+    "note": "[TOP 1] 绝对核心色，全网搜索量冠军。",
+    "sort_order": 2020
+  },
+  {
+    "name": "Sage Green",
+    "hex": "#8A9A5B",
+    "color_group": "Greens",
+    "color_group_label": "绿色系",
+    "is_popular": true,
+    "note": "经典绿色，与 Dusty Sage 互补。",
+    "sort_order": 2030
+  },
+  {
+    "name": "Olive Green",
+    "hex": "#556B2F",
+    "color_group": "Greens",
+    "color_group_label": "绿色系",
+    "is_popular": false,
+    "note": "橄榄绿，针对乡村、农场婚礼场景。",
+    "sort_order": 2040
+  },
+  {
+    "name": "Teal",
+    "hex": "#014A5F",
+    "color_group": "Greens",
+    "color_group_label": "绿色系",
+    "is_popular": false,
+    "note": "蓝绿调，跨季节婚礼万能色。",
+    "sort_order": 2050
+  },
+  {
+    "name": "Peacock",
+    "hex": "#174D4B",
+    "color_group": "Blues",
+    "color_group_label": "蓝色系",
+    "is_popular": false,
+    "note": "孔雀色，具有异域高级质感。",
+    "sort_order": 1100
+  },
+  {
+    "name": "Forest Green",
+    "hex": "#12392E",
+    "color_group": "Greens",
+    "color_group_label": "绿色系",
+    "is_popular": false,
+    "note": "针对森林主题的深度 SEO 优化词。",
+    "sort_order": 2060
+  },
+  {
+    "name": "Emerald",
+    "hex": "#134C36",
+    "color_group": "Greens",
+    "color_group_label": "绿色系",
+    "is_popular": true,
+    "note": "[TOP 7] 高端森林系，冬季正式婚礼首选。",
+    "sort_order": 2070
+  },
+  {
+    "name": "White",
+    "hex": "#FAFAFA",
+    "color_group": "Neutrals",
+    "color_group_label": "中性色系",
+    "is_popular": false,
+    "note": "基础搜索词，引流与过滤必备。",
+    "sort_order": 3010
+  },
+  {
+    "name": "Ivory",
+    "hex": "#F6F5F0",
+    "color_group": "Neutrals",
+    "color_group_label": "中性色系",
+    "is_popular": false,
+    "note": "[TOP 3] 经典象牙白，伴娘服万能色。",
+    "sort_order": 3020
+  },
+  {
+    "name": "Sand",
+    "hex": "#EAE3D6",
+    "color_group": "Neutrals",
+    "color_group_label": "中性色系",
+    "is_popular": false,
+    "note": "哑光沙色，波西米亚风格底色。",
+    "sort_order": 3030
+  },
+  {
+    "name": "Champagne",
+    "hex": "#F1E9D2",
+    "color_group": "Neutrals",
+    "color_group_label": "中性色系",
+    "is_popular": true,
+    "note": "[TOP 2] 暖金色调，比象牙白更显贵气。",
+    "sort_order": 3040
+  },
+  {
+    "name": "Gold",
+    "hex": "#EFCC93",
+    "color_group": "Neutrals",
+    "color_group_label": "中性色系",
+    "is_popular": true,
+    "note": "缎面专属色，雪纺，网眼面料没有这个色",
+    "sort_order": 3050
+  },
+  {
+    "name": "Silver",
+    "hex": "#C0C0C0",
+    "color_group": "Neutrals",
+    "color_group_label": "中性色系",
+    "is_popular": false,
+    "note": "现代感冷色调，冬季婚礼辅助，缎面专用",
+    "sort_order": 3060
+  },
+  {
+    "name": "grey",
+    "hex": "#ADACA9",
+    "color_group": "Neutrals",
+    "color_group_label": "中性色系",
+    "is_popular": false,
+    "note": "灰褐色，高端伴娘服热搜词，雪纺专用",
+    "sort_order": 3070
+  },
+  {
+    "name": "Marigold",
+    "hex": "#D87F03",
+    "color_group": "Neutrals",
+    "color_group_label": "中性色系",
+    "is_popular": false,
+    "note": "提升溢价，替代原有的基础 Yellow。",
+    "sort_order": 3080
+  },
+  {
+    "name": "Mocha",
+    "hex": "#3E2A20",
+    "color_group": "Neutrals",
+    "color_group_label": "中性色系",
+    "is_popular": false,
+    "note": "摩卡色，追求极简与大牌设计感。",
+    "sort_order": 3090
+  },
+  {
+    "name": "Blushing Pink",
+    "hex": "#FDE9E9",
+    "color_group": "Pinks & Reds",
+    "color_group_label": "粉/红色系",
+    "is_popular": true,
+    "note": "[TOP 9] 甜美少女感，春季户外主打。",
+    "sort_order": 4010
+  },
+  {
+    "name": "Petal",
+    "hex": "#FFD6DB",
+    "color_group": "Pinks & Reds",
+    "color_group_label": "粉/红色系",
+    "is_popular": false,
+    "note": "[新加入] 花瓣粉，极浅柔粉，仙气十足。",
+    "sort_order": 4020
+  },
+  {
+    "name": "Coral",
+    "hex": "#FF777F",
+    "color_group": "Pinks & Reds",
+    "color_group_label": "粉/红色系",
+    "is_popular": false,
+    "note": "活力十足，适合夏季与海边婚礼。",
+    "sort_order": 4030
+  },
+  {
+    "name": "Dusty Rose",
+    "hex": "#D3B6B6",
+    "color_group": "Pinks & Reds",
+    "color_group_label": "粉/红色系",
+    "is_popular": false,
+    "note": "复古柔粉，比普通粉更有高级质感。",
+    "sort_order": 4040
+  },
+  {
+    "name": "Rose Gold",
+    "hex": "#B76E79",
+    "color_group": "Pinks & Reds",
+    "color_group_label": "粉/红色系",
+    "is_popular": false,
+    "note": "金属/珠光质感，SEO 热门点击词。",
+    "sort_order": 4050
+  },
+  {
+    "name": "orange",
+    "hex": "#FF8640",
+    "color_group": "Pinks & Reds",
+    "color_group_label": "粉/红色系",
+    "is_popular": false,
+    "note": "杏子橙色",
+    "sort_order": 4060
+  },
+  {
+    "name": "Cinnamon",
+    "hex": "#C35D32",
+    "color_group": "Pinks & Reds",
+    "color_group_label": "粉/红色系",
+    "is_popular": false,
+    "note": "[新加入] 肉桂色，非常高级的大地暖调。",
+    "sort_order": 4070
+  },
+  {
+    "name": "Terracotta",
+    "hex": "#874329",
+    "color_group": "Pinks & Reds",
+    "color_group_label": "粉/红色系",
+    "is_popular": false,
+    "note": "陶土色，适合个性化波西米亚婚礼。",
+    "sort_order": 4080
+  },
+  {
+    "name": "Rust",
+    "hex": "#90322A",
+    "color_group": "Pinks & Reds",
+    "color_group_label": "粉/红色系",
+    "is_popular": true,
+    "note": "[TOP 5] 波西米亚风核心词，秋季必推。",
+    "sort_order": 4090
+  },
+  {
+    "name": "Cabernet",
+    "hex": "#722F37",
+    "color_group": "Pinks & Reds",
+    "color_group_label": "粉/红色系",
+    "is_popular": false,
+    "note": "赋予礼服“红酒”般醇厚的联想。",
+    "sort_order": 4100
+  },
+  {
+    "name": "Burgundy",
+    "hex": "#751E15",
+    "color_group": "Pinks & Reds",
+    "color_group_label": "粉/红色系",
+    "is_popular": true,
+    "note": "酒红色系第一名，秋冬流量入口。",
+    "sort_order": 4110
+  },
+  {
+    "name": "Wine",
+    "hex": "#751E15",
+    "color_group": "Pinks & Reds",
+    "color_group_label": "粉/红色系",
+    "is_popular": false,
+    "note": "基础 SEO 关键词，收割底层流量。",
+    "sort_order": 4120
+  },
+  {
+    "name": "Lilac",
+    "hex": "#E5D6DF",
+    "color_group": "Purples",
+    "color_group_label": "紫色系",
+    "is_popular": true,
+    "note": "丁香紫，浪漫主义色彩，适合浅色系。",
+    "sort_order": 5010
+  },
+  {
+    "name": "Lavender",
+    "hex": "#B59EB0",
+    "color_group": "Purples",
+    "color_group_label": "紫色系",
+    "is_popular": false,
+    "note": "薰衣草紫，大热的田园婚礼色。",
+    "sort_order": 5020
+  },
+  {
+    "name": "Wisteria",
+    "hex": "#C9A0DC",
+    "color_group": "Purples",
+    "color_group_label": "紫色系",
+    "is_popular": false,
+    "note": "[新加入] 紫藤色，梦幻且富有诗意。",
+    "sort_order": 5030
+  },
+  {
+    "name": "Mauve",
+    "hex": "#9289BC",
+    "color_group": "Purples",
+    "color_group_label": "紫色系",
+    "is_popular": false,
+    "note": "烟粉紫，长尾搜索高转化核心词。",
+    "sort_order": 5040
+  },
+  {
+    "name": "Mulberry",
+    "hex": "#772C54",
+    "color_group": "Purples",
+    "color_group_label": "紫色系",
+    "is_popular": false,
+    "note": "桑葚红，差异化极强的贵气色。",
+    "sort_order": 5050
+  },
+  {
+    "name": "Plum",
+    "hex": "#3D0F42",
+    "color_group": "Purples",
+    "color_group_label": "紫色系",
+    "is_popular": false,
+    "note": "深李子色，秋冬季正式晚宴。",
+    "sort_order": 5060
+  },
+  {
+    "name": "Lemon",
+    "hex": "#FFF27B",
+    "color_group": "Yellow",
+    "color_group_label": "黄色系",
+    "is_popular": false,
+    "note": "柠檬黄",
+    "sort_order": 6010
+  },
+  {
+    "name": "Daffodil",
+    "hex": "#FFE9A1",
+    "color_group": "Yellow",
+    "color_group_label": "黄色系",
+    "is_popular": true,
+    "note": "水仙花黄色",
+    "sort_order": 6020
+  },
+  {
+    "name": "Butter",
+    "hex": "#FCDDAE",
+    "color_group": "Yellow",
+    "color_group_label": "黄色系",
+    "is_popular": false,
+    "note": "奶油黄",
+    "sort_order": 6030
+  }
+]

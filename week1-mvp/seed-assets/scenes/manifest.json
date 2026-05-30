@@ -1,0 +1,202 @@
+[
+  {
+    "file": "scenes/single/scene_single_studio_arch_window_01.webp",
+    "name": "拱窗白棚",
+    "tags": "棚拍,拱窗,哥特,白色",
+    "sort_order": 200,
+    "category": "studio",
+    "usage": "single"
+  },
+  {
+    "file": "scenes/single/scene_single_indoor_wood_ivy_01.webp",
+    "name": "暖木板墙",
+    "tags": "室内,木板,藤蔓,暖光",
+    "sort_order": 210,
+    "category": "indoor",
+    "usage": "single"
+  },
+  {
+    "file": "scenes/single/scene_single_indoor_studio_window_01.webp",
+    "name": "木屋画室",
+    "tags": "室内,木屋,大窗,画室",
+    "sort_order": 220,
+    "category": "indoor",
+    "usage": "single"
+  },
+  {
+    "file": "scenes/single/scene_single_indoor_vintage_drape_01.webp",
+    "name": "复古叶纹墙",
+    "tags": "室内,复古,叶纹墙纸,桃帘",
+    "sort_order": 230,
+    "category": "indoor",
+    "usage": "single"
+  },
+  {
+    "file": "scenes/single/scene_single_outdoor_colonnade_01.webp",
+    "name": "古典柱廊",
+    "tags": "户外,柱廊,古典,石材",
+    "sort_order": 240,
+    "category": "outdoor",
+    "usage": "single"
+  },
+  {
+    "file": "scenes/single/scene_single_outdoor_italian_steps_01.webp",
+    "name": "意式石阶",
+    "tags": "户外,意式,石阶,栏杆,暖色",
+    "sort_order": 250,
+    "category": "outdoor",
+    "usage": "single"
+  },
+  {
+    "file": "scenes/single/scene_single_outdoor_oakfence_01.webp",
+    "name": "木栅栏树荫",
+    "tags": "户外,木栅栏,树荫,黄昏",
+    "sort_order": 260,
+    "category": "outdoor",
+    "usage": "single"
+  },
+  {
+    "file": "scenes/single/scene_single_outdoor_manor_01.webp",
+    "name": "英式庄园前庭",
+    "tags": "户外,庄园,常春藤,英式",
+    "sort_order": 270,
+    "category": "outdoor",
+    "usage": "single"
+  },
+  {
+    "file": "scenes/single/scene_single_outdoor_barn_boho_01.webp",
+    "name": "谷仓波西米亚",
+    "tags": "户外,谷仓,波西米亚,鲜花",
+    "sort_order": 280,
+    "category": "outdoor",
+    "usage": "single"
+  },
+  {
+    "file": "scenes/single/scene_single_outdoor_ceremony_night_01.webp",
+    "name": "仪式光廊",
+    "tags": "婚礼,夜景,灯串,仪式",
+    "sort_order": 290,
+    "category": "wedding",
+    "usage": "single"
+  },
+  {
+    "file": "scenes/poster/scene_poster_outdoor_tropical_01.webp",
+    "name": "热带花园",
+    "tags": "户外,花园,芭蕉,蓝天",
+    "sort_order": 300,
+    "category": "garden",
+    "usage": "poster"
+  },
+  {
+    "file": "scenes/poster/scene_poster_garden_hydrangea_01.webp",
+    "name": "绣球花园",
+    "tags": "花园,绣球,夏日,浪漫",
+    "sort_order": 310,
+    "category": "garden",
+    "usage": "poster"
+  },
+  {
+    "file": "scenes/poster/scene_poster_studio_cottage_01.webp",
+    "name": "童话小屋",
+    "tags": "棚拍,小屋,黄墙,welcome",
+    "sort_order": 320,
+    "category": "studio",
+    "usage": "poster"
+  },
+  {
+    "file": "scenes/poster/scene_poster_outdoor_chateau_01.webp",
+    "name": "常春藤古堡",
+    "tags": "户外,古堡,常春藤,法式",
+    "sort_order": 330,
+    "category": "outdoor",
+    "usage": "poster"
+  },
+  {
+    "file": "scenes/poster/scene_poster_outdoor_lakeshore_01.webp",
+    "name": "湖滨礁石",
+    "tags": "户外,湖,礁石,蓝天",
+    "sort_order": 340,
+    "category": "outdoor",
+    "usage": "poster"
+  },
+  {
+    "file": "scenes/poster/scene_poster_garden_fountain_01.webp",
+    "name": "意式庭院",
+    "tags": "花园,意式,喷泉,柏树",
+    "sort_order": 350,
+    "category": "garden",
+    "usage": "poster"
+  },
+  {
+    "file": "scenes/poster/scene_poster_indoor_palazzo_01.webp",
+    "name": "文艺复兴宫殿厅",
+    "tags": "室内,文艺复兴,宫殿,壁画",
+    "sort_order": 360,
+    "category": "indoor",
+    "usage": "poster"
+  },
+  {
+    "file": "scenes/poster/scene_poster_outdoor_cocktail_01.webp",
+    "name": "草坪鸡尾酒会",
+    "tags": "婚礼,草坪,酒会,户外",
+    "sort_order": 370,
+    "category": "wedding",
+    "usage": "poster"
+  },
+  {
+    "file": "scenes/poster/scene_poster_outdoor_civic_01.webp",
+    "name": "古典石质拱门",
+    "tags": "户外,拱门,石质,古典",
+    "sort_order": 380,
+    "category": "outdoor",
+    "usage": "poster"
+  },
+  {
+    "file": "scenes/poster/scene_poster_outdoor_victorian_01.webp",
+    "name": "南方维多利亚住宅",
+    "tags": "户外,维多利亚,白色,蕨",
+    "sort_order": 390,
+    "category": "outdoor",
+    "usage": "poster"
+  },
+  {
+    "file": "scenes/poster/scene_poster_garden_arch_01.webp",
+    "name": "白玫瑰仪式拱门",
+    "tags": "婚礼,仪式,白玫瑰,拱门",
+    "sort_order": 400,
+    "category": "wedding",
+    "usage": "poster"
+  },
+  {
+    "file": "scenes/poster/scene_poster_garden_bougainvillea_01.webp",
+    "name": "三角梅花墙",
+    "tags": "花园,三角梅,粉红",
+    "sort_order": 410,
+    "category": "garden",
+    "usage": "poster"
+  },
+  {
+    "file": "scenes/poster/scene_poster_garden_dinner_01.webp",
+    "name": "花园晚宴长桌",
+    "tags": "花园,晚宴,长桌,黄昏",
+    "sort_order": 420,
+    "category": "garden",
+    "usage": "poster"
+  },
+  {
+    "file": "scenes/poster/scene_poster_indoor_fireplace_01.webp",
+    "name": "法式乡村壁炉",
+    "tags": "室内,法式,壁炉,烛光",
+    "sort_order": 430,
+    "category": "indoor",
+    "usage": "poster"
+  },
+  {
+    "file": "scenes/poster/scene_poster_garden_stepping_01.webp",
+    "name": "石板小径花园",
+    "tags": "花园,石板,小径,茶桌",
+    "sort_order": 440,
+    "category": "garden",
+    "usage": "poster"
+  }
+]
