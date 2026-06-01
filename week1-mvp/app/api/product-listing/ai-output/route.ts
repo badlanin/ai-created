@@ -1,28 +1,22 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { NextRequest, NextResponse } from "next/server";
-import OpenAI from "openai";
 import { requireUser } from "@/lib/auth";
+import { resolveModelId } from "@/lib/ai-models";
+import { buildGenaiClient } from "@/lib/genai-client";
 import { assertWithinBudget } from "@/lib/pricing";
 import { recordUsage } from "@/lib/usage";
-import { DATA_DIR_PATH, getDb } from "@/lib/db";
+import { DATA_DIR_PATH } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const DEFAULT_GPT_TEXT_MODEL = "gpt-5.4";
 const CALL_TIMEOUT_MS = 55_000;
 
 type MediaInput = {
   url?: string;
   alt?: string | null;
   role?: string | null;
-};
-
-type GptSettings = {
-  apiKey: string;
-  baseUrl: string;
-  model: string;
 };
 
 const PRODUCT_LISTING_SYSTEM_PROMPT = `你是专业的 Shopify 礼服商品上架助手。
@@ -57,13 +51,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const settings = readGptSettings();
-    if (!settings.apiKey) {
-      throw new Error(
-        "Gpt API Key 未配置。请去 系统设置 → Gpt API Key 填入 sk-... 后重试。",
-      );
-    }
-    model = settings.model;
+    model = resolveModelId("vision");
     const media = Array.isArray(body.media) ? body.media.slice(0, 8) : [];
     const warnings: string[] = [];
     const images = [];
@@ -100,18 +88,15 @@ export async function POST(req: NextRequest) {
             .join("\n")
         : "当前没有媒体图片，请只根据用户提示词整理可上架内容。";
 
-    const client = await buildGptClient(settings);
+    const client = buildGenaiClient();
     const result = await withTimeout(
-      client.chat.completions.create({
+      client.models.generateContent({
         model,
-        temperature: 0.25,
-        messages: [
-          { role: "system", content: PRODUCT_LISTING_SYSTEM_PROMPT },
+        contents: [
           {
             role: "user",
-            content: [
+            parts: [
               {
-                type: "text",
                 text: `用户提示词：
 ${prompt}
 
@@ -121,22 +106,23 @@ ${mediaSummary}
 请严格根据以上 ${images.length} 张商品图片生成，不要脱离图片内容。`,
               },
               ...images.map((image) => ({
-                type: "image_url" as const,
-                image_url: {
-                  url: `data:${image.mimeType};base64,${image.buffer.toString(
-                    "base64",
-                  )}`,
-                  detail: "high" as const,
+                inlineData: {
+                  mimeType: image.mimeType,
+                  data: image.buffer.toString("base64"),
                 },
               })),
             ],
           },
         ],
+        config: {
+          systemInstruction: PRODUCT_LISTING_SYSTEM_PROMPT,
+          temperature: 0.25,
+        },
       }),
       CALL_TIMEOUT_MS,
     );
 
-    const text = sanitizeText(result.choices[0]?.message?.content || "");
+    const text = sanitizeText(result.text || "");
     if (!text) {
       throw new Error("大模型没有返回可用内容，请调整提示词后重试。");
     }
@@ -146,15 +132,14 @@ ${mediaSummary}
       model,
       feature: "other",
       usageMetadata: {
-        promptTokenCount: result.usage?.prompt_tokens ?? 0,
-        candidatesTokenCount: result.usage?.completion_tokens ?? 0,
-        totalTokenCount: result.usage?.total_tokens ?? 0,
+        promptTokenCount: result.usageMetadata?.promptTokenCount ?? 0,
+        candidatesTokenCount: result.usageMetadata?.candidatesTokenCount ?? 0,
+        totalTokenCount: result.usageMetadata?.totalTokenCount ?? 0,
       },
       success: true,
       notes: {
         kind: "product-listing-ai-output",
-        provider: "gpt",
-        base_url: settings.baseUrl || "openai-default",
+        provider: "gemini",
         media_count: images.length,
         skipped_media_count: Math.max(0, media.length - images.length),
       },
@@ -179,83 +164,17 @@ ${mediaSummary}
         feature: "other",
         success: false,
         error: msg,
-        notes: { kind: "product-listing-ai-output", provider: "gpt" },
+        notes: { kind: "product-listing-ai-output", provider: "gemini" },
       });
     }
     return NextResponse.json({ error: msg }, { status });
   }
 }
 
-function readGptSettings(): GptSettings {
-  try {
-    const db = getDb();
-    const rows = db
-      .prepare(
-        `SELECT key, value FROM settings
-         WHERE key IN ('gpt_api_key', 'gpt_base_url', 'gpt_proxy_url', 'gpt_text_model')`,
-      )
-      .all() as Array<{ key: string; value: string }>;
-    let apiKey = "";
-    let baseUrl = "";
-    let legacyProxyUrl = "";
-    let model =
-      (process.env.GPT_TEXT_MODEL || process.env.gpt_text_model || "").trim() ||
-      DEFAULT_GPT_TEXT_MODEL;
-    for (const row of rows) {
-      if (row.key === "gpt_api_key") apiKey = (row.value || "").trim();
-      if (row.key === "gpt_base_url") baseUrl = (row.value || "").trim();
-      if (row.key === "gpt_proxy_url") legacyProxyUrl = (row.value || "").trim();
-      if (row.key === "gpt_text_model" && row.value.trim()) {
-        model = row.value.trim();
-      }
-    }
-    return {
-      apiKey,
-      baseUrl: normalizeGptBaseUrl(baseUrl || legacyProxyUrl),
-      model,
-    };
-  } catch (err) {
-    console.warn(
-      "[product-listing/ai-output] 读 Gpt settings 失败：",
-      err instanceof Error ? err.message : err,
-    );
-    return { apiKey: "", baseUrl: "", model: DEFAULT_GPT_TEXT_MODEL };
-  }
-}
-
-function buildGptClient(settings: GptSettings): OpenAI {
-  return new OpenAI({
-    apiKey: settings.apiKey,
-    ...(settings.baseUrl ? { baseURL: settings.baseUrl } : {}),
-  });
-}
-
-function normalizeGptBaseUrl(value: string): string {
-  const trimmed = value.trim().replace(/\/+$/, "");
-  if (!trimmed) return "";
-  const withScheme = /^https?:\/\//i.test(trimmed)
-    ? trimmed
-    : `https://${trimmed}`;
-  try {
-    const parsed = new URL(withScheme);
-    if (!parsed.hostname) {
-      throw new Error("缺少主机");
-    }
-    if (parsed.pathname === "" || parsed.pathname === "/") {
-      parsed.pathname = "/v1";
-    }
-    return parsed.toString().replace(/\/+$/, "");
-  } catch (e) {
-    throw new Error(
-      `Gpt 中转站 URL 格式不正确，请填写类似 https://api.example.com/v1 的地址。${e instanceof Error ? e.message : String(e)}`,
-    );
-  }
-}
-
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error("Gpt 调用超时，请稍后重试。")), ms);
+    timer = setTimeout(() => reject(new Error("Gemini 解析超时，请稍后重试。")), ms);
   });
   try {
     return await Promise.race([promise, timeout]);
