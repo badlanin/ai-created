@@ -716,7 +716,14 @@ function BatchPhotoTab({
     (sum, t) => sum + (t.count || 0),
     0,
   );
-  const solidImageCount = solidColorEnabled ? selectedPoseIds.size : 0;
+  const solidImageCount = selectedPoseIds.size;
+  const shouldGenerateSolidPoses = solidImageCount > 0;
+  const effectiveSolidColorHex = solidColorEnabled
+    ? solidColorHex
+    : "#F5F1EA";
+  const effectiveSolidColorName = solidColorEnabled
+    ? solidColorName
+    : "浅米色";
   const totalImageCount =
     solidImageCount + validExtraCount + validExtraTextCount;
   const customSolidColorActive =
@@ -1220,7 +1227,7 @@ function BatchPhotoTab({
     if (!canSubmit) {
       notifyHelpers.warn(
         push,
-        "请完成所有必填项（至少正面图 + 模特 / Prompt；选择纯色时需至少选一个姿势）",
+        "请完成所有必填项（至少正面图 + 模特 / Prompt；再选择姿势或额外场景）",
       );
       return;
     }
@@ -1228,7 +1235,7 @@ function BatchPhotoTab({
       notifyHelpers.warn(
         push,
         "请至少选择一个出图内容",
-        "可以选中一个主背景纯色并选择姿势，或添加额外图片/文字场景。",
+        "可以选择姿势生成主图，或添加额外图片/文字场景。",
       );
       return;
     }
@@ -1254,9 +1261,9 @@ function BatchPhotoTab({
       });
       fd.append("identity_id", String(identityId));
       fd.append("template_id", String(templateId));
-      fd.append("solid_color_enabled", solidColorEnabled ? "1" : "0");
-      fd.append("solid_color_hex", solidColorHex);
-      fd.append("solid_color_name", solidColorName);
+      fd.append("solid_color_enabled", shouldGenerateSolidPoses ? "1" : "0");
+      fd.append("solid_color_hex", effectiveSolidColorHex);
+      fd.append("solid_color_name", effectiveSolidColorName);
       // 场景 + 数量（新版字段名，跟旧 pose 绑定模式区分）
       // 后端按 count 把每张场景展开成 N 个 item，每个 item 走"自由互动"姿势
       const validPairs = extraScenePairs
@@ -1325,7 +1332,7 @@ function BatchPhotoTab({
       setViewMode("task");
       const sceneCount = validPairs.reduce((sum, p) => sum + p.count, 0);
       const textSceneCount = validTextScenes.reduce((sum, t) => sum + t.count, 0);
-      const pureCount = solidColorEnabled ? selectedPoseIds.size : 0;
+      const pureCount = solidImageCount;
       const totalCount = pureCount + sceneCount + textSceneCount;
       notifyHelpers.info(
         push,
@@ -1896,7 +1903,7 @@ function BatchPhotoTab({
             {/* Step 4: 背景设置（纯色 + 可选额外场景）*/}
             <CollapsibleSection
               title="④ 背景设置"
-              description={`${solidColorEnabled ? `纯色 ${solidColorName}` : "未选择纯色"}${
+              description={`${solidColorEnabled ? `纯色 ${solidColorName}` : selectedPoseIds.size > 0 ? "未选择纯色（姿势默认浅米色）" : "未选择纯色"}${
                 validExtraCount + validExtraTextCount > 0
                   ? ` + ${validExtraCount + validExtraTextCount} 张场景`
                   : "（可加 1-2 张场景图）"
@@ -1910,7 +1917,7 @@ function BatchPhotoTab({
                   <div className="text-[12px] text-fg-secondary mb-2 font-medium">
                     🎨 主背景：纯色
                     <span className="ml-2 text-[11px] text-fg-muted font-normal">
-                      可选；选中后所有已选姿势走这个色，作为产品图主背景
+                      可选；不选时姿势图默认浅米色，选中后所有已选姿势走这个色
                     </span>
                   </div>
                   <div className="flex items-center gap-2 flex-wrap">
@@ -2330,21 +2337,17 @@ function BatchPhotoTab({
               title="⑤ 选择姿势"
               description={
                 selectedPoseIds.size > 0
-                  ? solidColorEnabled
-                    ? `已选 ${selectedPoseIds.size}${
-                        validExtraCount + validExtraTextCount > 0
-                          ? ` 纯色 + ${validExtraCount + validExtraTextCount} 场景 = ${totalImageCount} 张图`
-                          : `，将生成 ${solidImageCount} 张图`
-                      }`
-                    : `已选 ${selectedPoseIds.size} 个姿势；主背景纯色未启用`
-                  : solidColorEnabled
-                    ? `按拍摄类型分组，可多选`
-                    : `主背景纯色未启用，姿势不会参与纯色出图`
+                  ? `已选 ${selectedPoseIds.size}${
+                      validExtraCount + validExtraTextCount > 0
+                        ? ` 主图 + ${validExtraCount + validExtraTextCount} 场景 = ${totalImageCount} 张图`
+                        : `，将生成 ${solidImageCount} 张图`
+                    }`
+                  : `按拍摄类型分组，可多选；不选背景色也会用默认浅米色出图`
               }
               badge={
                 selectedPoseIds.size > 0 ? selectedPoseIds.size : undefined
               }
-              defaultOpen={solidColorEnabled && selectedPoseIds.size === 0}
+              defaultOpen={selectedPoseIds.size === 0}
             >
               {poses.length === 0 ? (
                 <EmptyHint href="/admin/poses" label="去添加姿势" />

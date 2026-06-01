@@ -102,7 +102,9 @@ export async function POST(req: NextRequest) {
       solidColorEnabledRaw === "1" ||
       solidColorEnabledRaw === "true";
 
-    if (solidColorEnabled && poseIds.length > 10) {
+    const shouldGenerateSolidPoses = poseIds.length > 0;
+
+    if (poseIds.length > 10) {
       return NextResponse.json(
         { error: "一次最多 10 个姿势" },
         { status: 400 },
@@ -120,6 +122,12 @@ export async function POST(req: NextRequest) {
       typeof solidColorNameRaw === "string" && solidColorNameRaw.trim()
         ? solidColorNameRaw.trim().slice(0, 20)
         : "浅米色";
+    const effectiveSolidColorHex = solidColorEnabled
+      ? solidColorHex
+      : "#F5F1EA";
+    const effectiveSolidColorName = solidColorEnabled
+      ? solidColorName
+      : "浅米色";
 
     // ─── 额外场景 + 数量（可选 ≤2 张场景，每张 1..5 张图）───
     // 新版语义：不再绑定固定 pose，姿势由模型按场景物件自由互动生成。
@@ -350,7 +358,7 @@ export async function POST(req: NextRequest) {
     })();
 
     let poses: PoseRow[] = [];
-    if (solidColorEnabled && poseIds.length > 0) {
+    if (shouldGenerateSolidPoses) {
       const placeholders = poseIds.map(() => "?").join(",");
       poses = db
         .prepare(
@@ -423,9 +431,9 @@ export async function POST(req: NextRequest) {
     }
 
     // ─── items = N 纯色姿势 + 所有图片场景变体 + 所有文字场景变体 ───
-    const solidItems = solidColorEnabled
+    const solidItems = shouldGenerateSolidPoses
       ? poses.map((p) => ({
-          label: `${p.name} · ${solidColorName}`,
+          label: `${p.name} · ${effectiveSolidColorName}`,
         }))
       : [];
     const extraItems = resolvedExtraItems.map((it) => ({
@@ -448,7 +456,7 @@ export async function POST(req: NextRequest) {
     const allItems = [...solidItems, ...extraItems, ...extraTextItemsForJob];
     if (allItems.length === 0) {
       return NextResponse.json(
-        { error: "请至少选择纯色背景或添加一个额外场景" },
+        { error: "请至少选择一个姿势或添加一个额外场景" },
         { status: 400 },
       );
     }
@@ -473,11 +481,11 @@ export async function POST(req: NextRequest) {
         //   0..solid_pose_count: 纯色姿势（poses 表对应）
         //   solid_pose_count..solid+image_scene: 图片场景变体（extra_items[i]）
         //   solid+image_scene..end: 文字场景变体（extra_text_items[i]）
-        solid_color_enabled: solidColorEnabled,
+        solid_color_enabled: shouldGenerateSolidPoses,
         solid_pose_count: solidItems.length,
         image_scene_count: resolvedExtraItems.length,
-        solid_color_hex: solidColorHex,
-        solid_color_name: solidColorName,
+        solid_color_hex: effectiveSolidColorHex,
+        solid_color_name: effectiveSolidColorName,
         extra_items: resolvedExtraItems,
         extra_text_items: resolvedExtraTextItems,
         template: {
