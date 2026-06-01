@@ -102,12 +102,6 @@ export async function POST(req: NextRequest) {
       solidColorEnabledRaw === "1" ||
       solidColorEnabledRaw === "true";
 
-    if (solidColorEnabled && poseIds.length === 0) {
-      return NextResponse.json(
-        { error: "选择纯色背景时请至少选择一个姿势" },
-        { status: 400 },
-      );
-    }
     if (solidColorEnabled && poseIds.length > 10) {
       return NextResponse.json(
         { error: "一次最多 10 个姿势" },
@@ -356,7 +350,7 @@ export async function POST(req: NextRequest) {
     })();
 
     let poses: PoseRow[] = [];
-    if (solidColorEnabled) {
+    if (solidColorEnabled && poseIds.length > 0) {
       const placeholders = poseIds.map(() => "?").join(",");
       poses = db
         .prepare(

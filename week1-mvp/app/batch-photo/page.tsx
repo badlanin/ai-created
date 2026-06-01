@@ -1205,14 +1205,13 @@ function BatchPhotoTab({
   const allExtraPairsConfigured = extraScenePairs.every(
     (p) => p.count >= 1 && p.count <= 5,
   );
-  const solidPoseConfigured = !solidColorEnabled || selectedPoseIds.size > 0;
   const canSubmit =
     !submitting &&
     !analyzing &&
     hasProductImages &&
     identityId !== null &&
     templateId !== null &&
-    solidPoseConfigured &&
+    totalImageCount > 0 &&
     allExtraPairsConfigured &&
     Boolean(modelId);
 
