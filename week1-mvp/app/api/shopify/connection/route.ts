@@ -3,7 +3,9 @@ import { requireUser } from "@/lib/auth";
 import {
   deleteShopifyConnection,
   getShopifyConnection,
+  getShopifyConnections,
   saveShopifyConnection,
+  selectShopifyConnection,
   testShopifyConnection,
 } from "@/lib/shopify";
 import { getShopifyDeviceIdFromRequest } from "@/lib/shopify-device";
@@ -15,7 +17,12 @@ export async function GET(req: NextRequest) {
     const user = await requireUser();
     const deviceId = getShopifyDeviceIdFromRequest(req);
     const connection = getShopifyConnection(user.id, deviceId);
-    return NextResponse.json(connection || { bound: false });
+    const connections = getShopifyConnections(user.id, deviceId);
+    return NextResponse.json(
+      connection
+        ? { ...connection, connection, connections }
+        : { bound: false, connection: null, connections },
+    );
   } catch (e) {
     const status = (e as { status?: number }).status || 500;
     return NextResponse.json(
@@ -66,6 +73,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       connection: getShopifyConnection(user.id, deviceId),
+      connections: getShopifyConnections(user.id, deviceId),
+    });
+  } catch (e) {
+    const status = (e as { status?: number }).status || 500;
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : String(e) },
+      { status },
+    );
+  }
+}
+
+export async function PATCH(req: NextRequest) {
+  try {
+    const user = await requireUser();
+    const deviceId = getShopifyDeviceIdFromRequest(req);
+    const body = (await req.json()) as { shopDomain?: string };
+    selectShopifyConnection(user.id, deviceId, String(body.shopDomain || ""));
+    return NextResponse.json({
+      ok: true,
+      connection: getShopifyConnection(user.id, deviceId),
+      connections: getShopifyConnections(user.id, deviceId),
     });
   } catch (e) {
     const status = (e as { status?: number }).status || 500;
@@ -80,8 +108,15 @@ export async function DELETE(req: NextRequest) {
   try {
     const user = await requireUser();
     const deviceId = getShopifyDeviceIdFromRequest(req);
-    deleteShopifyConnection(user.id, deviceId);
-    return NextResponse.json({ ok: true, bound: false });
+    const shopDomain = req.nextUrl.searchParams.get("shopDomain") || undefined;
+    deleteShopifyConnection(user.id, deviceId, shopDomain);
+    const connection = getShopifyConnection(user.id, deviceId);
+    const connections = getShopifyConnections(user.id, deviceId);
+    return NextResponse.json(
+      connection
+        ? { ok: true, ...connection, connection, connections }
+        : { ok: true, bound: false, connection: null, connections },
+    );
   } catch (e) {
     const status = (e as { status?: number }).status || 500;
     return NextResponse.json(

@@ -11,7 +11,7 @@ export interface DialogProps {
   description?: React.ReactNode;
   footer?: React.ReactNode;
   /** 最大宽度。默认 max-w-md */
-  width?: "sm" | "md" | "lg" | "xl";
+  width?: "sm" | "md" | "lg" | "xl" | "2xl";
   children: React.ReactNode;
 }
 
@@ -20,6 +20,7 @@ const WIDTH_MAP = {
   md: "max-w-md",
   lg: "max-w-lg",
   xl: "max-w-2xl",
+  "2xl": "max-w-4xl",
 };
 
 /**

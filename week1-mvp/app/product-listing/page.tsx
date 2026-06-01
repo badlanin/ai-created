@@ -61,6 +61,7 @@ type ShopifyBinding = {
   shopName: string | null;
   myshopifyDomain: string | null;
   primaryDomain: string | null;
+  isActive: boolean;
   createdAt: number;
   updatedAt: number;
   lastTestedAt: number | null;
@@ -1338,6 +1339,9 @@ function variantPriceForSync(variantPrice: string, productPrice: string): string
 export default function ProductListingPage() {
   const searchParams = useSearchParams();
   const [binding, setBinding] = useState<ShopifyBinding | null>(null);
+  const [shopifyAccounts, setShopifyAccounts] = useState<ShopifyBinding[]>([]);
+  const [shopifyAccountDialogOpen, setShopifyAccountDialogOpen] = useState(false);
+  const [addingShopifyAccount, setAddingShopifyAccount] = useState(false);
   const [authMode, setAuthMode] =
     useState<ShopifyBinding["authMode"]>("oauth_app");
   const [shopDomain, setShopDomain] = useState("xxx.myshopify.com");
@@ -1348,6 +1352,7 @@ export default function ProductListingPage() {
   const [loadingBinding, setLoadingBinding] = useState(true);
   const [testing, setTesting] = useState(false);
   const [savingBinding, setSavingBinding] = useState(false);
+  const [switchingShopifyAccount, setSwitchingShopifyAccount] = useState(false);
   const [unbinding, setUnbinding] = useState(false);
   const [confirmUnbind, setConfirmUnbind] = useState(false);
   const [aiPromptText, setAiPromptText] = useState("");
@@ -1423,10 +1428,20 @@ export default function ProductListingPage() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || res.statusText);
         if (!alive) return;
-        if (data.bound) {
-          setBinding(data as ShopifyBinding);
-          setShopDomain(data.shopDomain);
-          setAuthMode(data.authMode || "access_token");
+        const accounts = Array.isArray(data.connections)
+          ? (data.connections as ShopifyBinding[])
+          : data.bound
+            ? ([data] as ShopifyBinding[])
+            : [];
+        setShopifyAccounts(accounts);
+        const active = (data.connection || (data.bound ? data : null)) as
+          | ShopifyBinding
+          | null;
+        if (active?.shopDomain) {
+          setBinding(active);
+          setShopDomain(active.shopDomain);
+          setAuthMode(active.authMode || "access_token");
+          setAddingShopifyAccount(false);
           setConnectionMessage("已读取 Shopify 绑定信息。");
         } else {
           setBinding(null);
@@ -1446,14 +1461,16 @@ export default function ProductListingPage() {
   }, []);
 
   const tokenPreview = useMemo(() => {
-    if (binding) return binding.tokenPreview;
+    if (binding && !addingShopifyAccount) return binding.tokenPreview;
     const secret = authMode === "access_token" ? accessToken : clientSecret;
     if (!secret.trim()) return "未填写";
     return `••••••••••••${secret.trim().slice(-4)}`;
-  }, [accessToken, authMode, binding, clientSecret]);
+  }, [accessToken, addingShopifyAccount, authMode, binding, clientSecret]);
+
+  const hasActiveShopifyBinding = Boolean(binding) && !addingShopifyAccount;
 
   async function testConnection() {
-    if (!binding && authMode === "oauth_app") {
+    if ((!binding || addingShopifyAccount) && authMode === "oauth_app") {
       setConnectionMessage("新版 Dev Dashboard 应用需要先点击“开始 Shopify 授权”，授权成功后再测试连接。");
       return;
     }
@@ -1464,7 +1481,11 @@ export default function ProductListingPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
-          binding && !accessToken.trim() && !clientId.trim() && !clientSecret.trim()
+          binding &&
+            !addingShopifyAccount &&
+            !accessToken.trim() &&
+            !clientId.trim() &&
+            !clientSecret.trim()
             ? { useStored: true }
             : { authMode, shopDomain, accessToken, clientId, clientSecret },
         ),
@@ -1531,8 +1552,16 @@ export default function ProductListingPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
       setBinding(data.connection as ShopifyBinding);
+      setShopifyAccounts(
+        Array.isArray(data.connections)
+          ? (data.connections as ShopifyBinding[])
+          : data.connection
+            ? [data.connection as ShopifyBinding]
+            : [],
+      );
       setShopDomain(data.connection.shopDomain);
       setAuthMode(data.connection.authMode || authMode);
+      setAddingShopifyAccount(false);
       setAccessToken("");
       setClientId("");
       setClientSecret("");
@@ -1555,34 +1584,62 @@ export default function ProductListingPage() {
     );
   }
 
-  async function switchShopifyAccount() {
-    setUnbinding(true);
+  function beginAddShopifyAccount() {
+    setShopifyAccountDialogOpen(false);
+    setAddingShopifyAccount(true);
+    setAuthMode("oauth_app");
+    setShopDomain("xxx.myshopify.com");
+    setAccessToken("");
+    setClientId("");
+    setClientSecret("");
+    setConnectionMessage("请填写新 Shopify 店铺信息后授权。");
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }
+
+  async function selectShopifyAccount(shopDomain: string) {
+    if (!shopDomain || shopDomain === binding?.shopDomain) {
+      setShopifyAccountDialogOpen(false);
+      return;
+    }
+    setSwitchingShopifyAccount(true);
     try {
       const res = await fetchWithShopifyDevice("/api/shopify/connection", {
-        method: "DELETE",
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shopDomain }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
-      setBinding(null);
-      setAuthMode("oauth_app");
-      setShopDomain("xxx.myshopify.com");
-      setAccessToken("");
-      setClientId("");
-      setClientSecret("");
-      setConnectionMessage("已切换到添加 Shopify 账户，请填写新店铺信息后授权。");
-      setConfirmUnbind(false);
+      const active = data.connection as ShopifyBinding;
+      setBinding(active);
+      setShopifyAccounts(
+        Array.isArray(data.connections)
+          ? (data.connections as ShopifyBinding[])
+          : active
+            ? [active]
+            : [],
+      );
+      if (active) {
+        setShopDomain(active.shopDomain);
+        setAuthMode(active.authMode || "access_token");
+        setConnectionMessage(`已切换到 Shopify 店铺：${active.shopDomain}`);
+      }
+      setAddingShopifyAccount(false);
+      setShopifyAccountDialogOpen(false);
       setSyncState("idle");
       setShopifyProductUrl(null);
       setSyncWarnings([]);
-      setLastAction("Shopify 账户已切换，当前商品草稿和媒体图片已保留。");
-      if (typeof window !== "undefined") {
-        window.scrollTo({ top: 0, behavior: "smooth" });
-      }
-    } catch (e) {
-      setConnectionMessage(e instanceof Error ? e.message : String(e));
+    } catch (e: unknown) {
+      setConnectionMessage(String(e));
     } finally {
-      setUnbinding(false);
+      setSwitchingShopifyAccount(false);
     }
+  }
+
+  function switchShopifyAccount() {
+    setShopifyAccountDialogOpen(true);
   }
 
   async function unbindShopify() {
@@ -1593,6 +1650,23 @@ export default function ProductListingPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
+      const active = data.connection as ShopifyBinding | null;
+      setShopifyAccounts(
+        Array.isArray(data.connections) ? (data.connections as ShopifyBinding[]) : [],
+      );
+      if (active) {
+        setBinding(active);
+        setShopDomain(active.shopDomain);
+        setAuthMode(active.authMode || "access_token");
+        setAccessToken("");
+        setClientId("");
+        setClientSecret("");
+        setConnectionMessage(`已解除当前店铺绑定，已切换到：${active.shopDomain}`);
+        setConfirmUnbind(false);
+        setSyncState("idle");
+        setLastAction("Shopify 已切换到下一个已绑定店铺");
+        return;
+      }
       setBinding(null);
       setAccessToken("");
       setClientId("");
@@ -1973,8 +2047,8 @@ export default function ProductListingPage() {
             </p>
           </div>
         </div>
-        <Chip tone={binding ? "success" : "warn"}>
-          {binding ? "Shopify 已绑定" : "待绑定"}
+        <Chip tone={hasActiveShopifyBinding ? "success" : "warn"}>
+          {hasActiveShopifyBinding ? "Shopify 已绑定" : "待绑定"}
         </Chip>
       </header>
 
@@ -1982,7 +2056,7 @@ export default function ProductListingPage() {
         <Card padding="lg">
           <div className="text-sm text-fg-tertiary">正在读取 Shopify 绑定状态...</div>
         </Card>
-      ) : !binding ? (
+      ) : !hasActiveShopifyBinding ? (
         <UnboundView
           authMode={authMode}
           shopDomain={shopDomain}
@@ -2005,7 +2079,7 @@ export default function ProductListingPage() {
       ) : (
         <div className="space-y-4">
           <BoundStatusCard
-            binding={binding}
+            binding={binding as ShopifyBinding}
             connectionMessage={connectionMessage}
             testing={testing}
             unbinding={unbinding}
@@ -2100,6 +2174,76 @@ export default function ProductListingPage() {
           </div>
         </div>
       )}
+
+      <Dialog
+        open={shopifyAccountDialogOpen}
+        onClose={() => setShopifyAccountDialogOpen(false)}
+        title="切换 Shopify 店铺"
+        description="选择本机已绑定店铺，或添加新的店铺授权。"
+        width="2xl"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setShopifyAccountDialogOpen(false)}>
+              关闭
+            </Button>
+            <Button
+              variant="primary"
+              leftIcon={<Store size={14} />}
+              onClick={beginAddShopifyAccount}
+            >
+              添加店铺
+            </Button>
+          </>
+        }
+      >
+        <div className="max-h-[392px] overflow-y-auto pr-1">
+          {shopifyAccounts.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {shopifyAccounts.map((account) => {
+                const active = account.isActive || account.shopDomain === binding?.shopDomain;
+                return (
+                  <button
+                    key={account.shopDomain}
+                    type="button"
+                    disabled={switchingShopifyAccount}
+                    onClick={() =>
+                      active
+                        ? setShopifyAccountDialogOpen(false)
+                        : selectShopifyAccount(account.shopDomain)
+                    }
+                    className={`w-full min-h-[86px] rounded-md border px-3 py-2.5 text-left transition ${
+                      active
+                        ? "border-emerald-200 bg-emerald-50"
+                        : "border-border-subtle bg-white hover:bg-bg-tertiary"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-fg-primary truncate">
+                          {account.shopName || account.shopDomain}
+                        </div>
+                        <div className="mt-1 text-[11px] text-fg-tertiary truncate">
+                          {account.shopDomain}
+                        </div>
+                        {account.primaryDomain ? (
+                          <div className="mt-0.5 text-[11px] text-fg-tertiary truncate">
+                            主域名：{account.primaryDomain}
+                          </div>
+                        ) : null}
+                      </div>
+                      {active ? <Chip tone="success">当前</Chip> : null}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rounded-md border border-dashed border-border-subtle bg-bg-tertiary px-3 py-4 text-sm text-fg-tertiary">
+              当前电脑还没有已绑定的 Shopify 店铺。
+            </div>
+          )}
+        </div>
+      </Dialog>
 
       <Dialog
         open={confirmUnbind}

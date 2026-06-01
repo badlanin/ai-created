@@ -387,10 +387,11 @@ function migrate(db: Database.Database) {
       shop_name        TEXT,
       myshopify_domain TEXT,
       primary_domain   TEXT,
+      is_active        INTEGER NOT NULL DEFAULT 1,
       created_at       INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at       INTEGER NOT NULL DEFAULT (unixepoch()),
       last_tested_at   INTEGER,
-      UNIQUE(user_id, device_id)
+      UNIQUE(user_id, device_id, shop_domain)
     );
   `);
 
@@ -421,7 +422,14 @@ function migrate(db: Database.Database) {
   );
   ensureColumn(db, "shopify_connections", "client_id", "TEXT");
   ensureColumn(db, "shopify_connections", "token_expires_at", "INTEGER");
+  ensureColumn(
+    db,
+    "shopify_connections",
+    "is_active",
+    "INTEGER NOT NULL DEFAULT 1",
+  );
   migrateShopifyConnectionsDeviceScope(db);
+  migrateShopifyConnectionsMultiAccount(db);
   // 新增索引
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_models_category ON models(kind, category, sort_order);
@@ -430,7 +438,8 @@ function migrate(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_poses_hero ON poses(is_hero, sort_order);
     CREATE INDEX IF NOT EXISTS idx_scenes_usage ON scenes(usage, sort_order);
     CREATE INDEX IF NOT EXISTS idx_shopify_connections_user ON shopify_connections(user_id);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_shopify_connections_user_device ON shopify_connections(user_id, device_id);
+    CREATE INDEX IF NOT EXISTS idx_shopify_connections_user_device ON shopify_connections(user_id, device_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_shopify_connections_user_device_shop ON shopify_connections(user_id, device_id, shop_domain);
   `);
 
   // 启动时恢复：把被进程重启打断的 item 标为 failed
@@ -537,10 +546,11 @@ function migrateShopifyConnectionsDeviceScope(db: Database.Database) {
       shop_name        TEXT,
       myshopify_domain TEXT,
       primary_domain   TEXT,
+      is_active        INTEGER NOT NULL DEFAULT 1,
       created_at       INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at       INTEGER NOT NULL DEFAULT (unixepoch()),
       last_tested_at   INTEGER,
-      UNIQUE(user_id, device_id)
+      UNIQUE(user_id, device_id, shop_domain)
     );
 
     INSERT OR IGNORE INTO shopify_connections_v2 (
@@ -554,6 +564,7 @@ function migrateShopifyConnectionsDeviceScope(db: Database.Database) {
       shop_name,
       myshopify_domain,
       primary_domain,
+      is_active,
       created_at,
       updated_at,
       last_tested_at
@@ -569,6 +580,7 @@ function migrateShopifyConnectionsDeviceScope(db: Database.Database) {
       shop_name,
       myshopify_domain,
       primary_domain,
+      1,
       created_at,
       updated_at,
       last_tested_at
@@ -578,6 +590,112 @@ function migrateShopifyConnectionsDeviceScope(db: Database.Database) {
     ALTER TABLE shopify_connections_v2 RENAME TO shopify_connections;
   `);
   console.log("[db] migrated shopify_connections to user + device scope");
+}
+
+function migrateShopifyConnectionsMultiAccount(db: Database.Database) {
+  const indexes = db
+    .prepare(`PRAGMA index_list(shopify_connections)`)
+    .all() as Array<{ name: string; unique: number }>;
+
+  const getIndexColumns = (name: string) =>
+    (
+      db.prepare(`PRAGMA index_info(${JSON.stringify(name)})`).all() as Array<{
+        name: string;
+      }>
+    ).map((c) => c.name);
+
+  const hasLegacyUnique = indexes.some((index) => {
+    if (!index.unique) return false;
+    const cols = getIndexColumns(index.name);
+    return cols.length === 2 && cols[0] === "user_id" && cols[1] === "device_id";
+  });
+  const hasShopUnique = indexes.some((index) => {
+    if (!index.unique) return false;
+    const cols = getIndexColumns(index.name);
+    return (
+      cols.length === 3 &&
+      cols[0] === "user_id" &&
+      cols[1] === "device_id" &&
+      cols[2] === "shop_domain"
+    );
+  });
+
+  if (!hasLegacyUnique && hasShopUnique) return;
+
+  db.exec(`
+    DROP TABLE IF EXISTS shopify_connections_v3;
+    CREATE TABLE shopify_connections_v3 (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      device_id        TEXT NOT NULL,
+      shop_domain      TEXT NOT NULL,
+      access_token_enc TEXT NOT NULL,
+      auth_mode        TEXT NOT NULL DEFAULT 'access_token',
+      client_id        TEXT,
+      token_expires_at INTEGER,
+      shop_name        TEXT,
+      myshopify_domain TEXT,
+      primary_domain   TEXT,
+      is_active        INTEGER NOT NULL DEFAULT 1,
+      created_at       INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at       INTEGER NOT NULL DEFAULT (unixepoch()),
+      last_tested_at   INTEGER,
+      UNIQUE(user_id, device_id, shop_domain)
+    );
+
+    INSERT OR IGNORE INTO shopify_connections_v3 (
+      user_id,
+      device_id,
+      shop_domain,
+      access_token_enc,
+      auth_mode,
+      client_id,
+      token_expires_at,
+      shop_name,
+      myshopify_domain,
+      primary_domain,
+      is_active,
+      created_at,
+      updated_at,
+      last_tested_at
+    )
+    SELECT
+      user_id,
+      device_id,
+      shop_domain,
+      access_token_enc,
+      auth_mode,
+      client_id,
+      token_expires_at,
+      shop_name,
+      myshopify_domain,
+      primary_domain,
+      COALESCE(is_active, 1),
+      created_at,
+      updated_at,
+      last_tested_at
+    FROM shopify_connections;
+
+    UPDATE shopify_connections_v3 SET is_active = 0;
+    UPDATE shopify_connections_v3
+       SET is_active = 1
+     WHERE id IN (
+       SELECT id
+         FROM shopify_connections_v3 AS chosen
+        WHERE chosen.id = (
+          SELECT candidate.id
+            FROM shopify_connections_v3 AS candidate
+           WHERE candidate.user_id = chosen.user_id
+             AND candidate.device_id = chosen.device_id
+           ORDER BY candidate.is_active DESC, candidate.updated_at DESC, candidate.id DESC
+           LIMIT 1
+        )
+     );
+
+    DROP TABLE shopify_connections;
+    ALTER TABLE shopify_connections_v3 RENAME TO shopify_connections;
+  `);
+  console.log("[db] migrated shopify_connections to multi-account scope");
 }
 
 /**
