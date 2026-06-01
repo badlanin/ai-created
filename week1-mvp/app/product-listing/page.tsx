@@ -3232,6 +3232,23 @@ function ShopifyCategoryPicker({
     setQuery("");
   }
 
+  function hasCategoryChildren(category: ShopifyTaxonomyCategoryOption) {
+    return !category.isLeaf || category.childrenCount > 0;
+  }
+
+  function enterCategory(category: ShopifyTaxonomyCategoryOption) {
+    setPath((prev) => [...prev, category]);
+    setQuery("");
+  }
+
+  function handleCategoryClick(category: ShopifyTaxonomyCategoryOption) {
+    if (!searchText && hasCategoryChildren(category)) {
+      enterCategory(category);
+      return;
+    }
+    chooseCategory(category);
+  }
+
   return (
     <div ref={rootRef} className="relative">
       <div className="mb-1 text-xs text-gray-700">类别</div>
@@ -3304,7 +3321,7 @@ function ShopifyCategoryPicker({
                 className="rounded px-1.5 py-0.5 hover:bg-gray-100 hover:text-gray-800"
                 onClick={() => setPath([])}
               >
-                全部类别
+                返回所有类别
               </button>
               {path.map((category, index) => (
                 <span key={category.id} className="inline-flex items-center gap-1">
@@ -3330,7 +3347,7 @@ function ShopifyCategoryPicker({
               <div className="px-3 py-3 text-xs text-amber-600">{error}</div>
             ) : items.length ? (
               items.map((category) => {
-                const hasChildren = !category.isLeaf || category.childrenCount > 0;
+                const hasChildren = hasCategoryChildren(category);
                 const label = searchText
                   ? getShopifyCategoryOptionFullLabel(category)
                   : getShopifyCategoryOptionLabel(category);
@@ -3342,7 +3359,12 @@ function ShopifyCategoryPicker({
                     <button
                       type="button"
                       className="min-w-0 flex-1 px-3 py-2 text-left text-sm text-gray-800"
-                      onClick={() => chooseCategory(category)}
+                      onClick={() => handleCategoryClick(category)}
+                      aria-label={
+                        !searchText && hasChildren
+                          ? `进入 ${label} 子类别`
+                          : `选择 ${label}`
+                      }
                     >
                       <span className="block truncate">
                         {label}
@@ -3352,7 +3374,7 @@ function ShopifyCategoryPicker({
                       <button
                         type="button"
                         className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800"
-                        onClick={() => setPath((prev) => [...prev, category])}
+                        onClick={() => enterCategory(category)}
                         aria-label={`查看 ${label} 子类别`}
                       >
                         <ArrowRight size={14} />
