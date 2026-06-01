@@ -98,11 +98,10 @@ export async function POST(req: NextRequest) {
 
     const solidColorEnabledRaw = formData.get("solid_color_enabled");
     const solidColorEnabled =
-      solidColorEnabledRaw === null ||
       solidColorEnabledRaw === "1" ||
       solidColorEnabledRaw === "true";
 
-    const shouldGenerateSolidPoses = poseIds.length > 0;
+    const shouldGenerateSolidPoses = solidColorEnabled && poseIds.length > 0;
 
     if (poseIds.length > 10) {
       return NextResponse.json(
@@ -111,7 +110,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ─── 纯色背景（可选，默认浅米）───
+    // ─── 纯色背景（可选；未选中时不生成纯色图）───
     const solidColorHexRaw = formData.get("solid_color_hex");
     const solidColorHex = (() => {
       const v = typeof solidColorHexRaw === "string" ? solidColorHexRaw.trim() : "";

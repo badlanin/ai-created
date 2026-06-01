@@ -339,7 +339,7 @@ function BatchPhotoTab({
   // - extraScenePairs：额外场景 + 数量（≤ 2 张场景，每张出 count 张图）
   //   旧版本：每张场景必须绑定一个固定 pose；新版本改成"选场景 + 选数量"，
   //   姿势完全交给模型按场景物件自由互动生成（跟 v3 prompt 配合）
-  const [solidColorEnabled, setSolidColorEnabled] = useState<boolean>(true);
+  const [solidColorEnabled, setSolidColorEnabled] = useState<boolean>(false);
   const [solidColorHex, setSolidColorHex] = useState<string>("#F5F1EA");
   const [solidColorName, setSolidColorName] = useState<string>("浅米色");
   const [extraScenePairs, setExtraScenePairs] = useState<
@@ -716,8 +716,9 @@ function BatchPhotoTab({
     (sum, t) => sum + (t.count || 0),
     0,
   );
-  const solidImageCount = selectedPoseIds.size;
-  const shouldGenerateSolidPoses = solidImageCount > 0;
+  const selectedPoseCount = selectedPoseIds.size;
+  const shouldGenerateSolidPoses = solidColorEnabled && selectedPoseCount > 0;
+  const solidImageCount = shouldGenerateSolidPoses ? selectedPoseCount : 0;
   const effectiveSolidColorHex = solidColorEnabled
     ? solidColorHex
     : "#F5F1EA";
@@ -1903,7 +1904,7 @@ function BatchPhotoTab({
             {/* Step 4: 背景设置（纯色 + 可选额外场景）*/}
             <CollapsibleSection
               title="④ 背景设置"
-              description={`${solidColorEnabled ? `纯色 ${solidColorName}` : selectedPoseIds.size > 0 ? "未选择纯色（姿势默认浅米色）" : "未选择纯色"}${
+              description={`${solidColorEnabled ? `纯色 ${solidColorName}` : "未选择纯色"}${
                 validExtraCount + validExtraTextCount > 0
                   ? ` + ${validExtraCount + validExtraTextCount} 张场景`
                   : "（可加 1-2 张场景图）"
@@ -1917,7 +1918,7 @@ function BatchPhotoTab({
                   <div className="text-[12px] text-fg-secondary mb-2 font-medium">
                     🎨 主背景：纯色
                     <span className="ml-2 text-[11px] text-fg-muted font-normal">
-                      可选；不选时姿势图默认浅米色，选中后所有已选姿势走这个色
+                      可选；不选时不会生成纯色主背景图，选中后所有已选姿势走这个色
                     </span>
                   </div>
                   <div className="flex items-center gap-2 flex-wrap">
@@ -2339,10 +2340,14 @@ function BatchPhotoTab({
                 selectedPoseIds.size > 0
                   ? `已选 ${selectedPoseIds.size}${
                       validExtraCount + validExtraTextCount > 0
-                        ? ` 主图 + ${validExtraCount + validExtraTextCount} 场景 = ${totalImageCount} 张图`
-                        : `，将生成 ${solidImageCount} 张图`
+                        ? solidColorEnabled
+                          ? ` 主图 + ${validExtraCount + validExtraTextCount} 场景 = ${totalImageCount} 张图`
+                          : ` 姿势（未选主背景色，不生成纯色图） + ${validExtraCount + validExtraTextCount} 场景 = ${totalImageCount} 张图`
+                        : solidColorEnabled
+                          ? `，将生成 ${solidImageCount} 张图`
+                          : "，未选择主背景色，不生成纯色图"
                     }`
-                  : `按拍摄类型分组，可多选；不选背景色也会用默认浅米色出图`
+                  : `按拍摄类型分组，可多选；需要选中主背景色才会生成纯色姿势图`
               }
               badge={
                 selectedPoseIds.size > 0 ? selectedPoseIds.size : undefined

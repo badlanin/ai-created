@@ -353,6 +353,43 @@ type ShopifyTaxonomyCategoryAttributesResponse = {
   errors?: Array<{ message?: string }>;
 };
 
+export type ShopifyTaxonomyCategoryOption = {
+  id: string;
+  name: string;
+  fullName: string;
+  parentId: string | null;
+  level: number;
+  isRoot: boolean;
+  isLeaf: boolean;
+  childrenCount: number;
+};
+
+export type ShopifyTaxonomyCategoryOptionsResult = {
+  categories: ShopifyTaxonomyCategoryOption[];
+  warnings: string[];
+};
+
+type ShopifyTaxonomyCategoriesResponse = {
+  data?: {
+    taxonomy?: {
+      categories?: {
+        nodes?: Array<{
+          id: string;
+          name?: string | null;
+          fullName?: string | null;
+          parentId?: string | null;
+          level?: number | null;
+          isRoot?: boolean | null;
+          isLeaf?: boolean | null;
+          isArchived?: boolean | null;
+          childrenIds?: string[] | null;
+        }>;
+      };
+    };
+  };
+  errors?: Array<{ message?: string }>;
+};
+
 type ShopifyVariantUpdateResponse = {
   data?: {
     productVariantsBulkUpdate?: {
@@ -1348,6 +1385,84 @@ export async function getShopifyCategoryMetafieldOptions(
     fields,
     warnings,
   };
+}
+
+export async function getShopifyTaxonomyCategoryOptions(
+  userId: number,
+  deviceId: string,
+  opts: { search?: string; childrenOf?: string } = {},
+): Promise<ShopifyTaxonomyCategoryOptionsResult> {
+  const stored = await getStoredShopifyAccessToken(userId, deviceId);
+  if (!stored) throw new Error("尚未绑定 Shopify");
+
+  if (isTestShopifyCredentials(stored.shopDomain, stored.accessToken)) {
+    return {
+      categories: [],
+      warnings: ["当前使用测试密钥，Shopify 类别需要真实店铺读取。"],
+    };
+  }
+
+  const warnings: string[] = [];
+  const search = cleanField(opts.search).slice(0, 80);
+  const childrenOf = cleanField(opts.childrenOf);
+  const variables: Record<string, unknown> = {};
+  const args = ["first: 250"];
+
+  if (search) {
+    args.push("search: $search");
+    variables.search = search;
+  } else if (childrenOf && isShopifyTaxonomyCategoryId(childrenOf)) {
+    args.push("childrenOf: $childrenOf");
+    variables.childrenOf = childrenOf;
+  }
+
+  const json = await shopifyGraphql<ShopifyTaxonomyCategoriesResponse>(
+    stored.shopDomain,
+    stored.accessToken,
+    `query BuqiqiShopifyTaxonomyCategories${search ? "($search: String!)" : variables.childrenOf ? "($childrenOf: ID!)" : ""} {
+      taxonomy {
+        categories(${args.join(", ")}) {
+          nodes {
+            id
+            name
+            fullName
+            parentId
+            level
+            isRoot
+            isLeaf
+            isArchived
+            childrenIds
+          }
+        }
+      }
+    }`,
+    variables,
+  );
+  const topLevelErrors = formatGraphqlMessages(json.errors);
+  if (topLevelErrors) {
+    warnings.push(`读取 Shopify 类别失败：${topLevelErrors}`);
+    return { categories: [], warnings };
+  }
+
+  const categories = (json.data?.taxonomy?.categories?.nodes || [])
+    .filter((node) => node.id && !node.isArchived)
+    .map((node) => {
+      const name = cleanField(node.name) || cleanField(node.fullName) || node.id;
+      const fullName = cleanField(node.fullName) || name;
+      const childrenCount = node.childrenIds?.length || 0;
+      return {
+        id: node.id,
+        name,
+        fullName,
+        parentId: cleanField(node.parentId) || null,
+        level: Number.isFinite(node.level) ? Number(node.level) : 0,
+        isRoot: Boolean(node.isRoot),
+        isLeaf: node.isLeaf === true || childrenCount === 0,
+        childrenCount,
+      } satisfies ShopifyTaxonomyCategoryOption;
+    });
+
+  return { categories, warnings };
 }
 
 export async function syncShopifyProduct(

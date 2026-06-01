@@ -141,6 +141,17 @@ type ShopifyCategoryMetafieldFields = Partial<
   Record<CategoryMetafieldFormKey, ShopifyCategoryMetafieldField>
 >;
 
+type ShopifyTaxonomyCategoryOption = {
+  id: string;
+  name: string;
+  fullName: string;
+  parentId: string | null;
+  level: number;
+  isRoot: boolean;
+  isLeaf: boolean;
+  childrenCount: number;
+};
+
 type ShopifySyncResult = {
   productId: string;
   title: string;
@@ -3104,6 +3115,229 @@ function getCategoryMetafieldSourceLabel(
   return "Shopify 当前分类";
 }
 
+function ShopifyCategoryPicker({
+  valueId,
+  valueName,
+  onChange,
+}: {
+  valueId: string;
+  valueName: string;
+  onChange: (category: { id: string; name: string }) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [path, setPath] = useState<ShopifyTaxonomyCategoryOption[]>([]);
+  const [items, setItems] = useState<ShopifyTaxonomyCategoryOption[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const selected =
+    valueId && valueId !== SHOPIFY_UNCATEGORIZED_CATEGORY_ID
+      ? valueName || "已选择类别"
+      : "";
+  const parent = path.length ? path[path.length - 1] : null;
+  const searchText = query.trim();
+
+  useEffect(() => {
+    if (!open) return;
+    function handlePointerDown(e: MouseEvent) {
+      if (!rootRef.current?.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams();
+      if (searchText) {
+        params.set("search", searchText);
+      } else if (parent?.id) {
+        params.set("childrenOf", parent.id);
+      }
+      setLoading(true);
+      setError("");
+      fetchWithShopifyDevice(`/api/shopify/categories?${params.toString()}`, {
+        signal: controller.signal,
+      })
+        .then(async (res) => {
+          const data = (await res.json()) as {
+            categories?: ShopifyTaxonomyCategoryOption[];
+            error?: string;
+          };
+          if (!res.ok) throw new Error(data.error || res.statusText);
+          setItems(data.categories || []);
+        })
+        .catch((e) => {
+          if (controller.signal.aborted) return;
+          setItems([]);
+          setError(e instanceof Error ? e.message : String(e));
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setLoading(false);
+        });
+    }, searchText ? 180 : 0);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [open, parent?.id, searchText]);
+
+  function chooseCategory(category: ShopifyTaxonomyCategoryOption) {
+    onChange({
+      id: category.id,
+      name: category.fullName || category.name,
+    });
+    setOpen(false);
+    setQuery("");
+  }
+
+  return (
+    <div ref={rootRef} className="relative">
+      <div className="mb-1 text-xs text-gray-700">类别</div>
+      <button
+        type="button"
+        className="flex min-h-9 w-full items-center gap-2 rounded-md border border-gray-300 bg-white px-2 text-left text-sm text-gray-900 shadow-sm transition-colors hover:border-gray-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+        onClick={() => setOpen((current) => !current)}
+      >
+        {selected ? (
+          <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded bg-gray-100 px-2 py-1 text-xs text-gray-800">
+            <span className="min-w-0 truncate">{selected}</span>
+            <span
+              role="button"
+              tabIndex={0}
+              className="rounded text-gray-500 hover:text-gray-800"
+              onClick={(e) => {
+                e.stopPropagation();
+                onChange({
+                  id: SHOPIFY_UNCATEGORIZED_CATEGORY_ID,
+                  name: "未分类",
+                });
+                setPath([]);
+                setQuery("");
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onChange({
+                    id: SHOPIFY_UNCATEGORIZED_CATEGORY_ID,
+                    name: "未分类",
+                  });
+                  setPath([]);
+                  setQuery("");
+                }
+              }}
+              aria-label="清除类别"
+            >
+              <X size={13} />
+            </span>
+          </span>
+        ) : (
+          <span className="flex-1 text-gray-500">未分类</span>
+        )}
+        <ChevronDown
+          size={15}
+          className={`ml-auto shrink-0 text-gray-500 transition-transform ${
+            open ? "rotate-180" : ""
+          }`}
+        />
+      </button>
+
+      {open ? (
+        <div className="absolute z-40 mt-1 w-full overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl">
+          <div className="flex items-center gap-2 border-b border-gray-100 px-3 py-2">
+            <Search size={15} className="shrink-0 text-gray-400" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="搜索类别"
+              className="h-7 min-w-0 flex-1 bg-transparent text-sm text-gray-900 outline-none placeholder:text-gray-400"
+              autoFocus
+            />
+          </div>
+
+          {!searchText && path.length > 0 ? (
+            <div className="flex items-center gap-1 border-b border-gray-100 px-3 py-2 text-[11px] text-gray-500">
+              <button
+                type="button"
+                className="rounded px-1.5 py-0.5 hover:bg-gray-100 hover:text-gray-800"
+                onClick={() => setPath([])}
+              >
+                全部类别
+              </button>
+              {path.map((category, index) => (
+                <span key={category.id} className="inline-flex items-center gap-1">
+                  <span>/</span>
+                  <button
+                    type="button"
+                    className="max-w-[120px] truncate rounded px-1.5 py-0.5 hover:bg-gray-100 hover:text-gray-800"
+                    onClick={() => setPath(path.slice(0, index + 1))}
+                  >
+                    {category.name}
+                  </button>
+                </span>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="max-h-80 overflow-y-auto p-1">
+            {loading ? (
+              <div className="px-3 py-8 text-center text-xs text-gray-400">
+                正在读取 Shopify 类别
+              </div>
+            ) : error ? (
+              <div className="px-3 py-3 text-xs text-amber-600">{error}</div>
+            ) : items.length ? (
+              items.map((category) => {
+                const hasChildren = !category.isLeaf || category.childrenCount > 0;
+                return (
+                  <div
+                    key={category.id}
+                    className="flex items-center rounded-md hover:bg-gray-50"
+                  >
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 px-3 py-2 text-left text-sm text-gray-800"
+                      onClick={() => chooseCategory(category)}
+                    >
+                      <span className="block truncate">
+                        {searchText ? category.fullName : category.name}
+                      </span>
+                    </button>
+                    {!searchText && hasChildren ? (
+                      <button
+                        type="button"
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+                        onClick={() => setPath((prev) => [...prev, category])}
+                        aria-label={`查看 ${category.name} 子类别`}
+                      >
+                        <ArrowRight size={14} />
+                      </button>
+                    ) : null}
+                  </div>
+                );
+              })
+            ) : (
+              <div className="px-3 py-8 text-center text-xs text-gray-400">
+                暂无 Shopify 类别
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
+      <div className="mt-1 text-[11px] text-fg-tertiary">
+        确定税率并添加元字段，以改进搜索、筛选和跨渠道销售
+      </div>
+    </div>
+  );
+}
+
 function ProductFormPanel({
   form,
   setForm,
@@ -3595,54 +3829,17 @@ function ProductFormPanel({
               </Button>
             }
           />
-          <Select
-            label="一级类别"
-            value={rootCategoryId}
-            onChange={(e) => updateShopifyCategory(e.target.value)}
-          >
-            {SHOPIFY_CATEGORY_OPTIONS.map((category) => (
-              <option key={category.id} value={category.id}>
-                {category.zh}
-              </option>
-            ))}
-          </Select>
-          {showApparelSubcategory ? (
-            <Select
-              label="服饰与配饰"
-              value={apparelSubcategoryId}
-              onChange={(e) => updateShopifyApparelCategory(e.target.value)}
-            >
-              <option value="">服饰与配饰</option>
-              {SHOPIFY_APPAREL_ACCESSORY_OPTIONS.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {category.zh}
-                </option>
-              ))}
-            </Select>
-          ) : null}
-          {showClothingSubcategory ? (
-            <Select
-              label="服装"
-              value={
-                SHOPIFY_CLOTHING_OPTIONS.some(
-                  (category) => category.id === form.shopifyCategoryId,
-                )
-                  ? form.shopifyCategoryId
-                  : ""
-              }
-              onChange={(e) => updateShopifyClothingCategory(e.target.value)}
-            >
-              <option value="">服装</option>
-              {SHOPIFY_CLOTHING_OPTIONS.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {category.zh}
-                </option>
-              ))}
-            </Select>
-          ) : null}
-          <div className="text-[11px] text-fg-tertiary">
-            下拉内容对应 Shopify 后台类别；若选择未分类，保存时后台会继续用商品内容向 Shopify 自动匹配更准确的类别。
-          </div>
+          <ShopifyCategoryPicker
+            valueId={form.shopifyCategoryId}
+            valueName={form.shopifyCategoryName}
+            onChange={(category) =>
+              setForm((prev) => ({
+                ...prev,
+                shopifyCategoryId: category.id,
+                shopifyCategoryName: category.name,
+              }))
+            }
+          />
         </div>
       </ShopifySection>
 
