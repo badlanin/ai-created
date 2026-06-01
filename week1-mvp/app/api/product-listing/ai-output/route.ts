@@ -100,9 +100,7 @@ const PRODUCT_LISTING_SYSTEM_PROMPT = `你是专业的 Shopify 礼服商品上�
 - 只输出字段内容，不要 Markdown、代码块、解释、寒暄。
 - 使用 key: value 格式，每个字段单独一行。
 - 字段建议包含：商品标题、商品描述、产品类型、供应商、产品系列、标签、主色调、面料材质、领口设计、整体版型、SKU、原价、售价、库存、SEO标题、SEO描述。
-- 同时输出 Shopify 类别元字段，字段名固定为：类别元字段颜色、类别元字段尺寸、类别元字段织物、类别元字段年龄段、类别元字段穿着场合、类别元字段裙子风格、类别元字段领口、类别元字段裙子/连衣裙长度类型、类别元字段袖长类型、类别元字段目标性别。
-- 类别元字段如果提供了“用户自定义候选条目”，必须优先从该字段候选条目里选择与图片最接近的一个值；如果该字段没有候选条目，则根据图片自由判断。
-- 如果候选条目明显都不匹配图片，允许根据图片输出更合适的值，但不要为了迎合候选而编造图片中不存在的特征。
+- 不要主动输出 Shopify 类别元字段；只有用户提示词明确要求输出类别元字段、元字段，或明确写出“类别元字段颜色/类别元字段尺寸”等完整类别元字段名时，才输出对应字段。
 - 字段名使用中文，字段值可按用户要求使用英文或中文；如果用户没有指定，商品标题、描述、标签和 SEO 信息优先使用英文。
 - 不要编造图片中看不到的强细节；不确定的字段保持稳妥、商品化表达。
 - 内容保持干净，去掉多余空格、乱码、无效控制字符。`;
@@ -166,8 +164,11 @@ export async function POST(req: NextRequest) {
     const categoryMetafieldCandidates = normalizeCategoryMetafieldCandidates(
       body.categoryMetafieldCandidates,
     );
+    const wantsCategoryMetafields = shouldGenerateCategoryMetafields(prompt);
     const categoryMetafieldCandidateSummary =
-      formatCategoryMetafieldCandidateSummary(categoryMetafieldCandidates);
+      wantsCategoryMetafields
+        ? formatCategoryMetafieldCandidateSummary(categoryMetafieldCandidates)
+        : "";
 
     const client = buildGenaiClient();
     const result = await withTimeout(
@@ -184,13 +185,17 @@ ${prompt}
 媒体 Media：
 ${mediaSummary}
 
+${wantsCategoryMetafields ? `用户明确要求生成类别元字段。
+
 用户自定义类别元字段候选条目：
 ${categoryMetafieldCandidateSummary}
 
 类别元字段生成规则：
+- 只输出用户提示词要求的类别元字段；不要额外补充用户没有要求的类别元字段。
 - 上面有候选条目的字段：先根据图片判断真实特征，再从该字段候选条目里选择最相似的一项输出。
 - 上面没有候选条目的字段：直接根据图片生成。
-- 候选条目明显都不适合图片时，可以输出图片判断值，但不要脱离图片。
+- 候选条目明显都不适合图片时，可以输出图片判断值，但不要脱离图片。` : `用户没有要求生成类别元字段。
+不要输出任何“类别元字段...”字段；只按用户提示词生成商品上架内容。`}
 
 请严格根据以上 ${images.length} 张商品图片生成，不要脱离图片内容。`,
               },
@@ -231,7 +236,10 @@ ${categoryMetafieldCandidateSummary}
         provider: "gemini",
         media_count: images.length,
         skipped_media_count: Math.max(0, media.length - images.length),
-        category_candidate_fields: Object.keys(categoryMetafieldCandidates).length,
+        category_metafields_requested: wantsCategoryMetafields,
+        category_candidate_fields: wantsCategoryMetafields
+          ? Object.keys(categoryMetafieldCandidates).length
+          : 0,
       },
     });
 
@@ -354,6 +362,20 @@ function formatCategoryMetafieldCandidateSummary(
   return lines.length
     ? lines.join("\n")
     : "无。所有类别元字段都按商品图片自由判断。";
+}
+
+function shouldGenerateCategoryMetafields(prompt: string): boolean {
+  const text = prompt.toLowerCase();
+  return (
+    /类别\s*元字段|类目\s*元字段|分类\s*元字段|category\s*metafields?|metafields?/.test(
+      text,
+    ) ||
+    CATEGORY_METAFIELD_CANDIDATE_LABELS.some((field) => {
+      const outputLabel = field.outputLabel.toLowerCase();
+      const key = field.key.toLowerCase();
+      return text.includes(outputLabel) || text.includes(key);
+    })
+  );
 }
 
 function sanitizeCategoryCandidateValue(value: string): string {

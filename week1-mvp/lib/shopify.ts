@@ -126,6 +126,7 @@ export type ShopifyCategoryMetafieldOptionField = {
   shopifyName: string | null;
   shopifyKey: string | null;
   shopifyType: string | null;
+  source: "store" | "official" | "none";
   options: ShopifyCategoryMetafieldOption[];
 };
 
@@ -1280,9 +1281,17 @@ export async function getShopifyCategoryMetafieldOptions(
       mapping,
       definition,
     );
+      const storeDefinitionOptions = definition
+        ? await buildShopifyMetafieldDefinitionStoreOptions(
+            stored.shopDomain,
+            stored.accessToken,
+            definition,
+            warnings,
+          )
+        : [];
       const customOptions = (
         await mapWithConcurrency(customMatches, 3, (customDefinition) =>
-          buildShopifyCustomMetafieldDefinitionOptions(
+          buildShopifyMetafieldDefinitionStoreOptions(
             stored.shopDomain,
             stored.accessToken,
             customDefinition,
@@ -1290,10 +1299,18 @@ export async function getShopifyCategoryMetafieldOptions(
           ),
         )
       ).flat();
-      const options = mergeShopifyCategoryMetafieldOptions([
+      const storeOptions = mergeShopifyCategoryMetafieldOptions([
+        ...storeDefinitionOptions,
         ...customOptions,
-        ...buildShopifyCategoryMetafieldValueOptions(matchedAttributes),
       ]);
+      const officialOptions =
+        buildShopifyCategoryMetafieldValueOptions(matchedAttributes);
+      const options = storeOptions.length ? storeOptions : officialOptions;
+      const source: ShopifyCategoryMetafieldOptionField["source"] = storeOptions.length
+        ? "store"
+        : officialOptions.length
+          ? "official"
+          : "none";
       if (!definition && !customMatches.length && !options.length) return null;
       return {
         key: mapping.field,
@@ -1311,6 +1328,7 @@ export async function getShopifyCategoryMetafieldOptions(
             cleanField(customMatches[0]?.type?.name) ||
             cleanField(definition?.type?.name) ||
             null,
+          source,
           options,
         },
       };
@@ -2894,6 +2912,36 @@ async function buildShopifyCategoryMetafieldValue(
   const values = splitCategoryMetafieldValues(rawValue);
   if (!values.length) return null;
 
+  if (isShopifyTaxonomyValueReferenceType(type)) {
+    const ids: string[] = [];
+    const fieldKey = cleanField(definition.key) || "taxonomy_reference";
+    for (const value of values) {
+      const inferredValue = inferShopifyCategoryValueForField(
+        type,
+        fieldKey,
+        value,
+      );
+      const id = await resolveShopifyTaxonomyValueId(
+        shopDomain,
+        accessToken,
+        categoryId,
+        type,
+        fieldKey,
+        value,
+        inferredValue,
+        warnings,
+      );
+      if (id) ids.push(id);
+    }
+    if (!ids.length) {
+      warnings.push(
+        `Skipped Shopify category metafield ${definition.name || definition.key}: no product taxonomy value matched "${rawValue}".`,
+      );
+      return null;
+    }
+    return type.startsWith("list.") ? JSON.stringify(ids) : ids[0];
+  }
+
   if (/metaobject_reference$/.test(type)) {
     const metaobjectType = getShopifyCategoryMetaobjectType(definition);
     if (!metaobjectType) {
@@ -3220,7 +3268,7 @@ function findShopifyCustomMetafieldDefinitions(
   });
 }
 
-async function buildShopifyCustomMetafieldDefinitionOptions(
+async function buildShopifyMetafieldDefinitionStoreOptions(
   shopDomain: string,
   accessToken: string,
   definition: ShopifyMetafieldDefinitionNode,
@@ -3890,6 +3938,35 @@ function getShopifyTaxonomyAttributeHints(
     base_sleeve_length_type: ["sleeve length type", "sleeve length"],
     base_target_gender: ["target gender", "gender"],
   };
+  const normalizedFieldKey = normalizeMetafieldMatchText(fieldKey);
+  const keyHints =
+    normalizedFieldKey.includes("agegroup")
+      ? hints.base_age_group
+      : normalizedFieldKey.includes("colorpattern") ||
+          normalizedFieldKey.includes("color")
+        ? [...hints.base_color, ...hints.base_pattern]
+        : normalizedFieldKey.includes("dressoccasion") ||
+            normalizedFieldKey.includes("occasion")
+          ? hints.base_dress_occasion
+          : normalizedFieldKey.includes("dressstyle")
+            ? hints.base_dress_style
+            : normalizedFieldKey.includes("fabric") ||
+                normalizedFieldKey.includes("material")
+              ? hints.base_fabric
+              : normalizedFieldKey.includes("neckline")
+                ? hints.base_neckline
+                : normalizedFieldKey.includes("skirtdresslengthtype") ||
+                    normalizedFieldKey.includes("dresslength")
+                  ? hints.base_skirt_dress_length_type
+                  : normalizedFieldKey.includes("sleevelengthtype") ||
+                      normalizedFieldKey.includes("sleevelength")
+                    ? hints.base_sleeve_length_type
+                    : normalizedFieldKey.includes("size")
+                      ? hints.base_size
+                      : normalizedFieldKey.includes("targetgender") ||
+                          normalizedFieldKey.includes("gender")
+                        ? hints.base_target_gender
+                        : [];
   const normalizedType = normalizeMetafieldMatchText(type);
   const typeHints =
     normalizedType.includes("agegroup")
@@ -3916,6 +3993,7 @@ function getShopifyTaxonomyAttributeHints(
   return Array.from(
     new Set([
       ...(hints[fieldKey] || []),
+      ...keyHints,
       ...typeHints,
       fieldKey.replace(/^base_/, "").replace(/_/g, " "),
     ]),
@@ -4005,6 +4083,61 @@ function inferShopifyCategoryBaseValueByType(type: string, value: string): strin
     return inferShopifyBaseTargetGender(value);
   }
   return value;
+}
+
+function inferShopifyCategoryValueForField(
+  type: string,
+  fieldKey: string,
+  value: string,
+): string {
+  const normalizedFieldKey = normalizeMetafieldMatchText(fieldKey);
+  if (normalizedFieldKey.includes("agegroup")) {
+    return inferShopifyBaseAgeGroup(value);
+  }
+  if (
+    normalizedFieldKey.includes("colorpattern") ||
+    normalizedFieldKey.includes("color")
+  ) {
+    return inferShopifyBaseColor(value);
+  }
+  if (
+    normalizedFieldKey.includes("dressoccasion") ||
+    normalizedFieldKey.includes("occasion")
+  ) {
+    return inferShopifyBaseDressOccasion(value);
+  }
+  if (normalizedFieldKey.includes("dressstyle")) {
+    return inferShopifyBaseDressStyle(value);
+  }
+  if (
+    normalizedFieldKey.includes("fabric") ||
+    normalizedFieldKey.includes("material")
+  ) {
+    return inferShopifyBaseFabric(value);
+  }
+  if (normalizedFieldKey.includes("neckline")) {
+    return inferShopifyBaseNeckline(value);
+  }
+  if (
+    normalizedFieldKey.includes("skirtdresslengthtype") ||
+    normalizedFieldKey.includes("dresslength")
+  ) {
+    return inferShopifyBaseDressLength(value);
+  }
+  if (
+    normalizedFieldKey.includes("sleevelengthtype") ||
+    normalizedFieldKey.includes("sleevelength")
+  ) {
+    return inferShopifyBaseSleeveLength(value);
+  }
+  if (normalizedFieldKey.includes("size")) return inferShopifyBaseSize(value);
+  if (
+    normalizedFieldKey.includes("targetgender") ||
+    normalizedFieldKey.includes("gender")
+  ) {
+    return inferShopifyBaseTargetGender(value);
+  }
+  return inferShopifyCategoryBaseValueByType(type, value);
 }
 
 function inferShopifyBaseColor(value: string): string {

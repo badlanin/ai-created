@@ -133,6 +133,7 @@ type ShopifyCategoryMetafieldField = {
   shopifyName: string | null;
   shopifyKey: string | null;
   shopifyType: string | null;
+  source: "store" | "official" | "none";
   options: ShopifyCategoryMetafieldOption[];
 };
 
@@ -1975,7 +1976,7 @@ export default function ProductListingPage() {
       const result = data.result as ShopifySyncResult;
       setSyncState(productStatus === "DRAFT" ? "draft" : "synced");
       setShopifyProductUrl(result.adminUrl);
-      setSyncWarnings(["同步成功"]);
+      setSyncWarnings(result.warnings?.length ? result.warnings : ["同步成功"]);
       setLastAction(
         result.adminUrl
           ? `已同步到 Shopify（${getProductStatusOption(productStatus).label}）：${result.title}`
@@ -2845,10 +2846,12 @@ function CategoryColorSwatch({
 function CategoryColorInput({
   value,
   shopifyOptions = [],
+  sourceLabel = "Shopify 当前分类",
   onChange,
 }: {
   value: string;
   shopifyOptions?: ShopifyCategoryMetafieldOption[];
+  sourceLabel?: string;
   onChange: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -2931,7 +2934,7 @@ function CategoryColorInput({
           {shopifyOptions.length ? (
             <>
               <div className="px-2 py-1 text-[11px] font-semibold text-purple-700">
-                Shopify 当前分类
+                {sourceLabel}
               </div>
               <div className="space-y-0.5">
                 {shopifyOptions.map(renderShopifyOption)}
@@ -2952,6 +2955,7 @@ function CategoryMetafieldMemoryInput({
   value,
   history = [],
   shopifyOptions = [],
+  sourceLabel = "Shopify 当前分类",
   ariaLabel,
   onChange,
   onRemember,
@@ -2960,6 +2964,7 @@ function CategoryMetafieldMemoryInput({
   value: string;
   history?: string[];
   shopifyOptions?: ShopifyCategoryMetafieldOption[];
+  sourceLabel?: string;
   ariaLabel: string;
   onChange: (value: string) => void;
   onRemember: (value: string) => void;
@@ -3028,7 +3033,7 @@ function CategoryMetafieldMemoryInput({
           {shopifyOptions.length ? (
             <>
               <div className="px-2 py-1 text-[11px] font-semibold text-purple-700">
-                Shopify 当前分类
+                {sourceLabel}
               </div>
               <div className="space-y-0.5">
                 {shopifyOptions.map((item) => {
@@ -3088,6 +3093,15 @@ function CategoryMetafieldMemoryInput({
       ) : null}
     </div>
   );
+}
+
+function getCategoryMetafieldSourceLabel(
+  field?: ShopifyCategoryMetafieldField,
+): string {
+  if (!field?.options.length) return "Shopify 当前分类";
+  if (field.source === "store") return "Shopify 后台已有条目";
+  if (field.source === "official") return "Shopify 官方选项";
+  return "Shopify 当前分类";
 }
 
 function ProductFormPanel({
@@ -3989,10 +4003,16 @@ function ProductFormPanel({
                     shopifyOptions={
                       shopifyCategoryMetafields.categoryColor?.options || []
                     }
+                    sourceLabel={getCategoryMetafieldSourceLabel(
+                      shopifyCategoryMetafields.categoryColor,
+                    )}
                     onChange={(value) => update("categoryColor", value)}
                   />
                 ) : (
                   <CategoryMetafieldMemoryInput
+                    sourceLabel={getCategoryMetafieldSourceLabel(
+                      shopifyCategoryMetafields[row.key],
+                    )}
                     value={form[row.key]}
                     history={categoryMetafieldMemory[row.key] || []}
                     shopifyOptions={
