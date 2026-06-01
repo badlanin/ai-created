@@ -1555,6 +1555,36 @@ export default function ProductListingPage() {
     );
   }
 
+  async function switchShopifyAccount() {
+    setUnbinding(true);
+    try {
+      const res = await fetchWithShopifyDevice("/api/shopify/connection", {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      setBinding(null);
+      setAuthMode("oauth_app");
+      setShopDomain("xxx.myshopify.com");
+      setAccessToken("");
+      setClientId("");
+      setClientSecret("");
+      setConnectionMessage("已切换到添加 Shopify 账户，请填写新店铺信息后授权。");
+      setConfirmUnbind(false);
+      setSyncState("idle");
+      setShopifyProductUrl(null);
+      setSyncWarnings([]);
+      setLastAction("Shopify 账户已切换，当前商品草稿和媒体图片已保留。");
+      if (typeof window !== "undefined") {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    } catch (e) {
+      setConnectionMessage(e instanceof Error ? e.message : String(e));
+    } finally {
+      setUnbinding(false);
+    }
+  }
+
   async function unbindShopify() {
     setUnbinding(true);
     try {
@@ -1978,8 +2008,10 @@ export default function ProductListingPage() {
             binding={binding}
             connectionMessage={connectionMessage}
             testing={testing}
+            unbinding={unbinding}
             onTestConnection={testConnection}
             onConfirmUnbind={() => setConfirmUnbind(true)}
+            onSwitchAccount={switchShopifyAccount}
           />
 
           <div className="grid grid-cols-1 xl:grid-cols-[360px_minmax(0,1fr)_290px] gap-4 items-start">
@@ -2274,14 +2306,18 @@ function BoundStatusCard({
   binding,
   connectionMessage,
   testing,
+  unbinding,
   onTestConnection,
   onConfirmUnbind,
+  onSwitchAccount,
 }: {
   binding: ShopifyBinding;
   connectionMessage: string | null;
   testing: boolean;
+  unbinding: boolean;
   onTestConnection: () => void;
   onConfirmUnbind: () => void;
+  onSwitchAccount: () => void;
 }) {
   return (
     <Card padding="md">
@@ -2331,6 +2367,15 @@ function BoundStatusCard({
             onClick={onTestConnection}
           >
             测试连接
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            leftIcon={<RefreshCw size={13} />}
+            loading={unbinding}
+            onClick={onSwitchAccount}
+          >
+            切换账户
           </Button>
           <Button
             variant="danger-outline"
