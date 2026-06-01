@@ -18,6 +18,7 @@ import {
   Link,
   RefreshCw,
   Save,
+  Search,
   Send,
   ShoppingBag,
   Star,
@@ -102,6 +103,7 @@ type ProductForm = {
   categoryTargetGender: string;
   seoTitle: string;
   seoDescription: string;
+  variantOptionName: string;
 };
 
 type CategoryMetafieldFormKey =
@@ -117,6 +119,26 @@ type CategoryMetafieldFormKey =
   | "categoryTargetGender";
 
 type CategoryMetafieldMemory = Partial<Record<CategoryMetafieldFormKey, string[]>>;
+
+type ShopifyCategoryMetafieldOption = {
+  id: string;
+  label: string;
+  value: string;
+  attributeName: string;
+};
+
+type ShopifyCategoryMetafieldField = {
+  formKey: string;
+  label: string;
+  shopifyName: string | null;
+  shopifyKey: string | null;
+  shopifyType: string | null;
+  options: ShopifyCategoryMetafieldOption[];
+};
+
+type ShopifyCategoryMetafieldFields = Partial<
+  Record<CategoryMetafieldFormKey, ShopifyCategoryMetafieldField>
+>;
 
 type ShopifySyncResult = {
   productId: string;
@@ -197,6 +219,18 @@ const CATEGORY_METAFIELD_ROWS: Array<{
   { key: "categoryTargetGender", label: "目标性别" },
 ];
 
+const VARIANT_OPTION_RECOMMENDATIONS = [
+  "颜色",
+  "尺寸",
+  "织物",
+  "年龄段",
+  "穿着场合",
+  "裙子风格",
+  "领口",
+  "裙子/连衣裙长度类型",
+  "袖长类型",
+];
+
 const CATEGORY_COLOR_OPTIONS = [
   { label: "海军蓝", value: "海军蓝", color: "#2d2aa4", badge: "推荐" },
   { label: "White", value: "White", color: "#ffffff", ring: true },
@@ -269,6 +303,7 @@ const EMPTY_FORM: ProductForm = {
   categoryTargetGender: "",
   seoTitle: "",
   seoDescription: "",
+  variantOptionName: "Size",
 };
 
 const SHOPIFY_CATEGORY_OPTIONS = [
@@ -858,6 +893,7 @@ function mapKeyValueTextToProductForm(value: string): Partial<ProductForm> {
     categoryTargetGender: ["类别元字段目标性别", "目标性别", "性别", "Target gender"],
     seoTitle: ["SEO标题", "SEO 标题", "SEO Title"],
     seoDescription: ["SEO描述", "SEO 描述", "SEO Description"],
+    variantOptionName: ["多属性名称", "选项名称", "Option name", "Variant option"],
   };
   const result: Partial<ProductForm> = {};
   for (const [field, labels] of Object.entries(aliases) as Array<
@@ -929,6 +965,10 @@ function isShopifyApparelCategory(id: string): boolean {
 
 function isShopifyClothingCategory(id: string): boolean {
   return getShopifyApparelSubcategoryId(id) === SHOPIFY_CLOTHING_CATEGORY_ID;
+}
+
+function isShopifyTaxonomyCategoryId(value: string): boolean {
+  return /^gid:\/\/shopify\/TaxonomyCategory\/[a-z0-9-]+$/i.test(value);
 }
 
 function getShopifyCategoryMetafieldContext(id: string): string {
@@ -1086,6 +1126,16 @@ function saveCategoryMetafieldMemory(memory: CategoryMetafieldMemory) {
   } catch {
     // Ignore storage write failures so the product form remains usable.
   }
+}
+
+function buildCategoryMetafieldCandidates(): CategoryMetafieldMemory {
+  const memory = loadCategoryMetafieldMemory();
+  const candidates: CategoryMetafieldMemory = {};
+  for (const { key } of CATEGORY_METAFIELD_ROWS) {
+    const items = sanitizeCategoryMetafieldMemoryItems(memory[key]);
+    if (items.length) candidates[key] = items;
+  }
+  return candidates;
 }
 
 function addCategoryMetafieldMemoryValue(
@@ -1792,6 +1842,7 @@ export default function ProductListingPage() {
     setGeneratingAiOutput(true);
     setLastAction("正在根据提示词解析商品信息");
     try {
+      const categoryMetafieldCandidates = buildCategoryMetafieldCandidates();
       const res = await fetch("/api/product-listing/ai-output", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1802,6 +1853,7 @@ export default function ProductListingPage() {
             alt: item.alt,
             role: item.role,
           })),
+          categoryMetafieldCandidates,
         }),
       });
       const data = (await res.json()) as {
@@ -2792,16 +2844,12 @@ function CategoryColorSwatch({
 
 function CategoryColorInput({
   value,
-  history = [],
+  shopifyOptions = [],
   onChange,
-  onRemember,
-  onDeleteHistory,
 }: {
   value: string;
-  history?: string[];
+  shopifyOptions?: ShopifyCategoryMetafieldOption[];
   onChange: (value: string) => void;
-  onRemember?: (value: string) => void;
-  onDeleteHistory?: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -2809,10 +2857,6 @@ function CategoryColorInput({
     (option) =>
       normalizeCategoryColor(option.value) === normalizeCategoryColor(value) ||
       normalizeCategoryColor(option.label) === normalizeCategoryColor(value),
-  );
-  const suggestionOptions = CATEGORY_COLOR_OPTIONS.filter((option) => !option.group);
-  const defaultOptions = CATEGORY_COLOR_OPTIONS.filter(
-    (option) => option.group === "默认条目",
   );
 
   useEffect(() => {
@@ -2826,71 +2870,36 @@ function CategoryColorInput({
     return () => window.removeEventListener("pointerdown", handlePointerDown);
   }, [open]);
 
-  function choose(option: CategoryColorOption) {
-    onChange(option.value);
-    onRemember?.(option.value);
-    setOpen(false);
-  }
-
-  function chooseHistory(item: string) {
+  function chooseValue(item: string) {
     onChange(item);
-    onRemember?.(item);
     setOpen(false);
   }
 
-  function renderHistoryItem(item: string) {
+  function renderShopifyOption(item: ShopifyCategoryMetafieldOption) {
     const option = CATEGORY_COLOR_OPTIONS.find(
       (colorOption) =>
-        normalizeCategoryColor(colorOption.value) === normalizeCategoryColor(item) ||
-        normalizeCategoryColor(colorOption.label) === normalizeCategoryColor(item),
+        normalizeCategoryColor(colorOption.value) ===
+          normalizeCategoryColor(item.value) ||
+        normalizeCategoryColor(colorOption.label) ===
+          normalizeCategoryColor(item.value),
     );
-    const active = normalizeCategoryColor(item) === normalizeCategoryColor(value);
+    const active = normalizeCategoryColor(item.value) === normalizeCategoryColor(value);
 
     return (
       <button
-        key={`history-${item}`}
+        key={`shopify-${item.id}`}
         type="button"
-        title="右键删除"
         className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors ${
           active ? "bg-purple-50 text-purple-700" : "text-gray-800 hover:bg-gray-50"
         }`}
-        onClick={() => chooseHistory(item)}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          onDeleteHistory?.(item);
-        }}
+        onClick={() => chooseValue(item.value)}
       >
         {option ? (
           <CategoryColorSwatch option={option} />
         ) : (
           <span className="h-4 w-4 shrink-0 rounded border border-gray-200 bg-white" />
         )}
-        <span className="min-w-0 flex-1 truncate">{item}</span>
-      </button>
-    );
-  }
-
-  function renderOption(option: CategoryColorOption) {
-    const active =
-      normalizeCategoryColor(option.value) === normalizeCategoryColor(value) ||
-      normalizeCategoryColor(option.label) === normalizeCategoryColor(value);
-
-    return (
-      <button
-        key={`${option.group || "suggested"}-${option.value}`}
-        type="button"
-        className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors ${
-          active ? "bg-purple-50 text-purple-700" : "text-gray-800 hover:bg-gray-50"
-        }`}
-        onClick={() => choose(option)}
-      >
-        <CategoryColorSwatch option={option} />
-        <span className="min-w-0 flex-1 truncate">{option.label}</span>
-        {option.badge ? (
-          <span className="rounded-full bg-purple-100 px-1.5 py-0.5 text-[10px] font-medium text-purple-700">
-            {option.badge}
-          </span>
-        ) : null}
+        <span className="min-w-0 flex-1 truncate">{item.label}</span>
       </button>
     );
   }
@@ -2902,13 +2911,6 @@ function CategoryColorInput({
         <input
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          onBlur={(e) => onRemember?.(e.currentTarget.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              onRemember?.(e.currentTarget.value);
-              e.currentTarget.blur();
-            }
-          }}
           aria-label="类别元字段颜色"
           className="h-full min-w-0 flex-1 rounded-md bg-transparent px-2 text-xs text-gray-900 outline-none"
         />
@@ -2916,10 +2918,7 @@ function CategoryColorInput({
           type="button"
           aria-label="选择颜色色系"
           className="flex h-full w-8 shrink-0 items-center justify-center rounded-r-md text-gray-500 hover:bg-gray-50 hover:text-gray-700"
-          onClick={() => {
-            onRemember?.(value);
-            setOpen((current) => !current);
-          }}
+          onClick={() => setOpen((current) => !current)}
         >
           <ChevronDown
             size={14}
@@ -2929,23 +2928,20 @@ function CategoryColorInput({
       </div>
       {open ? (
         <div className="absolute z-40 mt-1 max-h-72 w-full overflow-y-auto rounded-md border border-purple-100 bg-white p-1 text-xs shadow-lg">
-          {history.length ? (
+          {shopifyOptions.length ? (
             <>
               <div className="px-2 py-1 text-[11px] font-semibold text-purple-700">
-                历史输入
+                Shopify 当前分类
               </div>
-              <div className="space-y-0.5">{history.map(renderHistoryItem)}</div>
-              <div className="my-1 border-t border-gray-100" />
+              <div className="space-y-0.5">
+                {shopifyOptions.map(renderShopifyOption)}
+              </div>
             </>
-          ) : null}
-          <div className="px-2 py-1 text-[11px] font-semibold text-purple-700">
-            色系建议
-          </div>
-          <div className="space-y-0.5">{suggestionOptions.map(renderOption)}</div>
-          <div className="mt-1 border-t border-gray-100 px-2 py-1 text-[11px] font-semibold text-gray-500">
-            默认条目
-          </div>
-          <div className="space-y-0.5">{defaultOptions.map(renderOption)}</div>
+          ) : (
+            <div className="px-2 py-2 text-xs text-gray-400">
+              暂无 Shopify 官方选项
+            </div>
+          )}
         </div>
       ) : null}
     </div>
@@ -2955,6 +2951,7 @@ function CategoryColorInput({
 function CategoryMetafieldMemoryInput({
   value,
   history = [],
+  shopifyOptions = [],
   ariaLabel,
   onChange,
   onRemember,
@@ -2962,6 +2959,7 @@ function CategoryMetafieldMemoryInput({
 }: {
   value: string;
   history?: string[];
+  shopifyOptions?: ShopifyCategoryMetafieldOption[];
   ariaLabel: string;
   onChange: (value: string) => void;
   onRemember: (value: string) => void;
@@ -2985,6 +2983,12 @@ function CategoryMetafieldMemoryInput({
   function chooseHistory(item: string) {
     onChange(item);
     onRemember(item);
+    setOpen(false);
+  }
+
+  function chooseShopifyOption(item: ShopifyCategoryMetafieldOption) {
+    onChange(item.value);
+    onRemember(item.value);
     setOpen(false);
   }
 
@@ -3021,6 +3025,35 @@ function CategoryMetafieldMemoryInput({
       </div>
       {open ? (
         <div className="absolute z-40 mt-1 max-h-56 w-full overflow-y-auto rounded-md border border-purple-100 bg-white p-1 text-xs shadow-lg">
+          {shopifyOptions.length ? (
+            <>
+              <div className="px-2 py-1 text-[11px] font-semibold text-purple-700">
+                Shopify 当前分类
+              </div>
+              <div className="space-y-0.5">
+                {shopifyOptions.map((item) => {
+                  const active =
+                    normalizeCategoryMetafieldMemoryValue(item.value).toLowerCase() ===
+                    normalizedValue;
+                  return (
+                    <button
+                      key={`shopify-${item.id}`}
+                      type="button"
+                      className={`flex h-8 w-full items-center rounded-md px-2 text-left text-xs transition-colors ${
+                        active
+                          ? "bg-purple-50 text-purple-700"
+                          : "text-gray-800 hover:bg-gray-50"
+                      }`}
+                      onClick={() => chooseShopifyOption(item)}
+                    >
+                      <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="my-1 border-t border-gray-100" />
+            </>
+          ) : null}
           {history.length ? (
             <div className="space-y-0.5">
               {history.map((item) => {
@@ -3048,7 +3081,7 @@ function CategoryMetafieldMemoryInput({
                 );
               })}
             </div>
-          ) : (
+          ) : shopifyOptions.length ? null : (
             <div className="px-2 py-2 text-xs text-gray-400">暂无历史输入</div>
           )}
         </div>
@@ -3084,6 +3117,7 @@ function ProductFormPanel({
 }) {
   const mediaInputRef = useRef<HTMLInputElement | null>(null);
   const variantFileInputRef = useRef<HTMLInputElement | null>(null);
+  const variantOptionMenuRef = useRef<HTMLDivElement | null>(null);
   const rootCategoryId = getShopifyRootCategoryId(form.shopifyCategoryId);
   const apparelSubcategoryId = getShopifyApparelSubcategoryId(
     form.shopifyCategoryId,
@@ -3097,8 +3131,16 @@ function ProductFormPanel({
   const [variantFileName, setVariantFileName] = useState("");
   const [skuExpanded, setSkuExpanded] = useState(false);
   const [variantSectionCollapsed, setVariantSectionCollapsed] = useState(false);
+  const [variantOptionMenuOpen, setVariantOptionMenuOpen] = useState(false);
+  const [variantOptionSearch, setVariantOptionSearch] = useState("");
   const [categoryMetafieldMemory, setCategoryMetafieldMemory] =
     useState<CategoryMetafieldMemory>(() => loadCategoryMetafieldMemory());
+  const [shopifyCategoryMetafields, setShopifyCategoryMetafields] =
+    useState<ShopifyCategoryMetafieldFields>({});
+  const [loadingCategoryMetafields, setLoadingCategoryMetafields] =
+    useState(false);
+  const [categoryMetafieldLoadError, setCategoryMetafieldLoadError] =
+    useState("");
   const parsedVariantSizes = parseVariantSizes(variantSizeText);
   const selectedMainMedia =
     mediaItems.find((item) => item.role === "main") || mediaItems[0] || null;
@@ -3112,6 +3154,65 @@ function ProductFormPanel({
   const categoryMetafieldContext = getShopifyCategoryMetafieldContext(
     form.shopifyCategoryId,
   );
+  const variantOptionName = form.variantOptionName.trim() || "Size";
+  const filteredVariantOptionRecommendations = useMemo(() => {
+    const keyword = variantOptionSearch.trim().toLowerCase();
+    if (!keyword) return VARIANT_OPTION_RECOMMENDATIONS;
+    return VARIANT_OPTION_RECOMMENDATIONS.filter((option) =>
+      option.toLowerCase().includes(keyword),
+    );
+  }, [variantOptionSearch]);
+
+  useEffect(() => {
+    if (!variantOptionMenuOpen) return;
+    function handlePointerDown(e: MouseEvent) {
+      if (!variantOptionMenuRef.current?.contains(e.target as Node)) {
+        setVariantOptionMenuOpen(false);
+      }
+    }
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, [variantOptionMenuOpen]);
+
+  useEffect(() => {
+    const categoryId = form.shopifyCategoryId;
+    if (
+      !categoryId ||
+      categoryId === SHOPIFY_UNCATEGORIZED_CATEGORY_ID ||
+      !isShopifyTaxonomyCategoryId(categoryId)
+    ) {
+      setShopifyCategoryMetafields({});
+      setCategoryMetafieldLoadError("");
+      setLoadingCategoryMetafields(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    setLoadingCategoryMetafields(true);
+    setCategoryMetafieldLoadError("");
+    fetchWithShopifyDevice(
+      `/api/shopify/category-metafields?categoryId=${encodeURIComponent(categoryId)}`,
+      { signal: controller.signal },
+    )
+      .then(async (res) => {
+        const data = (await res.json()) as {
+          fields?: ShopifyCategoryMetafieldFields;
+          error?: string;
+        };
+        if (!res.ok) throw new Error(data.error || res.statusText);
+        setShopifyCategoryMetafields(data.fields || {});
+      })
+      .catch((e) => {
+        if (controller.signal.aborted) return;
+        setShopifyCategoryMetafields({});
+        setCategoryMetafieldLoadError(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingCategoryMetafields(false);
+      });
+
+    return () => controller.abort();
+  }, [form.shopifyCategoryId]);
 
   function update<K extends keyof ProductForm>(key: K, value: ProductForm[K]) {
     if (key === "inventory") {
@@ -3203,15 +3304,38 @@ function ProductFormPanel({
     }));
   }
 
-  function openVariantDialog() {
+  function normalizeVariantOptionName(name: string) {
+    const cleaned = name.trim();
+    if (!cleaned) return "Size";
+    return cleaned === "尺寸" ? "Size" : cleaned;
+  }
+
+  function openVariantDialog(optionName = variantOptionName) {
+    const nextOptionName = normalizeVariantOptionName(optionName);
     setVariantSectionCollapsed(false);
+    update("variantOptionName", nextOptionName);
+    const useExistingValues = variantRows.length > 0 && nextOptionName === variantOptionName;
     setVariantSizeText(
-      variantRows.length
+      useExistingValues
         ? variantRows.map((row) => row.size).join("\n")
-        : DEFAULT_SIZE_VARIANT_OPTIONS.join("\n"),
+        : nextOptionName === "Size"
+          ? DEFAULT_SIZE_VARIANT_OPTIONS.join("\n")
+          : "",
     );
     setVariantFileName("");
     setVariantDialogOpen(true);
+  }
+
+  function chooseVariantOption(optionName: string) {
+    setVariantOptionMenuOpen(false);
+    setVariantOptionSearch("");
+    openVariantDialog(optionName);
+  }
+
+  function openCustomVariantOption() {
+    setVariantOptionMenuOpen(false);
+    setVariantOptionSearch("");
+    openVariantDialog("自定义选项");
   }
 
   async function importVariantSizeFile(files: FileList | null) {
@@ -3225,6 +3349,7 @@ function ProductFormPanel({
   function confirmVariantRows() {
     const sizes = parsedVariantSizes;
     if (!sizes.length) return;
+    update("variantOptionName", normalizeVariantOptionName(form.variantOptionName));
     const existingBySize = new Map(variantRows.map((row) => [row.size, row]));
     setVariantRows(
       sizes.map((size, index) => {
@@ -3608,7 +3733,11 @@ function ProductFormPanel({
                     清空
                   </Button>
                 ) : null}
-                <Button size="sm" variant="outline" onClick={openVariantDialog}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => openVariantDialog()}
+                >
                   + 添加多属性
                 </Button>
                 {variantRows.length > 0 ? (
@@ -3636,7 +3765,9 @@ function ProductFormPanel({
             <div className="space-y-3">
               <div className="rounded-md border border-gray-200 bg-white">
                 <div className="border-b border-gray-200 px-4 py-3">
-                  <div className="text-xs font-semibold text-gray-900">Size</div>
+                  <div className="text-xs font-semibold text-gray-900">
+                    {variantOptionName}
+                  </div>
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {variantRows.map((row) => (
                       <span
@@ -3648,16 +3779,78 @@ function ProductFormPanel({
                     ))}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2 px-4 py-2 text-left text-xs font-medium text-gray-700 hover:bg-gray-50"
-                  onClick={openVariantDialog}
-                >
-                  <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-400 text-[11px]">
-                    +
-                  </span>
-                  添加其他选项
-                </button>
+                <div ref={variantOptionMenuRef} className="relative">
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 px-4 py-2 text-left text-xs font-medium text-gray-700 hover:bg-gray-50"
+                    onClick={() => {
+                      setVariantOptionSearch("");
+                      setVariantOptionMenuOpen((open) => !open);
+                    }}
+                  >
+                    <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-400 text-[11px]">
+                      +
+                    </span>
+                    添加其他选项
+                  </button>
+                  {variantOptionMenuOpen ? (
+                    <div className="absolute left-8 top-8 z-50 w-64 rounded-xl border border-gray-200 bg-white p-2 text-sm shadow-xl">
+                      <div className="relative">
+                        <Search
+                          size={15}
+                          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-500"
+                        />
+                        <input
+                          value={variantOptionSearch}
+                          onChange={(e) => setVariantOptionSearch(e.target.value)}
+                          autoFocus
+                          placeholder="搜索"
+                          className="h-9 w-full rounded-lg border border-gray-300 bg-white pl-9 pr-3 text-sm text-gray-900 outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100"
+                        />
+                      </div>
+                      <div className="px-2 pb-1 pt-3 text-xs font-medium text-gray-500">
+                        推荐
+                      </div>
+                      <div className="space-y-0.5">
+                        {filteredVariantOptionRecommendations.map((option) => {
+                          const active =
+                            normalizeVariantOptionName(option) === variantOptionName;
+                          return (
+                            <button
+                              key={option}
+                              type="button"
+                              className={`flex h-8 w-full items-center rounded-md px-2 text-left text-sm transition-colors ${
+                                active
+                                  ? "bg-gray-100 text-gray-950"
+                                  : "text-gray-800 hover:bg-gray-50"
+                              }`}
+                              onClick={() => chooseVariantOption(option)}
+                            >
+                              <span className="min-w-0 flex-1 truncate">
+                                {option}
+                              </span>
+                            </button>
+                          );
+                        })}
+                        {filteredVariantOptionRecommendations.length === 0 ? (
+                          <div className="px-2 py-3 text-xs text-gray-400">
+                            没有匹配的推荐选项
+                          </div>
+                        ) : null}
+                      </div>
+                      <button
+                        type="button"
+                        className="mt-2 flex h-9 w-full items-center gap-2 border-t border-gray-100 px-2 pt-2 text-left text-sm text-gray-800 hover:text-gray-950"
+                        onClick={openCustomVariantOption}
+                      >
+                        <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-500 text-[11px]">
+                          +
+                        </span>
+                        创建自定义选项
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
 
               <div className="overflow-hidden rounded-md border border-gray-200 bg-white">
@@ -3770,6 +3963,19 @@ function ProductFormPanel({
               {categoryMetafieldContext}
             </span>
           </div>
+          <div className="flex items-center justify-end text-[11px] text-gray-500">
+            {loadingCategoryMetafields ? (
+              <span>正在读取 Shopify 官方选项</span>
+            ) : categoryMetafieldLoadError ? (
+              <span className="text-amber-600">
+                未读取到官方选项：{categoryMetafieldLoadError}
+              </span>
+            ) : Object.keys(shopifyCategoryMetafields).length ? (
+              <span>已映射 Shopify 官方类别元字段</span>
+            ) : (
+              <span>暂无 Shopify 官方选项</span>
+            )}
+          </div>
           <div className="space-y-2">
             {CATEGORY_METAFIELD_ROWS.map((row) => (
               <div
@@ -3780,19 +3986,18 @@ function ProductFormPanel({
                 {row.key === "categoryColor" ? (
                   <CategoryColorInput
                     value={form.categoryColor}
-                    history={categoryMetafieldMemory.categoryColor || []}
+                    shopifyOptions={
+                      shopifyCategoryMetafields.categoryColor?.options || []
+                    }
                     onChange={(value) => update("categoryColor", value)}
-                    onRemember={(value) =>
-                      rememberCategoryMetafieldValue("categoryColor", value)
-                    }
-                    onDeleteHistory={(value) =>
-                      deleteCategoryMetafieldMemoryValue("categoryColor", value)
-                    }
                   />
                 ) : (
                   <CategoryMetafieldMemoryInput
                     value={form[row.key]}
                     history={categoryMetafieldMemory[row.key] || []}
+                    shopifyOptions={
+                      shopifyCategoryMetafields[row.key]?.options || []
+                    }
                     ariaLabel={`类别元字段${row.label}`}
                     onChange={(value) => update(row.key, value)}
                     onRemember={(value) =>
@@ -3833,7 +4038,7 @@ function ProductFormPanel({
         open={variantDialogOpen}
         onClose={() => setVariantDialogOpen(false)}
         title="添加多属性"
-        description="输入尺码，每行一个；也可以导入 txt 或 csv 文件。"
+        description="输入选项值，每行一个；也可以导入 txt 或 csv 文件。"
         width="lg"
         footer={
           <>
@@ -3851,12 +4056,22 @@ function ProductFormPanel({
         }
       >
         <div className="space-y-4">
+          <Input
+            label="选项名称"
+            value={form.variantOptionName}
+            onChange={(e) => update("variantOptionName", e.target.value)}
+            placeholder="Size / Color / Fabric"
+          />
           <Textarea
-            label="尺码"
+            label="选项值"
             value={variantSizeText}
             onChange={(e) => setVariantSizeText(e.target.value)}
             rows={8}
-            placeholder={"US 2 / UK 6 / EU 32\nUS 4 / UK 8 / EU 34\nUS 6 / UK 10 / EU 36"}
+            placeholder={
+              variantOptionName === "Size"
+                ? "US 2 / UK 6 / EU 32\nUS 4 / UK 8 / EU 34\nUS 6 / UK 10 / EU 36"
+                : `${variantOptionName} 1\n${variantOptionName} 2`
+            }
           />
           <div className="flex flex-wrap items-center gap-2">
             <input

@@ -97,6 +97,7 @@ export type ShopifyProductDraftInput = {
   status?: "DRAFT" | "ACTIVE" | "ARCHIVED";
   seoTitle?: string;
   seoDescription?: string;
+  variantOptionName?: string;
   media?: Array<{
     url: string;
     alt?: string;
@@ -110,6 +111,29 @@ export type ShopifyProductDraftInput = {
     imageUrl?: string;
     isMainImage?: boolean;
   }>;
+};
+
+export type ShopifyCategoryMetafieldOption = {
+  id: string;
+  label: string;
+  value: string;
+  attributeName: string;
+};
+
+export type ShopifyCategoryMetafieldOptionField = {
+  formKey: string;
+  label: string;
+  shopifyName: string | null;
+  shopifyKey: string | null;
+  shopifyType: string | null;
+  options: ShopifyCategoryMetafieldOption[];
+};
+
+export type ShopifyCategoryMetafieldOptionsResult = {
+  categoryId: string;
+  hierarchy: Array<{ id: string; name: string | null }>;
+  fields: Record<string, ShopifyCategoryMetafieldOptionField>;
+  warnings: string[];
 };
 
 export type ShopifyProductSyncResult = {
@@ -278,6 +302,13 @@ type ShopifyMetaobjectDefinitionByTypeResponse = {
   errors?: Array<{ message?: string }>;
 };
 
+type ShopifyMetaobjectDefinitionByIdResponse = {
+  data?: {
+    metaobjectDefinition?: ShopifyMetaobjectDefinitionNode | null;
+  };
+  errors?: Array<{ message?: string }>;
+};
+
 type ShopifyStandardMetaobjectDefinitionEnableResponse = {
   data?: {
     standardMetaobjectDefinitionEnable?: {
@@ -300,6 +331,12 @@ type ShopifyTaxonomyAttributeNode = {
   values?: {
     nodes?: ShopifyTaxonomyValueNode[];
   } | null;
+};
+
+type ShopifyTaxonomyCategoryAttributeGroup = {
+  id: string;
+  name: string | null;
+  attributes: ShopifyTaxonomyAttributeNode[];
 };
 
 type ShopifyTaxonomyCategoryAttributesResponse = {
@@ -570,6 +607,9 @@ const SHOPIFY_CATEGORY_METAFIELD_MAPPINGS = [
   keyHints: readonly string[];
   nameHints: readonly string[];
 }>;
+
+type ShopifyCategoryMetafieldMapping =
+  (typeof SHOPIFY_CATEGORY_METAFIELD_MAPPINGS)[number];
 
 const SHOPIFY_CATEGORY_VALUE_ALIASES: Record<string, string[]> = {
   "海军蓝": ["Navy"],
@@ -1161,6 +1201,137 @@ function normalizeShopifyTemplateSuffix(value?: string): string {
   return cleaned.replace(/^product[.-]/i, "").trim();
 }
 
+export async function getShopifyCategoryMetafieldOptions(
+  userId: number,
+  deviceId: string,
+  categoryId: string,
+): Promise<ShopifyCategoryMetafieldOptionsResult> {
+  const cleanedCategoryId = cleanField(categoryId);
+  if (
+    !cleanedCategoryId ||
+    cleanedCategoryId === SHOPIFY_UNCATEGORIZED_CATEGORY_ID ||
+    !isShopifyTaxonomyCategoryId(cleanedCategoryId)
+  ) {
+    return {
+      categoryId: cleanedCategoryId || SHOPIFY_UNCATEGORIZED_CATEGORY_ID,
+      hierarchy: [],
+      fields: {},
+      warnings: [],
+    };
+  }
+
+  const stored = await getStoredShopifyAccessToken(userId, deviceId);
+  if (!stored) throw new Error("尚未绑定 Shopify");
+
+  const warnings: string[] = [];
+  if (isTestShopifyCredentials(stored.shopDomain, stored.accessToken)) {
+    return buildFallbackShopifyCategoryMetafieldOptions(cleanedCategoryId);
+  }
+
+  const [definitions, templates, customDefinitions, attributeGroups] = await Promise.all([
+    fetchShopifyCategoryMetafieldDefinitionsForHierarchy(
+      stored.shopDomain,
+      stored.accessToken,
+      cleanedCategoryId,
+      warnings,
+    ),
+    fetchShopifyCategoryMetafieldDefinitionTemplatesForHierarchy(
+      stored.shopDomain,
+      stored.accessToken,
+      cleanedCategoryId,
+      warnings,
+    ),
+    fetchShopifyProductCustomMetafieldDefinitions(
+      stored.shopDomain,
+      stored.accessToken,
+      warnings,
+    ),
+    fetchShopifyTaxonomyCategoryAttributeGroupsForHierarchy(
+      stored.shopDomain,
+      stored.accessToken,
+      cleanedCategoryId,
+      warnings,
+    ),
+  ]);
+
+  const effectiveDefinitions = dedupeShopifyMetafieldDefinitions([
+    ...definitions,
+    ...templates,
+  ]);
+  const attributes = dedupeShopifyTaxonomyAttributes(
+    attributeGroups.flatMap((group) => group.attributes),
+  );
+  const fields: Record<string, ShopifyCategoryMetafieldOptionField> = {};
+
+  const fieldEntries = await mapWithConcurrency(
+    [...SHOPIFY_CATEGORY_METAFIELD_MAPPINGS],
+    4,
+    async (mapping) => {
+    const definition = findShopifyCategoryMetafieldDefinition(
+      effectiveDefinitions,
+      mapping,
+    );
+    const customMatches = findShopifyCustomMetafieldDefinitions(
+      customDefinitions,
+      mapping,
+    );
+    const matchedAttributes = findShopifyTaxonomyAttributesForMapping(
+      attributes,
+      mapping,
+      definition,
+    );
+      const customOptions = (
+        await mapWithConcurrency(customMatches, 3, (customDefinition) =>
+          buildShopifyCustomMetafieldDefinitionOptions(
+            stored.shopDomain,
+            stored.accessToken,
+            customDefinition,
+            warnings,
+          ),
+        )
+      ).flat();
+      const options = mergeShopifyCategoryMetafieldOptions([
+        ...customOptions,
+        ...buildShopifyCategoryMetafieldValueOptions(matchedAttributes),
+      ]);
+      if (!definition && !customMatches.length && !options.length) return null;
+      return {
+        key: mapping.field,
+        field: {
+          formKey: mapping.field,
+          label: mapping.label,
+          shopifyName:
+            cleanField(customMatches[0]?.name) ||
+            cleanField(definition?.name) ||
+            cleanField(matchedAttributes[0]?.name) ||
+            null,
+          shopifyKey:
+            cleanField(customMatches[0]?.key) || cleanField(definition?.key) || null,
+          shopifyType:
+            cleanField(customMatches[0]?.type?.name) ||
+            cleanField(definition?.type?.name) ||
+            null,
+          options,
+        },
+      };
+    },
+  );
+
+  for (const entry of fieldEntries) {
+    if (entry) fields[entry.key] = entry.field;
+  }
+
+  return {
+    categoryId: cleanedCategoryId,
+    hierarchy: attributeGroups.map((group) => ({
+      id: group.id,
+      name: group.name,
+    })),
+    fields,
+    warnings,
+  };
+}
+
 export async function syncShopifyProduct(
   userId: number,
   deviceId: string,
@@ -1231,7 +1402,7 @@ export async function syncShopifyProduct(
       ? {
           productOptions: [
             {
-              name: "Size",
+              name: cleanField(input.variantOptionName) || "Size",
               values: variantDrafts.map((variant) => ({ name: variant.size })),
             },
           ],
@@ -2471,7 +2642,7 @@ async function ensureShopifyCategoryMetafieldDefinitions(
   mappings: ReadonlyArray<(typeof SHOPIFY_CATEGORY_METAFIELD_MAPPINGS)[number]>,
   warnings: string[],
 ): Promise<ShopifyMetafieldDefinitionNode[]> {
-  const definitions = await fetchShopifyCategoryMetafieldDefinitions(
+  const definitions = await fetchShopifyCategoryMetafieldDefinitionsForHierarchy(
     shopDomain,
     accessToken,
     categoryId,
@@ -2483,7 +2654,7 @@ async function ensureShopifyCategoryMetafieldDefinitions(
   );
   if (!missing.length) return dedupeShopifyMetafieldDefinitions(definitions);
 
-  const templates = await fetchShopifyCategoryMetafieldDefinitionTemplates(
+  const templates = await fetchShopifyCategoryMetafieldDefinitionTemplatesForHierarchy(
     shopDomain,
     accessToken,
     categoryId,
@@ -2503,6 +2674,19 @@ async function ensureShopifyCategoryMetafieldDefinitions(
     if (enabled) definitions.push(enabled);
   }
   return dedupeShopifyMetafieldDefinitions(definitions);
+}
+
+async function fetchShopifyCategoryMetafieldDefinitionsForHierarchy(
+  shopDomain: string,
+  accessToken: string,
+  categoryId: string,
+  warnings: string[],
+): Promise<ShopifyMetafieldDefinitionNode[]> {
+  const categoryIds = buildShopifyCategoryHierarchyIds(categoryId).reverse();
+  const results = await mapWithConcurrency(categoryIds, 3, (id) =>
+    fetchShopifyCategoryMetafieldDefinitions(shopDomain, accessToken, id, warnings),
+  );
+  return dedupeShopifyMetafieldDefinitions(results.flat());
 }
 
 async function fetchShopifyCategoryMetafieldDefinitions(
@@ -2549,6 +2733,24 @@ async function fetchShopifyCategoryMetafieldDefinitions(
   return json.data?.metafieldDefinitions?.nodes || [];
 }
 
+async function fetchShopifyCategoryMetafieldDefinitionTemplatesForHierarchy(
+  shopDomain: string,
+  accessToken: string,
+  categoryId: string,
+  warnings: string[],
+): Promise<ShopifyMetafieldDefinitionNode[]> {
+  const categoryIds = buildShopifyCategoryHierarchyIds(categoryId).reverse();
+  const results = await mapWithConcurrency(categoryIds, 3, (id) =>
+    fetchShopifyCategoryMetafieldDefinitionTemplates(
+      shopDomain,
+      accessToken,
+      id,
+      warnings,
+    ),
+  );
+  return dedupeShopifyMetafieldDefinitions(results.flat());
+}
+
 async function fetchShopifyCategoryMetafieldDefinitionTemplates(
   shopDomain: string,
   accessToken: string,
@@ -2587,6 +2789,42 @@ async function fetchShopifyCategoryMetafieldDefinitionTemplates(
     return [];
   }
   return json.data?.standardMetafieldDefinitionTemplates?.nodes || [];
+}
+
+async function fetchShopifyProductCustomMetafieldDefinitions(
+  shopDomain: string,
+  accessToken: string,
+  warnings: string[],
+): Promise<ShopifyMetafieldDefinitionNode[]> {
+  const json = await shopifyGraphql<ShopifyMetafieldDefinitionsResponse>(
+    shopDomain,
+    accessToken,
+    `query BuqiqiProductCustomMetafieldDefinitions {
+      metafieldDefinitions(first: 250, ownerType: PRODUCT) {
+        nodes {
+          id
+          name
+          namespace
+          key
+          type {
+            name
+          }
+          validations {
+            name
+            value
+          }
+        }
+      }
+    }`,
+  );
+  const topLevelErrors = formatGraphqlMessages(json.errors);
+  if (topLevelErrors) {
+    warnings.push(`读取 Shopify 自定义元字段定义失败：${topLevelErrors}`);
+    return [];
+  }
+  return (json.data?.metafieldDefinitions?.nodes || []).filter(
+    (definition) => definition.namespace !== SHOPIFY_CATEGORY_METAFIELD_NAMESPACE,
+  );
 }
 
 async function enableShopifyStandardMetafieldDefinition(
@@ -2875,6 +3113,40 @@ async function fetchShopifyCategoryMetaobjectDefinition(
   return json.data?.metaobjectDefinitionByType || null;
 }
 
+async function fetchShopifyMetaobjectDefinitionById(
+  shopDomain: string,
+  accessToken: string,
+  id: string,
+  warnings: string[],
+): Promise<ShopifyMetaobjectDefinitionNode | null> {
+  const json = await shopifyGraphql<ShopifyMetaobjectDefinitionByIdResponse>(
+    shopDomain,
+    accessToken,
+    `query BuqiqiMetaobjectDefinitionById($id: ID!) {
+      metaobjectDefinition(id: $id) {
+        id
+        type
+        displayNameKey
+        fieldDefinitions {
+          key
+          name
+          required
+          type {
+            name
+          }
+        }
+      }
+    }`,
+    { id },
+  );
+  const topLevelErrors = formatGraphqlMessages(json.errors);
+  if (topLevelErrors) {
+    warnings.push(`读取 Shopify Metaobject 定义失败：${topLevelErrors}`);
+    return null;
+  }
+  return json.data?.metaobjectDefinition || null;
+}
+
 async function fetchShopifyCategoryMetaobjects(
   shopDomain: string,
   accessToken: string,
@@ -2931,13 +3203,174 @@ function findShopifyCategoryMetafieldDefinition(
   );
 }
 
+function findShopifyCustomMetafieldDefinitions(
+  definitions: ShopifyMetafieldDefinitionNode[],
+  mapping: ShopifyCategoryMetafieldMapping,
+): ShopifyMetafieldDefinitionNode[] {
+  return definitions.filter((definition) => {
+    if (definition.namespace === SHOPIFY_CATEGORY_METAFIELD_NAMESPACE) {
+      return false;
+    }
+    const key = normalizeMetafieldMatchText(definition.key);
+    const name = normalizeMetafieldMatchText(definition.name);
+    return [...mapping.keyHints, ...mapping.nameHints].some((hint) => {
+      const normalizedHint = normalizeMetafieldMatchText(hint);
+      return key.includes(normalizedHint) || name.includes(normalizedHint);
+    });
+  });
+}
+
+async function buildShopifyCustomMetafieldDefinitionOptions(
+  shopDomain: string,
+  accessToken: string,
+  definition: ShopifyMetafieldDefinitionNode,
+  warnings: string[],
+): Promise<ShopifyCategoryMetafieldOption[]> {
+  const choiceOptions = parseShopifyMetafieldChoiceOptions(definition);
+  if (choiceOptions.length) return choiceOptions;
+
+  const type = cleanField(definition.type?.name);
+  if (!/metaobject_reference$/.test(type)) return [];
+
+  const metaobjectType = await resolveShopifyMetaobjectDefinitionType(
+    shopDomain,
+    accessToken,
+    definition,
+    warnings,
+  );
+  if (!metaobjectType) return [];
+
+  const metaobjects = await fetchShopifyCategoryMetaobjects(
+    shopDomain,
+    accessToken,
+    metaobjectType,
+    warnings,
+  );
+  return metaobjects
+    .map((node) => {
+      const label = cleanField(node.displayName) || cleanField(node.handle);
+      if (!label) return null;
+      return {
+        id: node.id,
+        label,
+        value: label,
+        attributeName: cleanField(definition.name) || cleanField(definition.key),
+      } satisfies ShopifyCategoryMetafieldOption;
+    })
+    .filter((option): option is ShopifyCategoryMetafieldOption => Boolean(option));
+}
+
+function parseShopifyMetafieldChoiceOptions(
+  definition: ShopifyMetafieldDefinitionNode,
+): ShopifyCategoryMetafieldOption[] {
+  const validation = definition.validations?.find((item) => {
+    const name = normalizeMetafieldMatchText(item.name);
+    return name === "choices" || name === "choice";
+  });
+  const choices = parseShopifyChoiceValidationValue(validation?.value);
+  const attributeName = cleanField(definition.name) || cleanField(definition.key);
+  return choices.map((choice, index) => ({
+    id: `${definition.id}:choice:${index}:${choice}`,
+    label: choice,
+    value: choice,
+    attributeName,
+  }));
+}
+
+function parseShopifyChoiceValidationValue(value?: string | null): string[] {
+  const cleaned = cleanField(value);
+  if (!cleaned) return [];
+
+  const fromJson = parseShopifyChoiceJson(cleaned);
+  if (fromJson.length) return fromJson;
+
+  return Array.from(
+    new Set(
+      cleaned
+        .split(/[，,;；\n|]/)
+        .map((item) => cleanField(item).replace(/^["']|["']$/g, ""))
+        .filter(Boolean),
+    ),
+  );
+}
+
+function parseShopifyChoiceJson(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (Array.isArray(parsed)) {
+      return Array.from(
+        new Set(
+          parsed
+            .map((item) =>
+              typeof item === "string"
+                ? item
+                : item && typeof item === "object"
+                  ? String(
+                      (item as { value?: unknown; label?: unknown; name?: unknown })
+                        .value ??
+                        (item as { label?: unknown }).label ??
+                        (item as { name?: unknown }).name ??
+                        "",
+                    )
+                  : "",
+            )
+            .map(cleanField)
+            .filter(Boolean),
+        ),
+      );
+    }
+  } catch {
+    return [];
+  }
+  return [];
+}
+
+async function resolveShopifyMetaobjectDefinitionType(
+  shopDomain: string,
+  accessToken: string,
+  definition: ShopifyMetafieldDefinitionNode,
+  warnings: string[],
+): Promise<string> {
+  const type = getShopifyCategoryMetaobjectType(definition);
+  if (type) return type;
+
+  const idValidation = definition.validations?.find(
+    (validation) =>
+      validation.name === "metaobject_definition_id" &&
+      cleanField(validation.value),
+  );
+  const definitionId = cleanField(idValidation?.value);
+  if (!definitionId) return "";
+
+  const metaobjectDefinition = await fetchShopifyMetaobjectDefinitionById(
+    shopDomain,
+    accessToken,
+    definitionId,
+    warnings,
+  );
+  return cleanField(metaobjectDefinition?.type);
+}
+
+function mergeShopifyCategoryMetafieldOptions(
+  options: ShopifyCategoryMetafieldOption[],
+): ShopifyCategoryMetafieldOption[] {
+  const byValue = new Map<string, ShopifyCategoryMetafieldOption>();
+  for (const option of options) {
+    const key = normalizeMetafieldMatchText(option.value || option.label);
+    if (!key || byValue.has(key)) continue;
+    byValue.set(key, option);
+  }
+  return Array.from(byValue.values());
+}
+
 function dedupeShopifyMetafieldDefinitions(
   definitions: ShopifyMetafieldDefinitionNode[],
 ) {
   const byKey = new Map<string, ShopifyMetafieldDefinitionNode>();
   for (const definition of definitions) {
     if (!definition.namespace || !definition.key) continue;
-    byKey.set(`${definition.namespace}.${definition.key}`, definition);
+    const key = `${definition.namespace}.${definition.key}`;
+    if (!byKey.has(key)) byKey.set(key, definition);
   }
   return Array.from(byKey.values());
 }
@@ -2951,7 +3384,10 @@ function getShopifyCategoryMetaobjectType(
       cleanField(validation.value),
   );
   if (typedValidation?.value) return typedValidation.value;
-  return definition.key ? `shopify--${definition.key}` : "";
+  if (definition.namespace === SHOPIFY_CATEGORY_METAFIELD_NAMESPACE) {
+    return definition.key ? `shopify--${definition.key}` : "";
+  }
+  return "";
 }
 
 function getShopifyMetaobjectDisplayFieldKey(
@@ -3097,7 +3533,7 @@ async function resolveShopifyTaxonomyValueId(
   inferredValue: string,
   warnings: string[],
 ): Promise<string | null> {
-  const attributes = await fetchShopifyTaxonomyCategoryAttributes(
+  const attributes = await fetchShopifyTaxonomyCategoryAttributesForHierarchy(
     shopDomain,
     accessToken,
     categoryId,
@@ -3114,6 +3550,49 @@ async function resolveShopifyTaxonomyValueId(
     return findShopifyTaxonomyValueInAttributes(hintedAttributes, candidates)?.id || null;
   }
   return findShopifyTaxonomyValueInAttributes(attributes, candidates)?.id || null;
+}
+
+async function fetchShopifyTaxonomyCategoryAttributesForHierarchy(
+  shopDomain: string,
+  accessToken: string,
+  categoryId: string,
+  warnings: string[],
+): Promise<ShopifyTaxonomyAttributeNode[]> {
+  const groups = await fetchShopifyTaxonomyCategoryAttributeGroupsForHierarchy(
+    shopDomain,
+    accessToken,
+    categoryId,
+    warnings,
+  );
+  return dedupeShopifyTaxonomyAttributes(groups.flatMap((group) => group.attributes));
+}
+
+async function fetchShopifyTaxonomyCategoryAttributeGroupsForHierarchy(
+  shopDomain: string,
+  accessToken: string,
+  categoryId: string,
+  warnings: string[],
+): Promise<ShopifyTaxonomyCategoryAttributeGroup[]> {
+  const ids = buildShopifyCategoryHierarchyIds(categoryId);
+  const groups = await mapWithConcurrency(ids, 3, async (id) => {
+    const attributes = await fetchShopifyTaxonomyCategoryAttributes(
+      shopDomain,
+      accessToken,
+      id,
+      warnings,
+    );
+    return {
+      id,
+      name: await fetchShopifyTaxonomyCategoryName(
+        shopDomain,
+        accessToken,
+        id,
+        warnings,
+      ),
+      attributes,
+    };
+  });
+  return groups.filter((group) => group.attributes.length > 0 || group.name);
 }
 
 async function fetchShopifyTaxonomyCategoryAttributes(
@@ -3178,6 +3657,33 @@ async function fetchShopifyTaxonomyCategoryAttributesUncached(
   return json.data?.node?.attributes?.nodes || [];
 }
 
+async function fetchShopifyTaxonomyCategoryName(
+  shopDomain: string,
+  accessToken: string,
+  categoryId: string,
+  warnings: string[],
+): Promise<string | null> {
+  const json = await shopifyGraphql<ShopifyTaxonomyCategoryAttributesResponse>(
+    shopDomain,
+    accessToken,
+    `query BuqiqiTaxonomyCategoryName($id: ID!) {
+      node(id: $id) {
+        ... on TaxonomyCategory {
+          id
+          name
+        }
+      }
+    }`,
+    { id: categoryId },
+  );
+  const topLevelErrors = formatGraphqlMessages(json.errors);
+  if (topLevelErrors) {
+    warnings.push(`Read Shopify taxonomy category failed: ${topLevelErrors}`);
+    return null;
+  }
+  return cleanField(json.data?.node?.name) || null;
+}
+
 function buildShopifyTaxonomyValueCandidates(
   rawValue: string,
   inferredValue: string,
@@ -3225,6 +3731,129 @@ function findShopifyTaxonomyValueInAttributes(
   }
 
   return null;
+}
+
+function buildShopifyCategoryHierarchyIds(categoryId: string): string[] {
+  const cleaned = cleanField(categoryId);
+  const match = cleaned.match(/^gid:\/\/shopify\/TaxonomyCategory\/([a-z0-9-]+)$/i);
+  if (!match) return [];
+  const taxonomyPath = match[1];
+  if (!taxonomyPath || taxonomyPath === "na") return [];
+  const parts = taxonomyPath.split("-").filter(Boolean);
+  if (!parts.length) return [];
+  return parts.map((_, index) => {
+    const path = parts.slice(0, index + 1).join("-");
+    return `gid://shopify/TaxonomyCategory/${path}`;
+  });
+}
+
+function dedupeShopifyTaxonomyAttributes(
+  attributes: ShopifyTaxonomyAttributeNode[],
+): ShopifyTaxonomyAttributeNode[] {
+  const byName = new Map<string, ShopifyTaxonomyAttributeNode>();
+  for (const attribute of attributes) {
+    const normalizedName = normalizeMetafieldMatchText(attribute.name);
+    if (!normalizedName) continue;
+    const existing = byName.get(normalizedName);
+    if (!existing) {
+      byName.set(normalizedName, {
+        ...attribute,
+        values: {
+          nodes: dedupeShopifyTaxonomyValues(attribute.values?.nodes || []),
+        },
+      });
+      continue;
+    }
+    existing.values = {
+      nodes: dedupeShopifyTaxonomyValues([
+        ...(existing.values?.nodes || []),
+        ...(attribute.values?.nodes || []),
+      ]),
+    };
+  }
+  return Array.from(byName.values());
+}
+
+function dedupeShopifyTaxonomyValues(
+  values: ShopifyTaxonomyValueNode[],
+): ShopifyTaxonomyValueNode[] {
+  const byKey = new Map<string, ShopifyTaxonomyValueNode>();
+  for (const value of values) {
+    const key = cleanField(value.id) || normalizeMetafieldMatchText(value.name);
+    if (!key) continue;
+    if (!byKey.has(key)) byKey.set(key, value);
+  }
+  return Array.from(byKey.values());
+}
+
+function findShopifyTaxonomyAttributesForMapping(
+  attributes: ShopifyTaxonomyAttributeNode[],
+  mapping: ShopifyCategoryMetafieldMapping,
+  definition?: ShopifyMetafieldDefinitionNode | null,
+): ShopifyTaxonomyAttributeNode[] {
+  const metaobjectType = definition ? getShopifyCategoryMetaobjectType(definition) : "";
+  const baseFieldKeys = metaobjectType
+    ? getShopifyCategoryBaseFieldKeys(metaobjectType)
+    : [];
+  const hinted = attributes.filter((attribute) =>
+    baseFieldKeys.some((fieldKey) =>
+      shopifyTaxonomyAttributeMatchesField(attribute, fieldKey, metaobjectType),
+    ),
+  );
+  const byMappingName = attributes.filter((attribute) =>
+    shopifyTaxonomyAttributeMatchesMapping(attribute, mapping),
+  );
+  return dedupeShopifyTaxonomyAttributes([...hinted, ...byMappingName]);
+}
+
+function shopifyTaxonomyAttributeMatchesMapping(
+  attribute: ShopifyTaxonomyAttributeNode,
+  mapping: ShopifyCategoryMetafieldMapping,
+): boolean {
+  const name = normalizeMetafieldMatchText(attribute.name);
+  if (!name) return false;
+  return [...mapping.keyHints, ...mapping.nameHints].some((hint) => {
+    const normalizedHint = normalizeMetafieldMatchText(hint);
+    return name.includes(normalizedHint) || normalizedHint.includes(name);
+  });
+}
+
+function buildShopifyCategoryMetafieldValueOptions(
+  attributes: ShopifyTaxonomyAttributeNode[],
+): ShopifyCategoryMetafieldOption[] {
+  const options: ShopifyCategoryMetafieldOption[] = [];
+  const seen = new Set<string>();
+  for (const attribute of attributes) {
+    const attributeName = cleanField(attribute.name) || "Shopify";
+    for (const value of attribute.values?.nodes || []) {
+      const label = cleanField(value.name);
+      if (!label) continue;
+      const key = cleanField(value.id) || normalizeMetafieldMatchText(label);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      options.push({
+        id: cleanField(value.id) || label,
+        label,
+        value: label,
+        attributeName,
+      });
+    }
+  }
+  return options;
+}
+
+function buildFallbackShopifyCategoryMetafieldOptions(
+  categoryId: string,
+): ShopifyCategoryMetafieldOptionsResult {
+  return {
+    categoryId,
+    hierarchy: buildShopifyCategoryHierarchyIds(categoryId).map((id) => ({
+      id,
+      name: null,
+    })),
+    fields: {},
+    warnings: ["当前使用测试密钥，类别元字段官方选项需要真实 Shopify 店铺读取。"],
+  };
 }
 
 function shopifyTaxonomyAttributeMatchesField(
