@@ -4,11 +4,28 @@ import { getSession, requireUser } from "@/lib/auth";
 import {
   buildShopifyOAuthAuthorizeUrl,
   normalizeShopDomain,
-  SHOPIFY_OAUTH_SCOPES,
 } from "@/lib/shopify";
 import { getShopifyDeviceIdFromRequest } from "@/lib/shopify-device";
 
 export const runtime = "nodejs";
+
+function getShopifyAppOrigin(req: NextRequest) {
+  const configuredUrl = (
+    process.env.SHOPIFY_APP_URL ||
+    process.env.DOMAIN ||
+    ""
+  ).trim();
+
+  if (configuredUrl) {
+    try {
+      return new URL(configuredUrl).origin;
+    } catch {
+      throw new Error("SHOPIFY_APP_URL/DOMAIN must be a valid http(s) URL");
+    }
+  }
+
+  return new URL(req.url).origin;
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -25,7 +42,7 @@ export async function POST(req: NextRequest) {
     if (!clientId) throw new Error("客户端 ID 不能为空");
     if (!clientSecret) throw new Error("客户端密钥不能为空");
 
-    const origin = new URL(req.url).origin;
+    const origin = getShopifyAppOrigin(req);
     const redirectUri = new URL("/api/shopify/oauth/callback", origin).toString();
     const state = crypto.randomBytes(20).toString("hex");
     const session = await getSession();
@@ -46,14 +63,13 @@ export async function POST(req: NextRequest) {
       clientId,
       redirectUri,
       state,
-      scopes: SHOPIFY_OAUTH_SCOPES,
     });
 
     return NextResponse.json({
       ok: true,
       authorizeUrl,
       redirectUri,
-      scopes: SHOPIFY_OAUTH_SCOPES,
+      managedInstallation: true,
     });
   } catch (e) {
     const status = (e as { status?: number }).status || 400;

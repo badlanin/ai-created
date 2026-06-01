@@ -12,6 +12,8 @@ services:
       INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD}
       ALLOW_INSECURE_COOKIES: ${ALLOW_INSECURE_COOKIES:-}
       DATA_DIR: /app/data
+      DOMAIN: ${DOMAIN:-}
+      SHOPIFY_APP_URL: ${SHOPIFY_APP_URL:-}
     volumes:
       # SQLite 数据库 + 生成图 + 上传素材都持久化在这里
       - ./data:/app/data

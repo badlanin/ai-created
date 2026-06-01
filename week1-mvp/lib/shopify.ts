@@ -843,7 +843,10 @@ export function buildShopifyOAuthAuthorizeUrl(opts: {
 
   const url = new URL(`https://${domain}/admin/oauth/authorize`);
   url.searchParams.set("client_id", clientId);
-  url.searchParams.set("scope", opts.scopes || SHOPIFY_OAUTH_SCOPES);
+  // Shopify managed installation stores required scopes in the app config.
+  if (opts.scopes) {
+    url.searchParams.set("scope", opts.scopes);
+  }
   url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("state", state);
   return url.toString();
