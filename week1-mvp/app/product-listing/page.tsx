@@ -607,6 +607,13 @@ const SHOPIFY_ALL_CATEGORY_OPTIONS = [
   ...SHOPIFY_CLOTHING_OPTIONS,
 ] as const;
 
+const SHOPIFY_CATEGORY_ZH_BY_EN = new Map(
+  SHOPIFY_ALL_CATEGORY_OPTIONS.map((category) => [
+    normalizeShopifyCategoryLabel(category.en),
+    category.zh,
+  ]),
+);
+
 const SHOPIFY_UNCATEGORIZED_CATEGORY_ID = "gid://shopify/TaxonomyCategory/na";
 const SHOPIFY_APPAREL_ACCESSORIES_CATEGORY_ID =
   "gid://shopify/TaxonomyCategory/aa";
@@ -947,6 +954,34 @@ function findShopifyCategoryByName(value: string) {
 
 function findShopifyCategoryById(id: string) {
   return SHOPIFY_ALL_CATEGORY_OPTIONS.find((item) => item.id === id) || null;
+}
+
+function normalizeShopifyCategoryLabel(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function translateShopifyCategoryLabel(value: string) {
+  const cleaned = value.trim();
+  if (!cleaned) return "";
+  return SHOPIFY_CATEGORY_ZH_BY_EN.get(normalizeShopifyCategoryLabel(cleaned)) || cleaned;
+}
+
+function getShopifyCategoryOptionLabel(
+  category: Pick<ShopifyTaxonomyCategoryOption, "id" | "name" | "fullName">,
+) {
+  const local = findShopifyCategoryById(category.id);
+  return local?.zh || translateShopifyCategoryLabel(category.name);
+}
+
+function getShopifyCategoryOptionFullLabel(
+  category: Pick<ShopifyTaxonomyCategoryOption, "id" | "name" | "fullName">,
+) {
+  const fullName = category.fullName || category.name;
+  const parts = fullName
+    .split(/\s*>\s*/)
+    .map(translateShopifyCategoryLabel)
+    .filter(Boolean);
+  return parts.length ? parts.join(" > ") : getShopifyCategoryOptionLabel(category);
 }
 
 function getShopifyRootCategoryId(id: string): string {
@@ -3191,7 +3226,7 @@ function ShopifyCategoryPicker({
   function chooseCategory(category: ShopifyTaxonomyCategoryOption) {
     onChange({
       id: category.id,
-      name: category.fullName || category.name,
+      name: getShopifyCategoryOptionLabel(category),
     });
     setOpen(false);
     setQuery("");
@@ -3279,7 +3314,7 @@ function ShopifyCategoryPicker({
                     className="max-w-[120px] truncate rounded px-1.5 py-0.5 hover:bg-gray-100 hover:text-gray-800"
                     onClick={() => setPath(path.slice(0, index + 1))}
                   >
-                    {category.name}
+                    {getShopifyCategoryOptionLabel(category)}
                   </button>
                 </span>
               ))}
@@ -3296,6 +3331,9 @@ function ShopifyCategoryPicker({
             ) : items.length ? (
               items.map((category) => {
                 const hasChildren = !category.isLeaf || category.childrenCount > 0;
+                const label = searchText
+                  ? getShopifyCategoryOptionFullLabel(category)
+                  : getShopifyCategoryOptionLabel(category);
                 return (
                   <div
                     key={category.id}
@@ -3307,7 +3345,7 @@ function ShopifyCategoryPicker({
                       onClick={() => chooseCategory(category)}
                     >
                       <span className="block truncate">
-                        {searchText ? category.fullName : category.name}
+                        {label}
                       </span>
                     </button>
                     {!searchText && hasChildren ? (
@@ -3315,7 +3353,7 @@ function ShopifyCategoryPicker({
                         type="button"
                         className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800"
                         onClick={() => setPath((prev) => [...prev, category])}
-                        aria-label={`查看 ${category.name} 子类别`}
+                        aria-label={`查看 ${label} 子类别`}
                       >
                         <ArrowRight size={14} />
                       </button>
