@@ -98,6 +98,7 @@ export type ShopifyProductDraftInput = {
   seoTitle?: string;
   seoDescription?: string;
   variantOptionName?: string;
+  variantOptionMetafieldKey?: string;
   media?: Array<{
     url: string;
     alt?: string;
@@ -105,6 +106,7 @@ export type ShopifyProductDraftInput = {
   }>;
   variants?: Array<{
     size: string;
+    linkedMetafieldValue?: string;
     sku?: string;
     price?: string;
     inventory?: string;
@@ -1239,6 +1241,80 @@ function normalizeShopifyTemplateSuffix(value?: string): string {
   return cleaned.replace(/^product[.-]/i, "").trim();
 }
 
+type ShopifyVariantDraft = NonNullable<ShopifyProductDraftInput["variants"]>[number];
+
+function findShopifyCategoryMetafieldMappingByField(field?: string) {
+  const normalized = cleanField(field);
+  if (!normalized) return null;
+  return (
+    SHOPIFY_CATEGORY_METAFIELD_MAPPINGS.find(
+      (mapping) => mapping.field === normalized,
+    ) || null
+  );
+}
+
+function buildVariantOptionLinkedMetafieldInput(
+  input: ShopifyProductDraftInput,
+  variants: ShopifyVariantDraft[],
+  warnings: string[],
+): { namespace: string; key: string; values: string[] } | null {
+  const mapping = findShopifyCategoryMetafieldMappingByField(
+    input.variantOptionMetafieldKey,
+  );
+  if (!mapping) return null;
+
+  const key = cleanField(mapping.keyHints[0]);
+  if (!key) return null;
+
+  const values = Array.from(
+    new Set(
+      variants
+        .map((variant) =>
+          cleanField(variant.linkedMetafieldValue || variant.size),
+        )
+        .filter(Boolean),
+    ),
+  );
+  if (!values.length) return null;
+
+  warnings.push(`已将多属性选项关联到 Shopify 类别元字段：shopify.${key}`);
+  return {
+    namespace: SHOPIFY_CATEGORY_METAFIELD_NAMESPACE,
+    key,
+    values,
+  };
+}
+
+function buildVariantOptionCreateValueInput(
+  variant: ShopifyVariantDraft,
+  linkedMetafield: { namespace: string; key: string; values: string[] } | null,
+) {
+  const name = cleanField(variant.size);
+  const linkedMetafieldValue = cleanField(variant.linkedMetafieldValue || name);
+  return {
+    name,
+    ...(linkedMetafield && linkedMetafieldValue
+      ? { linkedMetafieldValue }
+      : {}),
+  };
+}
+
+function buildVariantOptionValueInput(
+  optionName: string,
+  variant: ShopifyVariantDraft,
+  linkedMetafield: { namespace: string; key: string; values: string[] } | null,
+) {
+  const name = cleanField(variant.size);
+  const linkedMetafieldValue = cleanField(variant.linkedMetafieldValue || name);
+  return {
+    optionName,
+    name,
+    ...(linkedMetafield && linkedMetafieldValue
+      ? { linkedMetafieldValue }
+      : {}),
+  };
+}
+
 export async function getShopifyCategoryMetafieldOptions(
   userId: number,
   deviceId: string,
@@ -1516,6 +1592,12 @@ export async function syncShopifyProduct(
   const templateSuffix = normalizeShopifyTemplateSuffix(
     input.templateStyle || input.templateSuffix,
   );
+  const variantOptionName = cleanField(input.variantOptionName) || "Size";
+  const variantOptionLinkedMetafield = buildVariantOptionLinkedMetafieldInput(
+    input,
+    variantDrafts,
+    warnings,
+  );
   const productInput = {
     title,
     descriptionHtml: textToHtml(input.description),
@@ -1535,8 +1617,16 @@ export async function syncShopifyProduct(
       ? {
           productOptions: [
             {
-              name: cleanField(input.variantOptionName) || "Size",
-              values: variantDrafts.map((variant) => ({ name: variant.size })),
+              name: variantOptionName,
+              ...(variantOptionLinkedMetafield
+                ? { linkedMetafield: variantOptionLinkedMetafield }
+                : {}),
+              values: variantDrafts.map((variant) =>
+                buildVariantOptionCreateValueInput(
+                  variant,
+                  variantOptionLinkedMetafield,
+                ),
+              ),
             },
           ],
         }
@@ -1691,7 +1781,13 @@ export async function syncShopifyProduct(
   if (extraVariantDrafts.length) {
     const createVariantInput = extraVariantDrafts.map((variant) => {
       const inputVariant: Record<string, unknown> = {
-        optionValues: [{ optionName: "Size", name: variant.size }],
+        optionValues: [
+          buildVariantOptionValueInput(
+            variantOptionName,
+            variant,
+            variantOptionLinkedMetafield,
+          ),
+        ],
       };
       const variantPrice = normalizeVariantPrice(variant.price, input.price);
       if (variantPrice) inputVariant.price = variantPrice;

@@ -12,6 +12,7 @@ import {
   ChevronDown,
   Clock,
   Crop as CropIcon,
+  Database,
   Eye,
   ExternalLink,
   FileText,
@@ -56,6 +57,7 @@ import {
   type ProductMediaRole,
 } from "@/lib/product-listing-draft";
 import { fetchWithShopifyDevice } from "@/lib/shopify-device-client";
+import shopifyTaxonomyZhCn from "@/lib/shopify-taxonomy-zh-cn.generated.json";
 
 type ShopifyBinding = {
   shopDomain: string;
@@ -107,6 +109,7 @@ type ProductForm = {
   seoTitle: string;
   seoDescription: string;
   variantOptionName: string;
+  variantOptionMetafieldKey: string;
 };
 
 type CategoryMetafieldFormKey =
@@ -174,6 +177,7 @@ type ProductVariantRow = {
   isMainImage: boolean;
   imageUrl: string;
   imageAlt: string;
+  linkedMetafieldValue: string;
 };
 
 type AiImageSuggestion = {
@@ -231,17 +235,18 @@ const SHOPIFY_PRODUCT_STATUS_OPTIONS: Array<{
 const CATEGORY_METAFIELD_ROWS: Array<{
   key: CategoryMetafieldFormKey;
   label: string;
+  aliases?: string[];
 }> = [
-  { key: "categoryColor", label: "颜色" },
-  { key: "categorySize", label: "尺寸" },
-  { key: "categoryFabric", label: "织物" },
-  { key: "categoryAgeGroup", label: "年龄段" },
-  { key: "categoryOccasion", label: "穿着场合" },
-  { key: "categoryDressStyle", label: "裙子风格" },
-  { key: "categoryNeckline", label: "领口" },
-  { key: "categoryDressLengthType", label: "裙子/连衣裙长度类型" },
-  { key: "categorySleeveLengthType", label: "袖长类型" },
-  { key: "categoryTargetGender", label: "目标性别" },
+  { key: "categoryColor", label: "颜色", aliases: ["Color"] },
+  { key: "categorySize", label: "尺寸", aliases: ["Size"] },
+  { key: "categoryFabric", label: "织物", aliases: ["面料材质", "材质", "Fabric", "Material"] },
+  { key: "categoryAgeGroup", label: "年龄段", aliases: ["Age group"] },
+  { key: "categoryOccasion", label: "穿着场合", aliases: ["场合", "Occasion"] },
+  { key: "categoryDressStyle", label: "裙子风格", aliases: ["裙型", "Dress style"] },
+  { key: "categoryNeckline", label: "领口", aliases: ["领口设计", "Neckline"] },
+  { key: "categoryDressLengthType", label: "裙子/连衣裙长度类型", aliases: ["裙长", "Dress length type"] },
+  { key: "categorySleeveLengthType", label: "袖长类型", aliases: ["袖长", "Sleeve length type"] },
+  { key: "categoryTargetGender", label: "目标性别", aliases: ["性别", "Target gender", "Gender"] },
 ];
 
 const VARIANT_OPTION_RECOMMENDATIONS = [
@@ -255,6 +260,28 @@ const VARIANT_OPTION_RECOMMENDATIONS = [
   "裙子/连衣裙长度类型",
   "袖长类型",
 ];
+
+function getCategoryMetafieldRowByKey(key?: string) {
+  if (!key) return null;
+  return CATEGORY_METAFIELD_ROWS.find((row) => row.key === key) || null;
+}
+
+function getCategoryMetafieldRowByLabel(value: string) {
+  const normalized = normalizeCategoryMetafieldMemoryValue(value).toLowerCase();
+  if (!normalized) return null;
+  return (
+    CATEGORY_METAFIELD_ROWS.find(
+      (row) => {
+        const aliases = [row.label, row.key, ...(row.aliases || [])];
+        return aliases.some(
+          (alias) =>
+            normalizeCategoryMetafieldMemoryValue(alias).toLowerCase() ===
+            normalized,
+        );
+      },
+    ) || null
+  );
+}
 
 const CATEGORY_COLOR_OPTIONS = [
   { label: "海军蓝", value: "海军蓝", color: "#2d2aa4", badge: "推荐" },
@@ -329,6 +356,7 @@ const EMPTY_FORM: ProductForm = {
   seoTitle: "",
   seoDescription: "",
   variantOptionName: "Size",
+  variantOptionMetafieldKey: "",
 };
 
 const SHOPIFY_CATEGORY_OPTIONS = [
@@ -619,6 +647,30 @@ const SHOPIFY_ALL_CATEGORY_OPTIONS = [
   ...SHOPIFY_APPAREL_ACCESSORY_OPTIONS,
   ...SHOPIFY_CLOTHING_OPTIONS,
 ] as const;
+
+type ShopifyStaticCategoryOption = (typeof SHOPIFY_ALL_CATEGORY_OPTIONS)[number];
+type ShopifyResolvedCategoryOption =
+  | ShopifyStaticCategoryOption
+  | { id: string; zh: string; en: string };
+
+const SHOPIFY_TAXONOMY_ZH_FULL_NAME_BY_ID = shopifyTaxonomyZhCn.categories as Record<
+  string,
+  string
+>;
+
+const SHOPIFY_TAXONOMY_ZH_ENTRIES = Object.entries(
+  SHOPIFY_TAXONOMY_ZH_FULL_NAME_BY_ID,
+).map(([id, fullName]) => {
+  const parts = fullName.split(/\s*>\s*/).filter(Boolean);
+  const zh = parts[parts.length - 1] || fullName;
+  return {
+    id,
+    zh,
+    fullName,
+    normalizedZh: normalizeShopifyCategoryLabel(zh),
+    normalizedFullName: normalizeShopifyCategoryLabel(fullName),
+  };
+});
 
 const SHOPIFY_CATEGORY_ZH_BY_EN = new Map(
   SHOPIFY_ALL_CATEGORY_OPTIONS.map((category) => [
@@ -926,6 +978,7 @@ function mapKeyValueTextToProductForm(value: string): Partial<ProductForm> {
     seoTitle: ["SEO标题", "SEO 标题", "SEO Title"],
     seoDescription: ["SEO描述", "SEO 描述", "SEO Description"],
     variantOptionName: ["多属性名称", "选项名称", "Option name", "Variant option"],
+    variantOptionMetafieldKey: [],
   };
   const result: Partial<ProductForm> = {};
   for (const [field, labels] of Object.entries(aliases) as Array<
@@ -950,27 +1003,55 @@ function mapKeyValueTextToProductForm(value: string): Partial<ProductForm> {
   return result;
 }
 
-function findShopifyCategoryByName(value: string) {
+function findShopifyCategoryByName(
+  value: string,
+): ShopifyResolvedCategoryOption | null {
   const normalized = value.trim().toLowerCase();
   if (!normalized) return null;
-  return (
-    SHOPIFY_ALL_CATEGORY_OPTIONS.find(
-      (item) =>
-        item.id === value ||
-        item.zh === value ||
-        item.en.toLowerCase() === normalized ||
-        item.zh.includes(value) ||
-        item.en.toLowerCase().includes(normalized),
-    ) || null
+  const local = SHOPIFY_ALL_CATEGORY_OPTIONS.find(
+    (item) =>
+      item.id === value ||
+      item.zh === value ||
+      item.en.toLowerCase() === normalized ||
+      item.zh.includes(value) ||
+      item.en.toLowerCase().includes(normalized),
   );
+  if (local) return local;
+
+  const official = SHOPIFY_TAXONOMY_ZH_ENTRIES.find(
+    (item) =>
+      item.id === value ||
+      item.normalizedZh === normalized ||
+      item.normalizedFullName === normalized ||
+      item.zh.includes(value) ||
+      item.fullName.includes(value),
+  );
+  return official ? { id: official.id, zh: official.zh, en: official.zh } : null;
 }
 
-function findShopifyCategoryById(id: string) {
-  return SHOPIFY_ALL_CATEGORY_OPTIONS.find((item) => item.id === id) || null;
+function findShopifyCategoryById(id: string): ShopifyResolvedCategoryOption | null {
+  const local = SHOPIFY_ALL_CATEGORY_OPTIONS.find((item) => item.id === id);
+  if (local) return local;
+  const officialFullName = getShopifyTaxonomyZhFullNameById(id);
+  if (!officialFullName) return null;
+  return {
+    id,
+    zh: getShopifyTaxonomyLeafLabel(officialFullName),
+    en: getShopifyTaxonomyLeafLabel(officialFullName),
+  };
 }
 
 function normalizeShopifyCategoryLabel(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function getShopifyTaxonomyZhFullNameById(id: string) {
+  return SHOPIFY_TAXONOMY_ZH_FULL_NAME_BY_ID[id] || "";
+}
+
+function getShopifyTaxonomyLeafLabel(fullName: string) {
+  const parts = fullName.split(/\s*>\s*/).filter(Boolean);
+  return parts[parts.length - 1] || fullName;
 }
 
 function translateShopifyCategoryLabel(value: string) {
@@ -982,6 +1063,8 @@ function translateShopifyCategoryLabel(value: string) {
 function getShopifyCategoryOptionLabel(
   category: Pick<ShopifyTaxonomyCategoryOption, "id" | "name" | "fullName">,
 ) {
+  const officialFullName = getShopifyTaxonomyZhFullNameById(category.id);
+  if (officialFullName) return getShopifyTaxonomyLeafLabel(officialFullName);
   const local = findShopifyCategoryById(category.id);
   return local?.zh || translateShopifyCategoryLabel(category.name);
 }
@@ -989,12 +1072,21 @@ function getShopifyCategoryOptionLabel(
 function getShopifyCategoryOptionFullLabel(
   category: Pick<ShopifyTaxonomyCategoryOption, "id" | "name" | "fullName">,
 ) {
+  const officialFullName = getShopifyTaxonomyZhFullNameById(category.id);
+  if (officialFullName) return officialFullName;
   const fullName = category.fullName || category.name;
   const parts = fullName
     .split(/\s*>\s*/)
     .map(translateShopifyCategoryLabel)
     .filter(Boolean);
   return parts.length ? parts.join(" > ") : getShopifyCategoryOptionLabel(category);
+}
+
+function getShopifySelectedCategoryLabel(id: string, fallbackName: string) {
+  const officialFullName = getShopifyTaxonomyZhFullNameById(id);
+  if (officialFullName) return getShopifyTaxonomyLeafLabel(officialFullName);
+  const local = findShopifyCategoryById(id);
+  return local?.zh || translateShopifyCategoryLabel(fallbackName) || fallbackName;
 }
 
 function getShopifyRootCategoryId(id: string): string {
@@ -1033,6 +1125,14 @@ function isShopifyTaxonomyCategoryId(value: string): boolean {
 
 function getShopifyCategoryMetafieldContext(id: string): string {
   const category = findShopifyCategoryById(id);
+  const officialFullName = getShopifyTaxonomyZhFullNameById(id);
+  if (officialFullName) {
+    const parts = officialFullName.split(/\s*>\s*/).filter(Boolean);
+    if (parts.length >= 2) {
+      return `${parts.slice(0, -1).join(" > ")} 中的 ${parts[parts.length - 1]}`;
+    }
+    return officialFullName;
+  }
   if (!category) return "未分类";
   const clothingCategory = SHOPIFY_CLOTHING_OPTIONS.find((item) => item.id === id);
   if (clothingCategory) return `服装 中的 ${clothingCategory.zh}`;
@@ -1536,6 +1636,7 @@ function buildDefaultVariantRows(form: ProductForm = EMPTY_FORM): ProductVariant
     isMainImage: true,
     imageUrl: "",
     imageAlt: size,
+    linkedMetafieldValue: "",
   }));
 }
 
@@ -1550,6 +1651,7 @@ function buildClearedDefaultVariantRows(): ProductVariantRow[] {
     isMainImage: true,
     imageUrl: "",
     imageAlt: size,
+    linkedMetafieldValue: "",
   }));
 }
 
@@ -2192,6 +2294,7 @@ export default function ProductListingPage() {
             })),
             variants: variantRows.map((row, index) => ({
               size: row.size,
+              linkedMetafieldValue: row.linkedMetafieldValue,
               sku: row.sku || variantSku(form.sku, row.size, index),
               price: variantPriceForSync(row.price, form.price),
               inventory: row.inventory,
@@ -3780,7 +3883,7 @@ function ShopifyCategoryPicker({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const selected =
     valueId && valueId !== SHOPIFY_UNCATEGORIZED_CATEGORY_ID
-      ? valueName || "已选择类别"
+      ? getShopifySelectedCategoryLabel(valueId, valueName) || "已选择类别"
       : "";
   const parent = path.length ? path[path.length - 1] : null;
   const searchText = query.trim();
@@ -4075,6 +4178,15 @@ function ProductFormPanel({
     form.shopifyCategoryId,
   );
   const variantOptionName = form.variantOptionName.trim() || "Size";
+  const variantLinkedRow = getCategoryMetafieldRowByKey(
+    form.variantOptionMetafieldKey,
+  );
+  const variantLinkedField = variantLinkedRow
+    ? shopifyCategoryMetafields[variantLinkedRow.key]
+    : undefined;
+  const variantLinkedOptions = variantLinkedRow
+    ? variantLinkedField?.options || []
+    : [];
   const filteredVariantOptionRecommendations = useMemo(() => {
     const keyword = variantOptionSearch.trim().toLowerCase();
     if (!keyword) return VARIANT_OPTION_RECOMMENDATIONS;
@@ -4227,20 +4339,57 @@ function ProductFormPanel({
   function normalizeVariantOptionName(name: string) {
     const cleaned = name.trim();
     if (!cleaned) return "Size";
-    return cleaned === "尺寸" ? "Size" : cleaned;
+    return cleaned;
   }
 
-  function openVariantDialog(optionName = variantOptionName) {
+  function getVariantOptionMetafieldKey(optionName: string) {
+    return getCategoryMetafieldRowByLabel(optionName)?.key || "";
+  }
+
+  function getLinkedMetafieldValueForVariantValue(value: string) {
+    if (!variantLinkedRow) return "";
+    const option = getCategoryMetafieldOptionForValue(value, variantLinkedOptions);
+    if (!option) return "";
+    return option.id.startsWith("gid://shopify/")
+      ? option.id
+      : option.value || option.label;
+  }
+
+  function getVariantOptionDisplayValue(item: ShopifyCategoryMetafieldOption) {
+    return item.label || item.value;
+  }
+
+  function toggleVariantDialogValue(item: ShopifyCategoryMetafieldOption) {
+    const itemValue = item.value || item.label;
+    if (!itemValue) return;
+    setVariantSizeText((prev) =>
+      toggleCategoryMetafieldInputValue(prev, itemValue),
+    );
+  }
+
+  function openVariantDialog(optionName = variantOptionName, linkedKey?: string) {
     const nextOptionName = normalizeVariantOptionName(optionName);
+    const nextLinkedKey =
+      linkedKey !== undefined
+        ? linkedKey
+        : getVariantOptionMetafieldKey(nextOptionName);
     setVariantSectionCollapsed(false);
-    update("variantOptionName", nextOptionName);
+    setForm((prev) => ({
+      ...prev,
+      variantOptionName: nextOptionName,
+      variantOptionMetafieldKey: nextLinkedKey,
+    }));
     const useExistingValues = variantRows.length > 0 && nextOptionName === variantOptionName;
+    const linkedFieldValue =
+      nextLinkedKey && nextLinkedKey in form
+        ? String(form[nextLinkedKey as CategoryMetafieldFormKey] || "")
+        : "";
     setVariantSizeText(
       useExistingValues
         ? variantRows.map((row) => row.size).join("\n")
         : nextOptionName === "Size"
           ? DEFAULT_SIZE_VARIANT_OPTIONS.join("\n")
-          : "",
+          : linkedFieldValue,
     );
     setVariantFileName("");
     setVariantDialogOpen(true);
@@ -4249,13 +4398,14 @@ function ProductFormPanel({
   function chooseVariantOption(optionName: string) {
     setVariantOptionMenuOpen(false);
     setVariantOptionSearch("");
-    openVariantDialog(optionName);
+    openVariantDialog(optionName, getVariantOptionMetafieldKey(optionName));
   }
 
   function openCustomVariantOption() {
+    const customName = variantOptionSearch.trim() || "自定义选项";
     setVariantOptionMenuOpen(false);
     setVariantOptionSearch("");
-    openVariantDialog("自定义选项");
+    openVariantDialog(customName, getVariantOptionMetafieldKey(customName));
   }
 
   async function importVariantSizeFile(files: FileList | null) {
@@ -4269,14 +4419,33 @@ function ProductFormPanel({
   function confirmVariantRows() {
     const sizes = parsedVariantSizes;
     if (!sizes.length) return;
-    update("variantOptionName", normalizeVariantOptionName(form.variantOptionName));
+    const normalizedOptionName = normalizeVariantOptionName(form.variantOptionName);
+    const linkedKey = getVariantOptionMetafieldKey(normalizedOptionName);
     const existingBySize = new Map(variantRows.map((row) => [row.size, row]));
+    setForm((prev) => ({
+      ...prev,
+      variantOptionName: normalizedOptionName,
+      variantOptionMetafieldKey: linkedKey,
+      ...(linkedKey
+        ? {
+            [linkedKey]: addCategoryMetafieldInputValues(
+              String(prev[linkedKey as CategoryMetafieldFormKey] || ""),
+              sizes,
+            ),
+          }
+        : {}),
+    }));
     setVariantRows(
       sizes.map((size, index) => {
         const existing = existingBySize.get(size);
+        const linkedMetafieldValue =
+          getLinkedMetafieldValueForVariantValue(size) ||
+          existing?.linkedMetafieldValue ||
+          "";
         return {
           id: existing?.id || `variant-${Date.now()}-${index}`,
           size,
+          linkedMetafieldValue,
           sku: existing?.sku || variantSku(form.sku, size, index),
           price: existing?.price || form.price || "0.00",
           inventory: existing ? existing.inventory : form.inventory || "",
@@ -4948,9 +5117,68 @@ function ProductFormPanel({
           <Input
             label="选项名称"
             value={form.variantOptionName}
-            onChange={(e) => update("variantOptionName", e.target.value)}
-            placeholder="Size / Color / Fabric"
+            onChange={(e) => {
+              const nextName = e.target.value;
+              setForm((prev) => ({
+                ...prev,
+                variantOptionName: nextName,
+                variantOptionMetafieldKey: getVariantOptionMetafieldKey(nextName),
+              }));
+            }}
+            placeholder="颜色 / 尺寸 / 织物"
           />
+          {variantLinkedRow ? (
+            <div className="rounded-md border border-purple-100 bg-purple-50/40 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="inline-flex items-center gap-1.5 text-xs font-medium text-purple-700">
+                  <Database size={13} />
+                  已关联类别元字段：{variantLinkedRow.label}
+                </div>
+                <span className="rounded-full bg-white px-2 py-0.5 text-[11px] text-gray-500 ring-1 ring-purple-100">
+                  {getCategoryMetafieldSourceLabel(variantLinkedField)}
+                </span>
+              </div>
+              {variantLinkedOptions.length ? (
+                <div className="mt-3 max-h-40 overflow-y-auto rounded-md border border-purple-100 bg-white p-2">
+                  <div className="mb-2 text-[11px] font-medium text-gray-500">
+                    从元字段条目中选择，确认后会同步回右侧类别元字段
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {variantLinkedOptions.map((item) => {
+                      const itemValue = item.value || item.label;
+                      const active = hasCategoryMetafieldInputValue(
+                        variantSizeText,
+                        itemValue,
+                      );
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium transition-colors ${
+                            active
+                              ? "bg-purple-100 text-purple-700 ring-1 ring-purple-300"
+                              : "bg-gray-100 text-gray-800 hover:bg-gray-200"
+                          }`}
+                          onClick={() => toggleVariantDialogValue(item)}
+                        >
+                          {active ? <Check size={12} /> : null}
+                          <span>{getVariantOptionDisplayValue(item)}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-2 rounded-md border border-dashed border-purple-100 bg-white px-3 py-2 text-xs text-gray-500">
+                  当前分类暂未读取到这个元字段的官方/后台条目，可先手动输入；名称仍会按官方字段映射。
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="rounded-md border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-500">
+              输入“颜色、尺寸、织物、年龄段、穿着场合、裙子风格、领口、裙子/连衣裙长度类型、袖长类型”会自动关联官方类别元字段。
+            </div>
+          )}
           <Textarea
             label="选项值"
             value={variantSizeText}
