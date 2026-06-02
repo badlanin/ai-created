@@ -1454,12 +1454,19 @@ function cleanupAiImageUrl(value: string): string {
     .replace(/[)\]}>，,。；;、]+$/g, "");
 }
 
+function getAiGeneratedImageUrlSource(value: string): string {
+  const markerIndex = value.lastIndexOf("大模型生成图片");
+  if (markerIndex < 0) return value;
+  return value.slice(markerIndex);
+}
+
 function extractAiImageUrls(value: string): string[] {
   const seen = new Set<string>();
   const urls: string[] = [];
+  const source = getAiGeneratedImageUrlSource(value);
   const imagePattern =
     /(?:https?:\/\/[^\s"'<>]+|\/assets\/[^\s"'<>]+?\.(?:png|jpe?g|webp|gif))(?:\?[^\s"'<>]*)?/gi;
-  for (const match of value.matchAll(imagePattern)) {
+  for (const match of source.matchAll(imagePattern)) {
     const url = cleanupAiImageUrl(match[0] || "");
     if (!url) continue;
     const key = normalizeMediaUrlForCompare(url);

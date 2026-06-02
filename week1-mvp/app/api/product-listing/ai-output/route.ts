@@ -14,7 +14,12 @@ export const maxDuration = 300;
 
 const CALL_TIMEOUT_MS = 55_000;
 const IMAGE_GEN_TIMEOUT_MS = 240_000;
-const MAX_PRODUCT_LISTING_IMAGE_GENERATIONS = 4;
+const MAX_PRODUCT_LISTING_IMAGE_GENERATIONS = 6;
+
+type ProductListingImageInput = {
+  buffer: Buffer;
+  mimeType: string;
+};
 
 type MediaInput = {
   url?: string;
@@ -104,6 +109,7 @@ const PRODUCT_LISTING_SYSTEM_PROMPT = `你是专业的 Shopify 礼服商品上�
 - 使用 key: value 格式，每个字段单独一行。
 - 字段建议包含：商品标题、商品描述、产品类型、供应商、产品系列、标签、主色调、面料材质、领口设计、整体版型、SKU、原价、售价、库存、SEO标题、SEO描述。
 - 不要主动输出 Shopify 类别元字段；只有用户提示词明确要求输出类别元字段、元字段，或明确写出“类别元字段颜色/类别元字段尺寸”等完整类别元字段名时，才输出对应字段。
+- 如果用户提示词要求生成图片，不要在文字输出中编造图片 URL、/assets/outputs 路径、文件名或占位图；图片生成由系统另行处理。
 - 字段名使用中文，字段值可按用户要求使用英文或中文；如果用户没有指定，商品标题、描述、标签和 SEO 信息优先使用英文。
 - 不要编造图片中看不到的强细节；不确定的字段保持稳妥、商品化表达。
 - 内容保持干净，去掉多余空格、乱码、无效控制字符。`;
@@ -172,6 +178,7 @@ export async function POST(req: NextRequest) {
       wantsCategoryMetafields
         ? formatCategoryMetafieldCandidateSummary(categoryMetafieldCandidates)
         : "";
+    const shouldGenerateImages = shouldGenerateProductListingImages(prompt);
 
     const client = buildGenaiClient();
     const result = await withTimeout(
@@ -202,6 +209,13 @@ ${categoryMetafieldCandidateSummary}
 
 请严格根据以上 ${images.length} 张商品图片生成，不要脱离图片内容。`,
               },
+              ...(shouldGenerateImages
+                ? [
+                    {
+                      text: "用户提示词包含图片生成要求。文字解析阶段不要输出、编造或占位任何图片路径、图片 URL、/assets/outputs 文件名；只输出商品文字字段，真实图片由系统的图片生成模型单独生成。",
+                    },
+                  ]
+                : []),
               ...images.map((image) => ({
                 inlineData: {
                   mimeType: image.mimeType,
@@ -224,7 +238,6 @@ ${categoryMetafieldCandidateSummary}
       throw new Error("大模型没有返回可用内容，请调整提示词后重试。");
     }
 
-    const shouldGenerateImages = shouldGenerateProductListingImages(prompt);
     const generatedImageUrls = shouldGenerateImages
       ? await generateProductListingImages({
           prompt,
@@ -400,7 +413,7 @@ async function generateProductListingImages({
   warnings,
 }: {
   prompt: string;
-  images: Array<{ buffer: Buffer; mimeType: string }>;
+  images: ProductListingImageInput[];
   userId: number;
   warnings: string[];
 }): Promise<string[]> {
@@ -409,16 +422,29 @@ async function generateProductListingImages({
   const outputsDir = path.join(DATA_DIR_PATH, "outputs");
   await fs.mkdir(outputsDir, { recursive: true });
   const urls: string[] = [];
+  const seriesSeed = Math.floor(Math.random() * 1_000_000_000);
+  let seriesReference: ProductListingImageInput | null = null;
+  let consecutiveFailures = 0;
 
   for (let i = 0; i < count; i++) {
     try {
-      const result = await withTimeoutMessage(
+      const inputs: ProductListingImageInput[] = seriesReference
+        ? [...images, seriesReference]
+        : images;
+      const result: Awaited<ReturnType<typeof generateImage>> =
+        await withTimeoutMessage(
         generateImage({
-          inputs: images,
-          prompt: buildProductListingImagePrompt(prompt, i + 1, count),
+          inputs,
+          prompt: buildProductListingImagePrompt(
+            prompt,
+            i + 1,
+            count,
+            Boolean(seriesReference),
+          ),
           modelId,
           aspectRatio: "3:4",
           imageSize: "1K",
+          seed: seriesSeed,
           temperature: 0.18,
         }),
         IMAGE_GEN_TIMEOUT_MS,
@@ -434,6 +460,14 @@ async function generateProductListingImages({
         .slice(2, 8)}.${ext}`;
       await fs.writeFile(path.join(outputsDir, filename), result.data);
       urls.push(`/assets/outputs/${filename}`);
+      consecutiveFailures = 0;
+
+      if (!seriesReference) {
+        seriesReference = {
+          buffer: result.data,
+          mimeType: result.mimeType,
+        };
+      }
 
       recordUsage({
         userId,
@@ -466,7 +500,8 @@ async function generateProductListingImages({
           e instanceof Error ? e.message : String(e)
         }`,
       );
-      break;
+      consecutiveFailures += 1;
+      if (consecutiveFailures >= 2) break;
     }
   }
 
@@ -477,6 +512,7 @@ function buildProductListingImagePrompt(
   prompt: string,
   index: number,
   total: number,
+  hasSeriesReference: boolean,
 ): string {
   return `你是专业的 Shopify 礼服商品摄影生成模型。
 请根据用户提示词和输入的商品媒体参考图生成商品上架图片。
@@ -486,10 +522,31 @@ ${prompt}
 
 生成要求：
 - 这是第 ${index}/${total} 张图片，请保持商品服装与参考图一致。
+- 本张拍摄角度：${getProductListingAngleInstruction(index, total)}
+- 同一批次所有图片必须使用同一个背景、同一场景、同一光线、同一色调和同一摄影风格；只改变拍摄角度、模特姿势或构图距离。
+- 如果用户提示词同时出现“不同背景”和“背景一致/场景一致”，以背景一致、场景一致为最高优先级。
+- ${
+    hasSeriesReference
+      ? "最后一张输入图是本批次第一张已生成图片，请严格参考它的背景、空间、光线和色调，后续图片不要换成纯灰底、纯色棚拍或其他场景。"
+      : "先确定一个适合整批图片复用的干净商品摄影背景，后续图片会以这张图作为背景参考。"
+  }
 - 只根据商品媒体图提取服装颜色、面料、版型、领口、长度、装饰和细节。
 - 不要复制参考图里的原始模特姿势、原始背景或水印。
 - 输出适合 Shopify 商品上架的干净、高级、真实摄影风格图片。
 - 主体完整、构图居中、服装细节清晰，不要裁切头部、手臂、脚或裙摆。`;
+}
+
+function getProductListingAngleInstruction(index: number, total: number): string {
+  if (total <= 1) return "正面全身商品照";
+  const angles = [
+    "正面全身商品照，清楚展示整体版型",
+    "背面全身商品照，清楚展示后背和裙摆",
+    "45 度侧身商品照，展示侧面轮廓和垂坠",
+    "近景细节商品照，展示领口、面料和装饰",
+    "另一侧 45 度商品照，展示不同侧面轮廓",
+    "半身或三分之二构图，展示上身细节和腰线",
+  ];
+  return angles[(index - 1) % angles.length];
 }
 
 function appendGeneratedImageUrls(text: string, urls: string[]): string {
