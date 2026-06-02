@@ -99,6 +99,7 @@ export type ShopifyProductDraftInput = {
   seoDescription?: string;
   variantOptionName?: string;
   variantOptionMetafieldKey?: string;
+  variantGroupByOptionName?: string;
   media?: Array<{
     url: string;
     alt?: string;
@@ -128,7 +129,7 @@ export type ShopifyCategoryMetafieldOptionField = {
   shopifyName: string | null;
   shopifyKey: string | null;
   shopifyType: string | null;
-  source: "store" | "official" | "none";
+  source: "store" | "official" | "mixed" | "none";
   options: ShopifyCategoryMetafieldOption[];
 };
 
@@ -1418,12 +1419,18 @@ export async function getShopifyCategoryMetafieldOptions(
       ]);
       const officialOptions =
         buildShopifyCategoryMetafieldValueOptions(matchedAttributes);
-      const options = storeOptions.length ? storeOptions : officialOptions;
-      const source: ShopifyCategoryMetafieldOptionField["source"] = storeOptions.length
-        ? "store"
-        : officialOptions.length
-          ? "official"
-          : "none";
+      const options = mergeShopifyCategoryMetafieldOptions([
+        ...storeOptions,
+        ...officialOptions,
+      ]);
+      const source: ShopifyCategoryMetafieldOptionField["source"] =
+        storeOptions.length && officialOptions.length
+          ? "mixed"
+          : storeOptions.length
+            ? "store"
+            : officialOptions.length
+              ? "official"
+              : "none";
       if (!definition && !customMatches.length && !options.length) return null;
       return {
         key: mapping.field,
@@ -1592,7 +1599,10 @@ export async function syncShopifyProduct(
   const templateSuffix = normalizeShopifyTemplateSuffix(
     input.templateStyle || input.templateSuffix,
   );
-  const variantOptionName = cleanField(input.variantOptionName) || "Size";
+  const variantOptionName =
+    cleanField(input.variantGroupByOptionName) ||
+    cleanField(input.variantOptionName) ||
+    "Size";
   const variantOptionLinkedMetafield = buildVariantOptionLinkedMetafieldInput(
     input,
     variantDrafts,

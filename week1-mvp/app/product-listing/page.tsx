@@ -16,6 +16,7 @@ import {
   Eye,
   ExternalLink,
   FileText,
+  GripVertical,
   Image as ImageIcon,
   KeyRound,
   Link,
@@ -26,7 +27,6 @@ import {
   ShoppingBag,
   Star,
   Store,
-  Tags,
   Trash2,
   Upload,
   X,
@@ -110,6 +110,7 @@ type ProductForm = {
   seoDescription: string;
   variantOptionName: string;
   variantOptionMetafieldKey: string;
+  variantGroupByOptionName: string;
 };
 
 type CategoryMetafieldFormKey =
@@ -139,7 +140,7 @@ type ShopifyCategoryMetafieldField = {
   shopifyName: string | null;
   shopifyKey: string | null;
   shopifyType: string | null;
-  source: "store" | "official" | "none";
+  source: "store" | "official" | "mixed" | "none";
   options: ShopifyCategoryMetafieldOption[];
 };
 
@@ -357,6 +358,7 @@ const EMPTY_FORM: ProductForm = {
   seoDescription: "",
   variantOptionName: "Size",
   variantOptionMetafieldKey: "",
+  variantGroupByOptionName: "",
 };
 
 const SHOPIFY_CATEGORY_OPTIONS = [
@@ -916,6 +918,13 @@ function mapObjectToProductForm(source: Record<string, unknown>): Partial<Produc
     ),
     seoTitle: read("SEO标题", "SEO 标题", "seoTitle", "seo_title"),
     seoDescription: read("SEO描述", "SEO 描述", "seoDescription", "seo_description"),
+    variantGroupByOptionName: read(
+      "分组依据",
+      "变体分组",
+      "variantGroupByOptionName",
+      "variant_group_by_option_name",
+      "Group by",
+    ),
   };
 }
 
@@ -979,6 +988,12 @@ function mapKeyValueTextToProductForm(value: string): Partial<ProductForm> {
     seoDescription: ["SEO描述", "SEO 描述", "SEO Description"],
     variantOptionName: ["多属性名称", "选项名称", "Option name", "Variant option"],
     variantOptionMetafieldKey: [],
+    variantGroupByOptionName: [
+      "分组依据",
+      "变体分组",
+      "Group by",
+      "Variant group by",
+    ],
   };
   const result: Partial<ProductForm> = {};
   for (const [field, labels] of Object.entries(aliases) as Array<
@@ -1625,36 +1640,6 @@ function variantSku(baseSku: string, size: string, index: number): string {
   return `${base}-${suffix}`;
 }
 
-function buildDefaultVariantRows(form: ProductForm = EMPTY_FORM): ProductVariantRow[] {
-  return DEFAULT_SIZE_VARIANT_OPTIONS.map((size, index) => ({
-    id: `default-size-${index}`,
-    size,
-    sku: variantSku(form.sku, size, index),
-    price: form.price || "0.00",
-    inventory: form.inventory || "",
-    selected: true,
-    isMainImage: true,
-    imageUrl: "",
-    imageAlt: size,
-    linkedMetafieldValue: "",
-  }));
-}
-
-function buildClearedDefaultVariantRows(): ProductVariantRow[] {
-  return DEFAULT_SIZE_VARIANT_OPTIONS.map((size, index) => ({
-    id: `default-size-${index}`,
-    size,
-    sku: "",
-    price: "",
-    inventory: "",
-    selected: true,
-    isMainImage: true,
-    imageUrl: "",
-    imageAlt: size,
-    linkedMetafieldValue: "",
-  }));
-}
-
 function normalizePriceForCompare(value?: string): string {
   const cleaned = String(value || "").replace(/[^\d.]/g, "");
   if (!cleaned) return "";
@@ -1704,9 +1689,7 @@ export default function ProductListingPage() {
   const [aiRawText, setAiRawText] = useState("");
   const [cleanedAiText, setCleanedAiText] = useState("");
   const [form, setForm] = useState<ProductForm>(EMPTY_FORM);
-  const [variantRows, setVariantRows] = useState<ProductVariantRow[]>(
-    buildDefaultVariantRows,
-  );
+  const [variantRows, setVariantRows] = useState<ProductVariantRow[]>([]);
   const [syncState, setSyncState] = useState<SyncState>("idle");
   const [syncAction, setSyncAction] = useState<SyncAction>(null);
   const [lastAction, setLastAction] = useState("等待填写或应用 AI 解析结果");
@@ -2071,9 +2054,9 @@ export default function ProductListingPage() {
     setAiRawText("");
     setCleanedAiText("");
     setForm(EMPTY_FORM);
-    setVariantRows(buildClearedDefaultVariantRows());
+    setVariantRows([]);
     setSyncState("idle");
-    setLastAction("已清空产品上架内容，保留固定 Size 多属性");
+    setLastAction("已清空产品上架内容");
     setShopifyProductUrl(null);
     setSyncWarnings([]);
     setUploadingMedia(false);
@@ -3860,6 +3843,7 @@ function getCategoryMetafieldSourceLabel(
   field?: ShopifyCategoryMetafieldField,
 ): string {
   if (!field?.options.length) return "Shopify 当前分类";
+  if (field.source === "mixed") return "Shopify 后台/官方选项";
   if (field.source === "store") return "Shopify 后台已有条目";
   if (field.source === "official") return "Shopify 官方选项";
   return "Shopify 当前分类";
@@ -4139,8 +4123,8 @@ function ProductFormPanel({
   uploadingMedia: boolean;
 }) {
   const mediaInputRef = useRef<HTMLInputElement | null>(null);
-  const variantFileInputRef = useRef<HTMLInputElement | null>(null);
   const variantOptionMenuRef = useRef<HTMLDivElement | null>(null);
+  const variantGroupByMenuRef = useRef<HTMLDivElement | null>(null);
   const rootCategoryId = getShopifyRootCategoryId(form.shopifyCategoryId);
   const apparelSubcategoryId = getShopifyApparelSubcategoryId(
     form.shopifyCategoryId,
@@ -4151,11 +4135,21 @@ function ProductFormPanel({
   );
   const [variantDialogOpen, setVariantDialogOpen] = useState(false);
   const [variantSizeText, setVariantSizeText] = useState("");
-  const [variantFileName, setVariantFileName] = useState("");
+  const [variantValueDraft, setVariantValueDraft] = useState("");
+  const [variantValueInputFocused, setVariantValueInputFocused] =
+    useState(false);
+  const [variantEditorSnapshot, setVariantEditorSnapshot] = useState<{
+    optionName: string;
+    optionMetafieldKey: string;
+    groupByOptionName: string;
+    sizeText: string;
+    rows: ProductVariantRow[];
+  } | null>(null);
   const [skuExpanded, setSkuExpanded] = useState(false);
   const [variantSectionCollapsed, setVariantSectionCollapsed] = useState(false);
   const [variantOptionMenuOpen, setVariantOptionMenuOpen] = useState(false);
   const [variantOptionSearch, setVariantOptionSearch] = useState("");
+  const [variantGroupByMenuOpen, setVariantGroupByMenuOpen] = useState(false);
   const [categoryMetafieldMemory, setCategoryMetafieldMemory] =
     useState<CategoryMetafieldMemory>(() => loadCategoryMetafieldMemory());
   const [shopifyCategoryMetafields, setShopifyCategoryMetafields] =
@@ -4165,6 +4159,9 @@ function ProductFormPanel({
   const [categoryMetafieldLoadError, setCategoryMetafieldLoadError] =
     useState("");
   const parsedVariantSizes = parseVariantSizes(variantSizeText);
+  const pendingVariantSizes = parseVariantSizes(
+    [variantSizeText, variantValueDraft].filter(Boolean).join("\n"),
+  );
   const selectedMainMedia =
     mediaItems.find((item) => item.role === "main") || mediaItems[0] || null;
   const totalVariantInventory = variantRows.reduce((sum, row) => {
@@ -4178,6 +4175,15 @@ function ProductFormPanel({
     form.shopifyCategoryId,
   );
   const variantOptionName = form.variantOptionName.trim() || "Size";
+  const variantGroupByOptions = useMemo(() => {
+    const options = [variantOptionName];
+    return Array.from(new Set(options.map(normalizeVariantOptionName)));
+  }, [variantOptionName]);
+  const variantGroupByOptionName =
+    form.variantGroupByOptionName.trim() &&
+    variantGroupByOptions.includes(form.variantGroupByOptionName.trim())
+      ? form.variantGroupByOptionName.trim()
+      : variantOptionName;
   const variantLinkedRow = getCategoryMetafieldRowByKey(
     form.variantOptionMetafieldKey,
   );
@@ -4194,6 +4200,28 @@ function ProductFormPanel({
       option.toLowerCase().includes(keyword),
     );
   }, [variantOptionSearch]);
+  const filteredVariantLinkedValueOptions = useMemo(() => {
+    const keyword = normalizeCategoryMetafieldMemoryValue(
+      variantValueDraft,
+    ).toLowerCase();
+    return variantLinkedOptions
+      .filter((item) => {
+        const itemValue = item.value || item.label;
+        if (!itemValue || hasCategoryMetafieldInputValue(variantSizeText, itemValue)) {
+          return false;
+        }
+        if (!keyword) return true;
+        return (
+          normalizeCategoryMetafieldMemoryValue(item.label)
+            .toLowerCase()
+            .includes(keyword) ||
+          normalizeCategoryMetafieldMemoryValue(item.value)
+            .toLowerCase()
+            .includes(keyword)
+        );
+      })
+      .slice(0, 50);
+  }, [variantLinkedOptions, variantSizeText, variantValueDraft]);
 
   useEffect(() => {
     if (!variantOptionMenuOpen) return;
@@ -4205,6 +4233,17 @@ function ProductFormPanel({
     window.addEventListener("pointerdown", handlePointerDown);
     return () => window.removeEventListener("pointerdown", handlePointerDown);
   }, [variantOptionMenuOpen]);
+
+  useEffect(() => {
+    if (!variantGroupByMenuOpen) return;
+    function handlePointerDown(e: MouseEvent) {
+      if (!variantGroupByMenuRef.current?.contains(e.target as Node)) {
+        setVariantGroupByMenuOpen(false);
+      }
+    }
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, [variantGroupByMenuOpen]);
 
   useEffect(() => {
     const categoryId = form.shopifyCategoryId;
@@ -4342,6 +4381,19 @@ function ProductFormPanel({
     return cleaned;
   }
 
+  function updateVariantOptionName(nextName: string) {
+    setForm((prev) => ({
+      ...prev,
+      variantOptionName: nextName,
+      variantOptionMetafieldKey: getVariantOptionMetafieldKey(nextName),
+      variantGroupByOptionName:
+        !prev.variantGroupByOptionName ||
+        prev.variantGroupByOptionName === prev.variantOptionName
+          ? normalizeVariantOptionName(nextName)
+          : prev.variantGroupByOptionName,
+    }));
+  }
+
   function getVariantOptionMetafieldKey(optionName: string) {
     return getCategoryMetafieldRowByLabel(optionName)?.key || "";
   }
@@ -4359,12 +4411,45 @@ function ProductFormPanel({
     return item.label || item.value;
   }
 
-  function toggleVariantDialogValue(item: ShopifyCategoryMetafieldOption) {
-    const itemValue = item.value || item.label;
-    if (!itemValue) return;
+  function addVariantValuesFromText(value: string) {
+    const additions = parseVariantSizes(value);
+    if (!additions.length) return;
+    setVariantSizeText((prev) => addCategoryMetafieldInputValues(prev, additions));
+    setVariantValueDraft("");
+  }
+
+  function removeVariantValue(value: string) {
+    const normalized = normalizeCategoryMetafieldMemoryValue(value).toLowerCase();
+    if (!normalized) return;
     setVariantSizeText((prev) =>
-      toggleCategoryMetafieldInputValue(prev, itemValue),
+      joinCategoryMetafieldInputValues(
+        parseVariantSizes(prev).filter(
+          (item) =>
+            normalizeCategoryMetafieldMemoryValue(item).toLowerCase() !==
+            normalized,
+        ),
+      ),
     );
+  }
+
+  function deleteVariantEditorOption() {
+    if (variantEditorSnapshot?.rows.length) {
+      setForm((prev) => ({
+        ...prev,
+        variantOptionName: variantEditorSnapshot.optionName,
+        variantOptionMetafieldKey: variantEditorSnapshot.optionMetafieldKey,
+        variantGroupByOptionName: variantEditorSnapshot.groupByOptionName,
+      }));
+      setVariantRows(variantEditorSnapshot.rows);
+      setVariantSizeText(variantEditorSnapshot.sizeText);
+    } else {
+      setForm((prev) => ({ ...prev, variantGroupByOptionName: "" }));
+      setVariantRows([]);
+      setVariantSizeText("");
+    }
+    setVariantDialogOpen(false);
+    setVariantValueDraft("");
+    setVariantEditorSnapshot(null);
   }
 
   function openVariantDialog(optionName = variantOptionName, linkedKey?: string) {
@@ -4374,10 +4459,20 @@ function ProductFormPanel({
         ? linkedKey
         : getVariantOptionMetafieldKey(nextOptionName);
     setVariantSectionCollapsed(false);
+    setVariantEditorSnapshot({
+      optionName: form.variantOptionName,
+      optionMetafieldKey: form.variantOptionMetafieldKey,
+      groupByOptionName: form.variantGroupByOptionName,
+      sizeText: variantRows.length
+        ? variantRows.map((row) => row.size).join("\n")
+        : variantSizeText,
+      rows: variantRows,
+    });
     setForm((prev) => ({
       ...prev,
       variantOptionName: nextOptionName,
       variantOptionMetafieldKey: nextLinkedKey,
+      variantGroupByOptionName: nextOptionName,
     }));
     const useExistingValues = variantRows.length > 0 && nextOptionName === variantOptionName;
     const linkedFieldValue =
@@ -4391,7 +4486,7 @@ function ProductFormPanel({
           ? DEFAULT_SIZE_VARIANT_OPTIONS.join("\n")
           : linkedFieldValue,
     );
-    setVariantFileName("");
+    setVariantValueDraft("");
     setVariantDialogOpen(true);
   }
 
@@ -4408,16 +4503,8 @@ function ProductFormPanel({
     openVariantDialog(customName, getVariantOptionMetafieldKey(customName));
   }
 
-  async function importVariantSizeFile(files: FileList | null) {
-    const file = files?.[0];
-    if (!file) return;
-    const text = await file.text();
-    setVariantSizeText((prev) => [prev.trim(), text.trim()].filter(Boolean).join("\n"));
-    setVariantFileName(file.name);
-  }
-
   function confirmVariantRows() {
-    const sizes = parsedVariantSizes;
+    const sizes = pendingVariantSizes;
     if (!sizes.length) return;
     const normalizedOptionName = normalizeVariantOptionName(form.variantOptionName);
     const linkedKey = getVariantOptionMetafieldKey(normalizedOptionName);
@@ -4426,6 +4513,7 @@ function ProductFormPanel({
       ...prev,
       variantOptionName: normalizedOptionName,
       variantOptionMetafieldKey: linkedKey,
+      variantGroupByOptionName: normalizedOptionName,
       ...(linkedKey
         ? {
             [linkedKey]: addCategoryMetafieldInputValues(
@@ -4457,7 +4545,8 @@ function ProductFormPanel({
       }),
     );
     setVariantDialogOpen(false);
-    setVariantFileName("");
+    setVariantValueDraft("");
+    setVariantEditorSnapshot(null);
     setVariantSectionCollapsed(false);
   }
 
@@ -4473,7 +4562,11 @@ function ProductFormPanel({
   function removeVariantRows() {
     setVariantRows([]);
     setVariantSizeText("");
-    setVariantFileName("");
+    setVariantValueDraft("");
+    setVariantDialogOpen(false);
+    setVariantEditorSnapshot(null);
+    setVariantGroupByMenuOpen(false);
+    setForm((prev) => ({ ...prev, variantGroupByOptionName: "" }));
   }
 
   function autoMatchShopifyCategory() {
@@ -4813,8 +4906,9 @@ function ProductFormPanel({
             }
           />
 
-          {variantRows.length > 0 && !variantSectionCollapsed ? (
+          {(variantRows.length > 0 || variantDialogOpen) && !variantSectionCollapsed ? (
             <div className="space-y-3">
+              {variantRows.length > 0 ? (
               <div className="rounded-md border border-gray-200 bg-white">
                 <div className="border-b border-gray-200 px-4 py-3">
                   <div className="text-xs font-semibold text-gray-900">
@@ -4904,7 +4998,182 @@ function ProductFormPanel({
                   ) : null}
                 </div>
               </div>
+              ) : null}
 
+              {variantDialogOpen ? (
+                <div className="overflow-hidden rounded-md border border-gray-200 bg-white">
+                  <div className="grid grid-cols-[38px_minmax(0,1fr)]">
+                    <div className="flex justify-center pt-14 text-gray-300">
+                      <GripVertical size={16} strokeWidth={2} />
+                    </div>
+                    <div className="space-y-3 px-4 py-4">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <label className="text-xs font-medium text-gray-700">
+                            选项名称
+                          </label>
+                          {variantLinkedRow ? (
+                            <span className="inline-flex max-w-[210px] items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 ring-1 ring-blue-100">
+                              <Database size={13} />
+                              <span className="truncate">{variantLinkedRow.label}</span>
+                            </span>
+                          ) : null}
+                        </div>
+                        <input
+                          value={form.variantOptionName}
+                          onChange={(e) => updateVariantOptionName(e.target.value)}
+                          placeholder="颜色 / 尺寸 / 织物"
+                          className="h-9 w-full rounded-md border border-gray-400 bg-white px-3 text-sm text-gray-900 outline-none focus:border-gray-900 focus:ring-1 focus:ring-gray-900"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        {parsedVariantSizes.length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5">
+                            {parsedVariantSizes.map((size) => (
+                              <button
+                                key={size}
+                                type="button"
+                                className="inline-flex max-w-full items-center gap-1 rounded bg-gray-100 px-2 py-1 text-xs font-medium text-gray-800 hover:bg-gray-200"
+                                onClick={() => removeVariantValue(size)}
+                                title="移除选项值"
+                              >
+                                <span className="truncate">{size}</span>
+                                <X size={12} className="text-gray-500" />
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                        <div className="relative">
+                          <input
+                            value={variantValueDraft}
+                            onChange={(e) => setVariantValueDraft(e.target.value)}
+                            onFocus={() => setVariantValueInputFocused(true)}
+                            onBlur={() => setVariantValueInputFocused(false)}
+                            onPaste={(e) => {
+                              const text = e.clipboardData.getData("text");
+                              if (parseVariantSizes(text).length > 1) {
+                                e.preventDefault();
+                                addVariantValuesFromText(text);
+                              }
+                            }}
+                            onKeyDown={(e) => {
+                              if (
+                                e.key === "Enter" ||
+                                e.key === "," ||
+                                e.key === "，"
+                              ) {
+                                e.preventDefault();
+                                addVariantValuesFromText(variantValueDraft);
+                              }
+                            }}
+                            placeholder={`添加 ${normalizeVariantOptionName(form.variantOptionName)}`}
+                            className="h-9 w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:border-gray-900 focus:ring-1 focus:ring-gray-900"
+                          />
+                          {variantValueInputFocused &&
+                          filteredVariantLinkedValueOptions.length > 0 ? (
+                            <div className="absolute left-0 right-0 top-[calc(100%+4px)] z-30 max-h-44 overflow-y-auto rounded-md border border-gray-200 bg-white py-1 text-sm shadow-lg">
+                              {filteredVariantLinkedValueOptions.map((item) => {
+                                const itemValue = item.value || item.label;
+                                return (
+                                  <button
+                                    key={item.id}
+                                    type="button"
+                                    className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm text-gray-800 hover:bg-gray-50"
+                                    onMouseDown={(e) => {
+                                      e.preventDefault();
+                                      addVariantValuesFromText(itemValue);
+                                      setVariantValueInputFocused(false);
+                                    }}
+                                  >
+                                    <span className="min-w-0 truncate">
+                                      {getVariantOptionDisplayValue(item)}
+                                    </span>
+                                    <span className="text-[11px] text-gray-400">
+                                      {item.attributeName}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-1">
+                        <Button
+                          size="sm"
+                          variant="danger-outline"
+                          onClick={deleteVariantEditorOption}
+                        >
+                          删除
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          disabled={pendingVariantSizes.length === 0}
+                          onClick={confirmVariantRows}
+                          className="!bg-gray-950 !text-white hover:!bg-gray-800"
+                        >
+                          完成
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {variantRows.length > 0 ? (
+                <div className="flex flex-wrap items-center gap-2 text-xs text-gray-700">
+                  <span className="text-gray-600">分组依据</span>
+                  <div ref={variantGroupByMenuRef} className="relative">
+                    <button
+                      type="button"
+                      className="inline-flex h-8 min-w-[92px] items-center justify-between gap-2 rounded-md border border-gray-300 bg-white px-3 text-xs font-semibold text-gray-900 hover:border-gray-400"
+                      onClick={() => setVariantGroupByMenuOpen((open) => !open)}
+                    >
+                      <span>{variantGroupByOptionName}</span>
+                      <ChevronDown size={14} className="text-gray-500" />
+                    </button>
+                    {variantGroupByMenuOpen ? (
+                      <div className="absolute left-0 top-[calc(100%+6px)] z-40 min-w-[104px] rounded-xl border border-gray-200 bg-white p-1 text-sm shadow-xl">
+                        {variantGroupByOptions.map((option) => {
+                          const active = option === variantGroupByOptionName;
+                          return (
+                            <button
+                              key={option}
+                              type="button"
+                              className={`flex h-9 w-full items-center justify-between gap-3 rounded-md px-3 text-left text-sm ${
+                                active
+                                  ? "bg-gray-100 font-semibold text-gray-950"
+                                  : "text-gray-800 hover:bg-gray-50"
+                              }`}
+                              onClick={() => {
+                                setForm((prev) => ({
+                                  ...prev,
+                                  variantGroupByOptionName: option,
+                                }));
+                                setVariantGroupByMenuOpen(false);
+                              }}
+                            >
+                              <span>{option}</span>
+                              {active ? <Check size={14} /> : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
+                  {variantLinkedRow ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700 ring-1 ring-blue-100">
+                      <Database size={12} />
+                      已映射 {variantLinkedRow.label}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {variantRows.length > 0 ? (
               <div className="overflow-hidden rounded-md border border-gray-200 bg-white">
                 <div>
                   <div className="grid grid-cols-[36px_82px_minmax(0,1fr)_132px_88px] items-center border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs font-medium text-fg-secondary">
@@ -4992,6 +5261,7 @@ function ProductFormPanel({
                   </div>
                 </div>
               </div>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -5092,143 +5362,6 @@ function ProductFormPanel({
         </div>
       </ShopifySection>
 
-      <Dialog
-        open={variantDialogOpen}
-        onClose={() => setVariantDialogOpen(false)}
-        title="添加多属性"
-        description="输入选项值，每行一个；也可以导入 txt 或 csv 文件。"
-        width="lg"
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setVariantDialogOpen(false)}>
-              取消
-            </Button>
-            <Button
-              variant="primary"
-              disabled={parsedVariantSizes.length === 0}
-              onClick={confirmVariantRows}
-            >
-              确认添加
-            </Button>
-          </>
-        }
-      >
-        <div className="space-y-4">
-          <Input
-            label="选项名称"
-            value={form.variantOptionName}
-            onChange={(e) => {
-              const nextName = e.target.value;
-              setForm((prev) => ({
-                ...prev,
-                variantOptionName: nextName,
-                variantOptionMetafieldKey: getVariantOptionMetafieldKey(nextName),
-              }));
-            }}
-            placeholder="颜色 / 尺寸 / 织物"
-          />
-          {variantLinkedRow ? (
-            <div className="rounded-md border border-purple-100 bg-purple-50/40 p-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="inline-flex items-center gap-1.5 text-xs font-medium text-purple-700">
-                  <Database size={13} />
-                  已关联类别元字段：{variantLinkedRow.label}
-                </div>
-                <span className="rounded-full bg-white px-2 py-0.5 text-[11px] text-gray-500 ring-1 ring-purple-100">
-                  {getCategoryMetafieldSourceLabel(variantLinkedField)}
-                </span>
-              </div>
-              {variantLinkedOptions.length ? (
-                <div className="mt-3 max-h-40 overflow-y-auto rounded-md border border-purple-100 bg-white p-2">
-                  <div className="mb-2 text-[11px] font-medium text-gray-500">
-                    从元字段条目中选择，确认后会同步回右侧类别元字段
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {variantLinkedOptions.map((item) => {
-                      const itemValue = item.value || item.label;
-                      const active = hasCategoryMetafieldInputValue(
-                        variantSizeText,
-                        itemValue,
-                      );
-                      return (
-                        <button
-                          key={item.id}
-                          type="button"
-                          className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium transition-colors ${
-                            active
-                              ? "bg-purple-100 text-purple-700 ring-1 ring-purple-300"
-                              : "bg-gray-100 text-gray-800 hover:bg-gray-200"
-                          }`}
-                          onClick={() => toggleVariantDialogValue(item)}
-                        >
-                          {active ? <Check size={12} /> : null}
-                          <span>{getVariantOptionDisplayValue(item)}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : (
-                <div className="mt-2 rounded-md border border-dashed border-purple-100 bg-white px-3 py-2 text-xs text-gray-500">
-                  当前分类暂未读取到这个元字段的官方/后台条目，可先手动输入；名称仍会按官方字段映射。
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="rounded-md border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-500">
-              输入“颜色、尺寸、织物、年龄段、穿着场合、裙子风格、领口、裙子/连衣裙长度类型、袖长类型”会自动关联官方类别元字段。
-            </div>
-          )}
-          <Textarea
-            label="选项值"
-            value={variantSizeText}
-            onChange={(e) => setVariantSizeText(e.target.value)}
-            rows={8}
-            placeholder={
-              variantOptionName === "Size"
-                ? "US 2 / UK 6 / EU 32\nUS 4 / UK 8 / EU 34\nUS 6 / UK 10 / EU 36"
-                : `${variantOptionName} 1\n${variantOptionName} 2`
-            }
-          />
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              ref={variantFileInputRef}
-              type="file"
-              accept=".txt,.csv,text/plain,text/csv"
-              className="hidden"
-              onChange={(e) => {
-                importVariantSizeFile(e.target.files);
-                e.currentTarget.value = "";
-              }}
-            />
-            <Button
-              variant="outline"
-              leftIcon={<Upload size={14} />}
-              onClick={() => variantFileInputRef.current?.click()}
-            >
-              文件输入
-            </Button>
-            {variantFileName ? (
-              <span className="text-xs text-fg-tertiary">{variantFileName}</span>
-            ) : null}
-            <span className="text-xs text-fg-tertiary">
-              已识别 {parsedVariantSizes.length} 个尺码
-            </span>
-          </div>
-          {parsedVariantSizes.length > 0 ? (
-            <div className="flex flex-wrap gap-1.5 rounded-md border border-gray-200 bg-gray-50 p-3">
-              {parsedVariantSizes.map((size) => (
-                <span
-                  key={size}
-                  className="rounded bg-white px-2 py-1 text-[11px] font-medium text-gray-800 shadow-sm"
-                >
-                  {size}
-                </span>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      </Dialog>
     </div>
   );
 }
