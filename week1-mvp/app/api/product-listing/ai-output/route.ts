@@ -4,14 +4,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { resolveModelId } from "@/lib/ai-models";
 import { buildGenaiClient } from "@/lib/genai-client";
+import { estimateImageCostUSD, generateImage } from "@/lib/image-gen";
 import { assertWithinBudget } from "@/lib/pricing";
 import { recordUsage } from "@/lib/usage";
 import { DATA_DIR_PATH } from "@/lib/db";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const CALL_TIMEOUT_MS = 55_000;
+const IMAGE_GEN_TIMEOUT_MS = 240_000;
+const MAX_PRODUCT_LISTING_IMAGE_GENERATIONS = 4;
 
 type MediaInput = {
   url?: string;
@@ -221,6 +224,17 @@ ${categoryMetafieldCandidateSummary}
       throw new Error("大模型没有返回可用内容，请调整提示词后重试。");
     }
 
+    const shouldGenerateImages = shouldGenerateProductListingImages(prompt);
+    const generatedImageUrls = shouldGenerateImages
+      ? await generateProductListingImages({
+          prompt,
+          images,
+          userId: user.id,
+          warnings,
+        })
+      : [];
+    const finalText = appendGeneratedImageUrls(text, generatedImageUrls);
+
     recordUsage({
       userId: user.id,
       model,
@@ -240,15 +254,18 @@ ${categoryMetafieldCandidateSummary}
         category_candidate_fields: wantsCategoryMetafields
           ? Object.keys(categoryMetafieldCandidates).length
           : 0,
+        image_generation_requested: shouldGenerateImages,
+        generated_image_count: generatedImageUrls.length,
       },
     });
 
     return NextResponse.json({
       ok: true,
-      text,
-      cleanedText: text,
+      text: finalText,
+      cleanedText: finalText,
       model,
       imageCount: images.length,
+      generatedImageCount: generatedImageUrls.length,
       warnings,
     });
   } catch (e) {
@@ -273,6 +290,22 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error("Gemini 解析超时，请稍后重试。")), ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function withTimeoutMessage<T>(
+  promise: Promise<T>,
+  ms: number,
+  message: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
   });
   try {
     return await Promise.race([promise, timeout]);
@@ -321,6 +354,147 @@ function mimeFromPath(absPath: string): string {
   if (ext === ".webp") return "image/webp";
   if (ext === ".gif") return "image/gif";
   return "image/jpeg";
+}
+
+function shouldGenerateProductListingImages(prompt: string): boolean {
+  const text = prompt.toLowerCase();
+  return (
+    /(?:生成|制作|创建|输出|新增|补充)\s*(?:\d+|[一二两三四五六七八九十])?\s*张?\s*[^，。；;\n]{0,20}(?:图片|图像|照片|配图|主图|背景图|场景图|商品图|产品图)/.test(
+      text,
+    ) ||
+    /(?:出图|作图|生图|生成图|生成照片|生成主图|生成背景图|生成场景图|生成商品图|生成产品图)/.test(
+      text,
+    ) ||
+    /(?:图片|图像)生成(?:模型|功能)?(?:\s*(?:出|生成|制作|创建|新增|补充)?\s*(?:图片|图像|照片|配图|主图|背景图|场景图|商品图|产品图))/.test(
+      text,
+    ) ||
+    /generate\s*(?:\d+\s*)?(?:images?|photos?|pictures?|renders?)/i.test(text)
+  );
+}
+
+function parseRequestedImageCount(prompt: string): number {
+  const normalized = prompt
+    .replace(/一/g, "1")
+    .replace(/二/g, "2")
+    .replace(/两/g, "2")
+    .replace(/三/g, "3")
+    .replace(/四/g, "4")
+    .replace(/五/g, "5")
+    .replace(/六/g, "6")
+    .replace(/七/g, "7")
+    .replace(/八/g, "8")
+    .replace(/九/g, "9")
+    .replace(/十/g, "10");
+  const match =
+    normalized.match(/(\d+)\s*张\s*[^，。；;\n]{0,20}(?:图片|图像|照片|配图|主图|背景图|场景图|商品图|产品图)/) ||
+    normalized.match(/(?:图片|图像|照片|配图|主图|背景图|场景图|商品图|产品图)\s*(\d+)\s*张/);
+  const count = match ? Number(match[1]) : 1;
+  if (!Number.isFinite(count)) return 1;
+  return Math.min(MAX_PRODUCT_LISTING_IMAGE_GENERATIONS, Math.max(1, Math.floor(count)));
+}
+
+async function generateProductListingImages({
+  prompt,
+  images,
+  userId,
+  warnings,
+}: {
+  prompt: string;
+  images: Array<{ buffer: Buffer; mimeType: string }>;
+  userId: number;
+  warnings: string[];
+}): Promise<string[]> {
+  const modelId = resolveModelId("image_gen");
+  const count = parseRequestedImageCount(prompt);
+  const outputsDir = path.join(DATA_DIR_PATH, "outputs");
+  await fs.mkdir(outputsDir, { recursive: true });
+  const urls: string[] = [];
+
+  for (let i = 0; i < count; i++) {
+    try {
+      const result = await withTimeoutMessage(
+        generateImage({
+          inputs: images,
+          prompt: buildProductListingImagePrompt(prompt, i + 1, count),
+          modelId,
+          aspectRatio: "3:4",
+          imageSize: "1K",
+          temperature: 0.18,
+        }),
+        IMAGE_GEN_TIMEOUT_MS,
+        "图片生成超时，请减少生成数量或稍后重试。",
+      );
+      const ext = result.mimeType.includes("png")
+        ? "png"
+        : result.mimeType.includes("webp")
+          ? "webp"
+          : "jpg";
+      const filename = `product_listing_${userId}_${Date.now()}_${i + 1}_${Math.random()
+        .toString(36)
+        .slice(2, 8)}.${ext}`;
+      await fs.writeFile(path.join(outputsDir, filename), result.data);
+      urls.push(`/assets/outputs/${filename}`);
+
+      recordUsage({
+        userId,
+        model: result.model || modelId,
+        feature: "other",
+        usageMetadata: {
+          promptTokenCount: result.usage.inputTokens ?? 0,
+          candidatesTokenCount: result.usage.outputTokens ?? 0,
+          totalTokenCount: result.usage.totalTokens ?? 0,
+        },
+        costOverrideUsd:
+          result.provider === "openai"
+            ? estimateImageCostUSD({
+                modelId,
+                aspectRatio: "3:4",
+                imageSize: "1K",
+              })
+            : undefined,
+        success: true,
+        notes: {
+          kind: "product-listing-image-output",
+          provider: result.provider,
+          image_index: i + 1,
+          image_count: count,
+        },
+      });
+    } catch (e) {
+      warnings.push(
+        `图片生成失败（第 ${i + 1}/${count} 张）：${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      break;
+    }
+  }
+
+  return urls;
+}
+
+function buildProductListingImagePrompt(
+  prompt: string,
+  index: number,
+  total: number,
+): string {
+  return `你是专业的 Shopify 礼服商品摄影生成模型。
+请根据用户提示词和输入的商品媒体参考图生成商品上架图片。
+
+用户提示词：
+${prompt}
+
+生成要求：
+- 这是第 ${index}/${total} 张图片，请保持商品服装与参考图一致。
+- 只根据商品媒体图提取服装颜色、面料、版型、领口、长度、装饰和细节。
+- 不要复制参考图里的原始模特姿势、原始背景或水印。
+- 输出适合 Shopify 商品上架的干净、高级、真实摄影风格图片。
+- 主体完整、构图居中、服装细节清晰，不要裁切头部、手臂、脚或裙摆。`;
+}
+
+function appendGeneratedImageUrls(text: string, urls: string[]): string {
+  if (!urls.length) return text;
+  return `${text.trim()}\n\n大模型生成图片：\n${urls.join("\n")}`;
 }
 
 function normalizeCategoryMetafieldCandidates(

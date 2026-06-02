@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Clock,
+  Crop as CropIcon,
   Eye,
   ExternalLink,
   FileText,
@@ -41,6 +42,7 @@ import {
   Textarea,
 } from "@/app/_components/ui";
 import { Thumbnail, ThumbnailBadge } from "@/app/_components/thumbnail";
+import { ImageCropper } from "@/app/_components/image-cropper";
 import { PageRefreshButton } from "@/app/_components/page-refresh-button";
 import {
   appendProductListingMedia,
@@ -172,6 +174,16 @@ type ProductVariantRow = {
   isMainImage: boolean;
   imageUrl: string;
   imageAlt: string;
+};
+
+type AiImageSuggestion = {
+  id: string;
+  originalUrl: string;
+  url: string;
+  label: string;
+  selected: boolean;
+  added: boolean;
+  cropped: boolean;
 };
 
 const DEFAULT_SIZE_VARIANT_OPTIONS = [
@@ -1435,6 +1447,55 @@ function sortMediaByRole(
     .map(({ item }) => item);
 }
 
+function cleanupAiImageUrl(value: string): string {
+  return value
+    .trim()
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .replace(/[)\]}>，,。；;、]+$/g, "");
+}
+
+function extractAiImageUrls(value: string): string[] {
+  const seen = new Set<string>();
+  const urls: string[] = [];
+  const imagePattern =
+    /(?:https?:\/\/[^\s"'<>]+|\/assets\/[^\s"'<>]+?\.(?:png|jpe?g|webp|gif))(?:\?[^\s"'<>]*)?/gi;
+  for (const match of value.matchAll(imagePattern)) {
+    const url = cleanupAiImageUrl(match[0] || "");
+    if (!url) continue;
+    const key = normalizeMediaUrlForCompare(url);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    urls.push(url);
+  }
+  return urls;
+}
+
+function normalizeMediaUrlForCompare(value: string): string {
+  const cleaned = cleanupAiImageUrl(value);
+  try {
+    const url = new URL(
+      cleaned,
+      typeof window !== "undefined" ? window.location.origin : "http://localhost",
+    );
+    return `${url.origin}${url.pathname}`.toLowerCase();
+  } catch {
+    return cleaned.split("?")[0].toLowerCase();
+  }
+}
+
+function filenameFromImageUrl(value: string, fallback = "ai-image.jpg"): string {
+  const cleanUrl = cleanupAiImageUrl(value).split("?")[0] || "";
+  const last = decodeURIComponent(cleanUrl.split("/").filter(Boolean).pop() || "");
+  return last || fallback;
+}
+
+function makeCroppedAiImageFilename(value: string): string {
+  const filename = filenameFromImageUrl(value, `ai-image-${Date.now()}.jpg`);
+  const dot = filename.lastIndexOf(".");
+  if (dot > 0) return `${filename.slice(0, dot)}-cropped.jpg`;
+  return `${filename}-cropped.jpg`;
+}
+
 function parseVariantSizes(value: string): string[] {
   return Array.from(
     new Set(
@@ -1555,6 +1616,16 @@ export default function ProductListingPage() {
   });
   const [previewMedia, setPreviewMedia] =
     useState<ProductListingMediaItem | null>(null);
+  const [aiImageSelection, setAiImageSelection] = useState<Record<string, boolean>>(
+    {},
+  );
+  const [hiddenAiImageUrls, setHiddenAiImageUrls] = useState<string[]>([]);
+  const [aiImageOverrides, setAiImageOverrides] = useState<
+    Record<string, { url: string; label: string }>
+  >({});
+  const [croppingAiImage, setCroppingAiImage] =
+    useState<AiImageSuggestion | null>(null);
+  const [addingAiImagesToMedia, setAddingAiImagesToMedia] = useState(false);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -1629,6 +1700,33 @@ export default function ProductListingPage() {
       alive = false;
     };
   }, []);
+
+  const aiImageSuggestions = useMemo<AiImageSuggestion[]>(() => {
+    const hidden = new Set(hiddenAiImageUrls.map(normalizeMediaUrlForCompare));
+    const mediaUrls = new Set(
+      mediaItems.map((item) => normalizeMediaUrlForCompare(item.url)),
+    );
+    return extractAiImageUrls(aiRawText)
+      .filter((url) => !hidden.has(normalizeMediaUrlForCompare(url)))
+      .map((url, index) => {
+        const override = aiImageOverrides[url];
+        const displayUrl = override?.url || url;
+        const added =
+          mediaUrls.has(normalizeMediaUrlForCompare(displayUrl)) ||
+          mediaUrls.has(normalizeMediaUrlForCompare(url));
+        return {
+          id: url,
+          originalUrl: url,
+          url: displayUrl,
+          label:
+            override?.label ||
+            filenameFromImageUrl(url, `大模型图片 ${index + 1}`),
+          selected: aiImageSelection[url] ?? true,
+          added,
+          cropped: Boolean(override),
+        };
+      });
+  }, [aiRawText, aiImageOverrides, aiImageSelection, hiddenAiImageUrls, mediaItems]);
 
   const tokenPreview = useMemo(() => {
     if (binding && !addingShopifyAccount) return binding.tokenPreview;
@@ -1872,6 +1970,11 @@ export default function ProductListingPage() {
     setUploadingMedia(false);
     setMediaItems([]);
     setPreviewMedia(null);
+    setAiImageSelection({});
+    setHiddenAiImageUrls([]);
+    setAiImageOverrides({});
+    setCroppingAiImage(null);
+    setAddingAiImagesToMedia(false);
   }
 
   function selectPromptPreset(id: string) {
@@ -1989,6 +2092,10 @@ export default function ProductListingPage() {
       setAiPromptText(prompt);
       setAiRawText(cleaned);
       setCleanedAiText(cleaned);
+      setAiImageSelection({});
+      setHiddenAiImageUrls([]);
+      setAiImageOverrides({});
+      setCroppingAiImage(null);
       setSyncState("idle");
       const warningText = data.warnings?.length
         ? `，${data.warnings.length} 条媒体提示`
@@ -2190,6 +2297,121 @@ export default function ProductListingPage() {
     }
   }
 
+  function toggleAiImageSelection(id: string) {
+    setAiImageSelection((prev) => ({
+      ...prev,
+      [id]: !(prev[id] ?? true),
+    }));
+  }
+
+  function selectAllAiImages(selected: boolean) {
+    setAiImageSelection((prev) => {
+      const next = { ...prev };
+      for (const item of aiImageSuggestions) {
+        if (!item.added) next[item.id] = selected;
+      }
+      return next;
+    });
+  }
+
+  function hideAiImageSuggestion(id: string) {
+    setHiddenAiImageUrls((prev) => {
+      const key = normalizeMediaUrlForCompare(id);
+      if (prev.some((item) => normalizeMediaUrlForCompare(item) === key)) return prev;
+      return [...prev, id];
+    });
+    setAiImageSelection((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }
+
+  function previewAiImageSuggestion(item: AiImageSuggestion) {
+    setPreviewMedia({
+      id: `ai-preview-${item.id}`,
+      url: item.url,
+      alt: item.label,
+      role: "detail",
+      addedAt: Date.now(),
+      sourceLabel: "大模型图片建议",
+    });
+  }
+
+  async function uploadAiImageBlob(blob: Blob, filename: string) {
+    const file = new File([blob], filename, {
+      type: blob.type || "image/jpeg",
+    });
+    const fd = new FormData();
+    fd.append("files", file, file.name);
+    const res = await fetch("/api/product-listing/media", {
+      method: "POST",
+      body: fd,
+    });
+    const data = (await res.json()) as {
+      items?: Array<{ url: string; alt: string }>;
+      error?: string;
+    };
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    const item = data.items?.[0];
+    if (!item?.url) throw new Error("裁剪图片保存失败");
+    return item;
+  }
+
+  async function confirmAiImageCrop(blob: Blob) {
+    if (!croppingAiImage) return;
+    setAddingAiImagesToMedia(true);
+    try {
+      const uploaded = await uploadAiImageBlob(
+        blob,
+        makeCroppedAiImageFilename(croppingAiImage.url),
+      );
+      setAiImageOverrides((prev) => ({
+        ...prev,
+        [croppingAiImage.id]: {
+          url: uploaded.url,
+          label: uploaded.alt || `${croppingAiImage.label} 裁剪`,
+        },
+      }));
+      setAiImageSelection((prev) => ({
+        ...prev,
+        [croppingAiImage.id]: true,
+      }));
+      setLastAction("大模型图片已裁剪，可继续添加到媒体文件");
+    } catch (e) {
+      setLastAction(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAddingAiImagesToMedia(false);
+      setCroppingAiImage(null);
+    }
+  }
+
+  function addSelectedAiImagesToMedia() {
+    const selected = aiImageSuggestions.filter((item) => item.selected && !item.added);
+    if (!selected.length) {
+      setLastAction("请选择未添加的大模型图片");
+      return;
+    }
+    const { media, addedCount } = appendProductListingMedia(
+      mediaItems,
+      selected.map((item, index) => {
+        const finalIndex = mediaItems.length + index;
+        return {
+          url: item.url,
+          alt: item.label.replace(/\.[^.]+$/, "") || "大模型生成图片",
+          role: finalIndex === 0 ? "main" : "detail",
+          sourceLabel: "大模型图片建议",
+        };
+      }),
+    );
+    setMediaItems(media);
+    setLastAction(
+      addedCount > 0
+        ? `已添加 ${addedCount} 张大模型图片到媒体文件`
+        : "选中的图片已经在媒体文件中",
+    );
+  }
+
   return (
     <main className="mx-auto w-full max-w-7xl px-5 md:px-8 py-6 md:py-8">
       <header className="mb-6 flex items-center justify-between gap-4">
@@ -2269,6 +2491,8 @@ export default function ProductListingPage() {
               generating={generatingAiOutput}
               rawText={aiRawText}
               cleanedText={cleanedAiText}
+              aiImages={aiImageSuggestions}
+              addingAiImages={addingAiImagesToMedia}
               onPromptTextChange={updateAiPromptText}
               onPromptPresetChange={selectPromptPreset}
               onPromptPresetNameChange={setPromptPresetName}
@@ -2278,6 +2502,12 @@ export default function ProductListingPage() {
               onGenerate={generateAiOutput}
               onRawTextChange={setAiRawText}
               onApply={applyAiToForm}
+              onToggleAiImage={toggleAiImageSelection}
+              onSelectAllAiImages={selectAllAiImages}
+              onDeleteAiImage={hideAiImageSuggestion}
+              onPreviewAiImage={previewAiImageSuggestion}
+              onCropAiImage={setCroppingAiImage}
+              onAddAiImagesToMedia={addSelectedAiImagesToMedia}
               onClean={() => {
                 const cleaned = sanitizeAiOutput(aiRawText);
                 setAiRawText(cleaned);
@@ -2455,6 +2685,15 @@ export default function ProductListingPage() {
           </div>
         ) : null}
       </Dialog>
+
+      {croppingAiImage ? (
+        <ImageCropper
+          imageSrc={croppingAiImage.url}
+          confirmLabel="裁剪并保存"
+          onConfirm={confirmAiImageCrop}
+          onCancel={() => setCroppingAiImage(null)}
+        />
+      ) : null}
     </main>
   );
 }
@@ -2714,6 +2953,8 @@ function AiPanel({
   generating,
   rawText,
   cleanedText,
+  aiImages,
+  addingAiImages,
   onPromptTextChange,
   onPromptPresetChange,
   onPromptPresetNameChange,
@@ -2723,6 +2964,12 @@ function AiPanel({
   onGenerate,
   onRawTextChange,
   onApply,
+  onToggleAiImage,
+  onSelectAllAiImages,
+  onDeleteAiImage,
+  onPreviewAiImage,
+  onCropAiImage,
+  onAddAiImagesToMedia,
   onClean,
 }: {
   promptText: string;
@@ -2732,6 +2979,8 @@ function AiPanel({
   generating: boolean;
   rawText: string;
   cleanedText: string;
+  aiImages: AiImageSuggestion[];
+  addingAiImages: boolean;
   onPromptTextChange: (value: string) => void;
   onPromptPresetChange: (id: string) => void;
   onPromptPresetNameChange: (value: string) => void;
@@ -2741,6 +2990,12 @@ function AiPanel({
   onGenerate: () => void;
   onRawTextChange: (value: string) => void;
   onApply: () => void;
+  onToggleAiImage: (id: string) => void;
+  onSelectAllAiImages: (selected: boolean) => void;
+  onDeleteAiImage: (id: string) => void;
+  onPreviewAiImage: (item: AiImageSuggestion) => void;
+  onCropAiImage: (item: AiImageSuggestion) => void;
+  onAddAiImagesToMedia: () => void;
   onClean: () => void;
 }) {
   return (
@@ -2811,6 +3066,17 @@ function AiPanel({
         rows={12}
       />
 
+      <AiGeneratedImagesPanel
+        images={aiImages}
+        adding={addingAiImages}
+        onToggle={onToggleAiImage}
+        onSelectAll={onSelectAllAiImages}
+        onDelete={onDeleteAiImage}
+        onPreview={onPreviewAiImage}
+        onCrop={onCropAiImage}
+        onAddToMedia={onAddAiImagesToMedia}
+      />
+
       <div className="rounded-md border border-border-subtle bg-bg-tertiary p-3">
         <div className="flex items-center justify-between gap-2">
           <div className="text-[11px] font-medium text-fg-tertiary">
@@ -2844,6 +3110,149 @@ function AiPanel({
         </Button>
       </div>
     </Card>
+  );
+}
+
+function AiGeneratedImagesPanel({
+  images,
+  adding,
+  onToggle,
+  onSelectAll,
+  onDelete,
+  onPreview,
+  onCrop,
+  onAddToMedia,
+}: {
+  images: AiImageSuggestion[];
+  adding: boolean;
+  onToggle: (id: string) => void;
+  onSelectAll: (selected: boolean) => void;
+  onDelete: (id: string) => void;
+  onPreview: (item: AiImageSuggestion) => void;
+  onCrop: (item: AiImageSuggestion) => void;
+  onAddToMedia: () => void;
+}) {
+  const selectableImages = images.filter((item) => !item.added);
+  const selectedCount = selectableImages.filter((item) => item.selected).length;
+  const allSelected =
+    selectableImages.length > 0 && selectedCount === selectableImages.length;
+
+  return (
+    <div className="rounded-md border border-purple-100 bg-purple-50/30 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <div className="text-xs font-semibold text-gray-900">
+            大模型图片建议
+          </div>
+          <div className="mt-0.5 text-[11px] text-gray-500">
+            从完整输出里识别到的图片，可裁剪后加入媒体文件
+          </div>
+        </div>
+        <Chip tone={images.length ? "brand" : "gray"}>
+          {images.length ? `${images.length} 张` : "待识别"}
+        </Chip>
+      </div>
+
+      {images.length ? (
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          {images.map((item, index) => {
+            const disabled = item.added;
+            const checked = item.selected && !disabled;
+            return (
+              <div key={item.id} className="relative rounded-md border border-gray-200 bg-white p-1.5">
+                <button
+                  type="button"
+                  className="absolute right-2 top-2 z-20 flex h-6 w-6 items-center justify-center rounded-full bg-white/95 text-gray-500 shadow-sm ring-1 ring-gray-200 hover:text-red-600"
+                  title="删除建议图"
+                  aria-label="删除建议图"
+                  onClick={() => onDelete(item.id)}
+                >
+                  <X size={13} />
+                </button>
+                <Thumbnail
+                  src={item.url}
+                  alt={item.label}
+                  ratio="4/5"
+                  fit="contain"
+                  selected={checked}
+                  checkbox={
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={disabled}
+                      className="h-4 w-4 rounded border-gray-300 text-purple-600"
+                      onChange={() => onToggle(item.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label={`选择${item.label}`}
+                    />
+                  }
+                  hoverOverlay={
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      leftIcon={<CropIcon size={12} />}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onCrop(item);
+                      }}
+                    >
+                      裁剪
+                    </Button>
+                  }
+                  onClick={() => onPreview(item)}
+                  useThumb
+                />
+                <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px]">
+                  <span className="min-w-0 truncate text-gray-600" title={item.label}>
+                    图 {index + 1}
+                    {item.cropped ? " · 已裁剪" : ""}
+                  </span>
+                  <span
+                    className={`shrink-0 rounded-full px-1.5 py-0.5 ${
+                      item.added
+                        ? "bg-emerald-50 text-emerald-700"
+                        : "bg-gray-100 text-gray-500"
+                    }`}
+                  >
+                    {item.added ? "已添加" : "未添加"}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="mt-3 rounded-md border border-dashed border-purple-200 bg-white px-3 py-4 text-center text-xs text-gray-500">
+          完整大模型输出中出现 /assets/outputs/xxx.jpg、png 或 webp 后，
+          图片会在这里显示为可选择缩略图。
+        </div>
+      )}
+
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="text-[11px] text-gray-500">
+          已选 {selectedCount}/{selectableImages.length}
+        </div>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!selectableImages.length}
+            onClick={() => onSelectAll(!allSelected)}
+          >
+            {allSelected ? "取消全选" : "全选"}
+          </Button>
+          <Button
+            size="sm"
+            variant="primary"
+            loading={adding}
+            disabled={!selectedCount}
+            onClick={onAddToMedia}
+          >
+            添加到媒体文件
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 
