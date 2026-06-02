@@ -7,6 +7,7 @@ import {
   ArrowDown,
   ArrowRight,
   ArrowUp,
+  Check,
   CheckCircle2,
   ChevronDown,
   Clock,
@@ -1114,6 +1115,78 @@ function escapeRegExp(value: string): string {
 
 function normalizeCategoryMetafieldMemoryValue(value: string): string {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function splitCategoryMetafieldInputValues(value: string): string[] {
+  const seen = new Set<string>();
+  const items: string[] = [];
+  for (const item of value.split(/[，,;；\n|]/)) {
+    const normalized = normalizeCategoryMetafieldMemoryValue(item);
+    if (!normalized) continue;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    items.push(normalized);
+  }
+  return items;
+}
+
+function joinCategoryMetafieldInputValues(items: string[]): string {
+  return items.map(normalizeCategoryMetafieldMemoryValue).filter(Boolean).join(", ");
+}
+
+function hasCategoryMetafieldInputValue(value: string, item: string): boolean {
+  const normalized = normalizeCategoryMetafieldMemoryValue(item).toLowerCase();
+  if (!normalized) return false;
+  return splitCategoryMetafieldInputValues(value).some(
+    (current) => current.toLowerCase() === normalized,
+  );
+}
+
+function addCategoryMetafieldInputValues(
+  value: string,
+  additions: string[],
+): string {
+  const current = splitCategoryMetafieldInputValues(value);
+  const seen = new Set(current.map((item) => item.toLowerCase()));
+  const next = [...current];
+  for (const item of additions) {
+    const normalized = normalizeCategoryMetafieldMemoryValue(item);
+    if (!normalized) continue;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    next.push(normalized);
+  }
+  return joinCategoryMetafieldInputValues(next);
+}
+
+function removeCategoryMetafieldInputValue(value: string, item: string): string {
+  const normalized = normalizeCategoryMetafieldMemoryValue(item).toLowerCase();
+  return joinCategoryMetafieldInputValues(
+    splitCategoryMetafieldInputValues(value).filter(
+      (current) => current.toLowerCase() !== normalized,
+    ),
+  );
+}
+
+function toggleCategoryMetafieldInputValue(value: string, item: string): string {
+  return hasCategoryMetafieldInputValue(value, item)
+    ? removeCategoryMetafieldInputValue(value, item)
+    : addCategoryMetafieldInputValues(value, [item]);
+}
+
+function getCategoryMetafieldOptionForValue(
+  value: string,
+  shopifyOptions: ShopifyCategoryMetafieldOption[] = [],
+) {
+  const normalized = normalizeCategoryMetafieldMemoryValue(value).toLowerCase();
+  return shopifyOptions.find((option) => {
+    return (
+      normalizeCategoryMetafieldMemoryValue(option.value).toLowerCase() === normalized ||
+      normalizeCategoryMetafieldMemoryValue(option.label).toLowerCase() === normalized
+    );
+  });
 }
 
 function sanitizeCategoryMetafieldMemoryItems(value: unknown): string[] {
@@ -2901,12 +2974,9 @@ function CategoryColorInput({
   onChange: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState("");
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const selected = CATEGORY_COLOR_OPTIONS.find(
-    (option) =>
-      normalizeCategoryColor(option.value) === normalizeCategoryColor(value) ||
-      normalizeCategoryColor(option.label) === normalizeCategoryColor(value),
-  );
+  const selectedValues = splitCategoryMetafieldInputValues(value);
 
   useEffect(() => {
     if (!open) return;
@@ -2919,20 +2989,57 @@ function CategoryColorInput({
     return () => window.removeEventListener("pointerdown", handlePointerDown);
   }, [open]);
 
-  function chooseValue(item: string) {
-    onChange(item);
-    setOpen(false);
+  function getColorOption(item: string) {
+    const shopifyOption = getCategoryMetafieldOptionForValue(item, shopifyOptions);
+    const candidates = [
+      item,
+      shopifyOption?.value || "",
+      shopifyOption?.label || "",
+    ];
+    return CATEGORY_COLOR_OPTIONS.find((option) =>
+      candidates.some(
+        (candidate) =>
+          normalizeCategoryColor(option.value) === normalizeCategoryColor(candidate) ||
+          normalizeCategoryColor(option.label) === normalizeCategoryColor(candidate),
+      ),
+    );
+  }
+
+  function getDisplayLabel(item: string) {
+    return getCategoryMetafieldOptionForValue(item, shopifyOptions)?.label || item;
+  }
+
+  function toggleValue(item: string) {
+    onChange(toggleCategoryMetafieldInputValue(value, item));
+  }
+
+  function removeValue(item: string) {
+    onChange(removeCategoryMetafieldInputValue(value, item));
+  }
+
+  function commitDraft() {
+    const additions = splitCategoryMetafieldInputValues(draft);
+    if (additions.length) {
+      onChange(addCategoryMetafieldInputValues(value, additions));
+      setDraft("");
+    }
+  }
+
+  function handleDraftKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter" || e.key === "," || e.key === "，") {
+      e.preventDefault();
+      commitDraft();
+      return;
+    }
+    if (e.key === "Backspace" && !draft && selectedValues.length) {
+      e.preventDefault();
+      removeValue(selectedValues[selectedValues.length - 1]);
+    }
   }
 
   function renderShopifyOption(item: ShopifyCategoryMetafieldOption) {
-    const option = CATEGORY_COLOR_OPTIONS.find(
-      (colorOption) =>
-        normalizeCategoryColor(colorOption.value) ===
-          normalizeCategoryColor(item.value) ||
-        normalizeCategoryColor(colorOption.label) ===
-          normalizeCategoryColor(item.value),
-    );
-    const active = normalizeCategoryColor(item.value) === normalizeCategoryColor(value);
+    const option = getColorOption(item.value);
+    const active = hasCategoryMetafieldInputValue(value, item.value);
 
     return (
       <button
@@ -2941,7 +3048,8 @@ function CategoryColorInput({
         className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors ${
           active ? "bg-purple-50 text-purple-700" : "text-gray-800 hover:bg-gray-50"
         }`}
-        onClick={() => chooseValue(item.value)}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => toggleValue(item.value)}
       >
         {option ? (
           <CategoryColorSwatch option={option} />
@@ -2949,24 +3057,56 @@ function CategoryColorInput({
           <span className="h-4 w-4 shrink-0 rounded border border-gray-200 bg-white" />
         )}
         <span className="min-w-0 flex-1 truncate">{item.label}</span>
+        {active ? <Check size={13} className="shrink-0" /> : null}
       </button>
     );
   }
 
   return (
     <div ref={rootRef} className="category-metafield-control relative">
-      <div className="flex h-8 w-full items-center rounded-md border border-gray-300 bg-white transition-colors">
-        {selected ? <CategoryColorSwatch option={selected} className="ml-2" /> : null}
+      <div className="flex min-h-8 w-full flex-wrap items-center gap-1 rounded-md border border-gray-300 bg-white px-1 py-1 transition-colors">
+        {selectedValues.map((item) => {
+          const option = getColorOption(item);
+          return (
+            <span
+              key={item}
+              className="inline-flex max-w-full items-center gap-1 rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-800"
+            >
+              {option ? (
+                <CategoryColorSwatch option={option} className="h-3.5 w-3.5" />
+              ) : (
+                <span className="h-3.5 w-3.5 shrink-0 rounded border border-gray-200 bg-white" />
+              )}
+              <span className="min-w-0 max-w-[120px] truncate">
+                {getDisplayLabel(item)}
+              </span>
+              <button
+                type="button"
+                className="rounded text-gray-500 hover:text-gray-800"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => removeValue(item)}
+                aria-label={`移除${getDisplayLabel(item)}`}
+              >
+                <X size={12} />
+              </button>
+            </span>
+          );
+        })}
         <input
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onFocus={() => setOpen(true)}
+          onBlur={commitDraft}
+          onKeyDown={handleDraftKeyDown}
+          placeholder={selectedValues.length ? "" : "选择或输入"}
           aria-label="类别元字段颜色"
-          className="h-full min-w-0 flex-1 rounded-md bg-transparent px-2 text-xs text-gray-900 outline-none"
+          className="h-6 min-w-[72px] flex-1 bg-transparent px-1 text-xs text-gray-900 outline-none placeholder:text-gray-400"
         />
         <button
           type="button"
           aria-label="选择颜色色系"
-          className="flex h-full w-8 shrink-0 items-center justify-center rounded-r-md text-gray-500 hover:bg-gray-50 hover:text-gray-700"
+          className="flex h-6 w-7 shrink-0 items-center justify-center rounded text-gray-500 hover:bg-gray-50 hover:text-gray-700"
+          onMouseDown={(e) => e.preventDefault()}
           onClick={() => setOpen((current) => !current)}
         >
           <ChevronDown
@@ -3017,8 +3157,9 @@ function CategoryMetafieldMemoryInput({
   onDeleteHistory: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState("");
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const normalizedValue = normalizeCategoryMetafieldMemoryValue(value).toLowerCase();
+  const selectedValues = splitCategoryMetafieldInputValues(value);
 
   useEffect(() => {
     if (!open) return;
@@ -3031,40 +3172,93 @@ function CategoryMetafieldMemoryInput({
     return () => window.removeEventListener("pointerdown", handlePointerDown);
   }, [open]);
 
-  function chooseHistory(item: string) {
-    onChange(item);
-    onRemember(item);
-    setOpen(false);
+  function getDisplayLabel(item: string) {
+    return getCategoryMetafieldOptionForValue(item, shopifyOptions)?.label || item;
   }
 
-  function chooseShopifyOption(item: ShopifyCategoryMetafieldOption) {
-    onChange(item.value);
-    onRemember(item.value);
-    setOpen(false);
+  function chooseValue(item: string) {
+    const items = splitCategoryMetafieldInputValues(item);
+    if (!items.length) return;
+    const allSelected = items.every((candidate) =>
+      hasCategoryMetafieldInputValue(value, candidate),
+    );
+    const next = allSelected
+      ? items.reduce(
+          (current, candidate) =>
+            removeCategoryMetafieldInputValue(current, candidate),
+          value,
+        )
+      : addCategoryMetafieldInputValues(value, items);
+    onChange(next);
+    if (!allSelected) {
+      for (const candidate of items) onRemember(candidate);
+    }
+  }
+
+  function removeValue(item: string) {
+    onChange(removeCategoryMetafieldInputValue(value, item));
+  }
+
+  function commitDraft() {
+    const additions = splitCategoryMetafieldInputValues(draft);
+    if (additions.length) {
+      onChange(addCategoryMetafieldInputValues(value, additions));
+      for (const item of additions) onRemember(item);
+      setDraft("");
+    }
+  }
+
+  function handleDraftKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter" || e.key === "," || e.key === "，") {
+      e.preventDefault();
+      commitDraft();
+      return;
+    }
+    if (e.key === "Backspace" && !draft && selectedValues.length) {
+      e.preventDefault();
+      removeValue(selectedValues[selectedValues.length - 1]);
+    }
   }
 
   return (
     <div ref={rootRef} className="category-metafield-control relative">
-      <div className="flex h-8 w-full items-center rounded-md border border-gray-300 bg-white transition-colors">
+      <div className="flex min-h-8 w-full flex-wrap items-center gap-1 rounded-md border border-gray-300 bg-white px-1 py-1 transition-colors">
+        {selectedValues.map((item) => (
+          <span
+            key={item}
+            className="inline-flex max-w-full items-center gap-1 rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-800"
+          >
+            <span className="min-w-0 max-w-[150px] truncate">
+              {getDisplayLabel(item)}
+            </span>
+            <button
+              type="button"
+              className="rounded text-gray-500 hover:text-gray-800"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => removeValue(item)}
+              aria-label={`移除${getDisplayLabel(item)}`}
+            >
+              <X size={12} />
+            </button>
+          </span>
+        ))}
         <input
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onBlur={(e) => onRemember(e.currentTarget.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              onRemember(e.currentTarget.value);
-              e.currentTarget.blur();
-            }
-          }}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onFocus={() => setOpen(true)}
+          onBlur={commitDraft}
+          onKeyDown={handleDraftKeyDown}
+          placeholder={selectedValues.length ? "" : "选择或输入"}
           aria-label={ariaLabel}
-          className="h-full min-w-0 flex-1 rounded-md bg-transparent px-2 text-xs text-gray-900 outline-none"
+          className="h-6 min-w-[72px] flex-1 bg-transparent px-1 text-xs text-gray-900 outline-none placeholder:text-gray-400"
         />
         <button
           type="button"
           aria-label="查看历史输入"
-          className="flex h-full w-8 shrink-0 items-center justify-center rounded-r-md text-gray-500 hover:bg-gray-50 hover:text-gray-700"
+          className="flex h-6 w-7 shrink-0 items-center justify-center rounded text-gray-500 hover:bg-gray-50 hover:text-gray-700"
+          onMouseDown={(e) => e.preventDefault()}
           onClick={() => {
-            onRemember(value);
+            commitDraft();
             setOpen((current) => !current);
           }}
         >
@@ -3083,9 +3277,7 @@ function CategoryMetafieldMemoryInput({
               </div>
               <div className="space-y-0.5">
                 {shopifyOptions.map((item) => {
-                  const active =
-                    normalizeCategoryMetafieldMemoryValue(item.value).toLowerCase() ===
-                    normalizedValue;
+                  const active = hasCategoryMetafieldInputValue(value, item.value);
                   return (
                     <button
                       key={`shopify-${item.id}`}
@@ -3095,9 +3287,11 @@ function CategoryMetafieldMemoryInput({
                           ? "bg-purple-50 text-purple-700"
                           : "text-gray-800 hover:bg-gray-50"
                       }`}
-                      onClick={() => chooseShopifyOption(item)}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => chooseValue(item.value)}
                     >
                       <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                      {active ? <Check size={13} className="shrink-0" /> : null}
                     </button>
                   );
                 })}
@@ -3108,9 +3302,9 @@ function CategoryMetafieldMemoryInput({
           {history.length ? (
             <div className="space-y-0.5">
               {history.map((item) => {
-                const active =
-                  normalizeCategoryMetafieldMemoryValue(item).toLowerCase() ===
-                  normalizedValue;
+                const active = splitCategoryMetafieldInputValues(item).every(
+                  (candidate) => hasCategoryMetafieldInputValue(value, candidate),
+                );
                 return (
                   <button
                     key={item}
@@ -3121,13 +3315,15 @@ function CategoryMetafieldMemoryInput({
                         ? "bg-purple-50 text-purple-700"
                         : "text-gray-800 hover:bg-gray-50"
                     }`}
-                    onClick={() => chooseHistory(item)}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => chooseValue(item)}
                     onContextMenu={(e) => {
                       e.preventDefault();
                       onDeleteHistory(item);
                     }}
                   >
                     <span className="min-w-0 flex-1 truncate">{item}</span>
+                    {active ? <Check size={13} className="shrink-0" /> : null}
                   </button>
                 );
               })}
