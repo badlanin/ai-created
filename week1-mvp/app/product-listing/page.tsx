@@ -4906,6 +4906,81 @@ function ProductFormPanel({
             }
           />
 
+          {!variantSectionCollapsed ? (
+            <div ref={variantOptionMenuRef} className="relative rounded-md border border-gray-200 bg-white">
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 px-4 py-2 text-left text-xs font-medium text-gray-700 hover:bg-gray-50"
+                onClick={() => {
+                  setVariantOptionSearch("");
+                  setVariantOptionMenuOpen((open) => !open);
+                }}
+              >
+                <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-400 text-[11px]">
+                  +
+                </span>
+                添加其他选项
+              </button>
+              {variantOptionMenuOpen ? (
+                <div className="absolute left-8 top-8 z-50 w-64 rounded-xl border border-gray-200 bg-white p-2 text-sm shadow-xl">
+                  <div className="relative">
+                    <Search
+                      size={15}
+                      className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-500"
+                    />
+                    <input
+                      value={variantOptionSearch}
+                      onChange={(e) => setVariantOptionSearch(e.target.value)}
+                      autoFocus
+                      placeholder="搜索"
+                      className="h-9 w-full rounded-lg border border-gray-300 bg-white pl-9 pr-3 text-sm text-gray-900 outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+                  <div className="px-2 pb-1 pt-3 text-xs font-medium text-gray-500">
+                    推荐
+                  </div>
+                  <div className="space-y-0.5">
+                    {filteredVariantOptionRecommendations.map((option) => {
+                      const active =
+                        normalizeVariantOptionName(option) === variantOptionName;
+                      return (
+                        <button
+                          key={option}
+                          type="button"
+                          className={`flex h-8 w-full items-center rounded-md px-2 text-left text-sm transition-colors ${
+                            active
+                              ? "bg-gray-100 text-gray-950"
+                              : "text-gray-800 hover:bg-gray-50"
+                          }`}
+                          onClick={() => chooseVariantOption(option)}
+                        >
+                          <span className="min-w-0 flex-1 truncate">
+                            {option}
+                          </span>
+                        </button>
+                      );
+                    })}
+                    {filteredVariantOptionRecommendations.length === 0 ? (
+                      <div className="px-2 py-3 text-xs text-gray-400">
+                        没有匹配的推荐选项
+                      </div>
+                    ) : null}
+                  </div>
+                  <button
+                    type="button"
+                    className="mt-2 flex h-9 w-full items-center gap-2 border-t border-gray-100 px-2 pt-2 text-left text-sm text-gray-800 hover:text-gray-950"
+                    onClick={openCustomVariantOption}
+                  >
+                    <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-500 text-[11px]">
+                      +
+                    </span>
+                    创建自定义选项
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
           {(variantRows.length > 0 || variantDialogOpen) && !variantSectionCollapsed ? (
             <div className="space-y-3">
               {variantRows.length > 0 ? (
@@ -4924,78 +4999,6 @@ function ProductFormPanel({
                       </span>
                     ))}
                   </div>
-                </div>
-                <div ref={variantOptionMenuRef} className="relative">
-                  <button
-                    type="button"
-                    className="flex w-full items-center gap-2 px-4 py-2 text-left text-xs font-medium text-gray-700 hover:bg-gray-50"
-                    onClick={() => {
-                      setVariantOptionSearch("");
-                      setVariantOptionMenuOpen((open) => !open);
-                    }}
-                  >
-                    <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-400 text-[11px]">
-                      +
-                    </span>
-                    添加其他选项
-                  </button>
-                  {variantOptionMenuOpen ? (
-                    <div className="absolute left-8 top-8 z-50 w-64 rounded-xl border border-gray-200 bg-white p-2 text-sm shadow-xl">
-                      <div className="relative">
-                        <Search
-                          size={15}
-                          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-500"
-                        />
-                        <input
-                          value={variantOptionSearch}
-                          onChange={(e) => setVariantOptionSearch(e.target.value)}
-                          autoFocus
-                          placeholder="搜索"
-                          className="h-9 w-full rounded-lg border border-gray-300 bg-white pl-9 pr-3 text-sm text-gray-900 outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100"
-                        />
-                      </div>
-                      <div className="px-2 pb-1 pt-3 text-xs font-medium text-gray-500">
-                        推荐
-                      </div>
-                      <div className="space-y-0.5">
-                        {filteredVariantOptionRecommendations.map((option) => {
-                          const active =
-                            normalizeVariantOptionName(option) === variantOptionName;
-                          return (
-                            <button
-                              key={option}
-                              type="button"
-                              className={`flex h-8 w-full items-center rounded-md px-2 text-left text-sm transition-colors ${
-                                active
-                                  ? "bg-gray-100 text-gray-950"
-                                  : "text-gray-800 hover:bg-gray-50"
-                              }`}
-                              onClick={() => chooseVariantOption(option)}
-                            >
-                              <span className="min-w-0 flex-1 truncate">
-                                {option}
-                              </span>
-                            </button>
-                          );
-                        })}
-                        {filteredVariantOptionRecommendations.length === 0 ? (
-                          <div className="px-2 py-3 text-xs text-gray-400">
-                            没有匹配的推荐选项
-                          </div>
-                        ) : null}
-                      </div>
-                      <button
-                        type="button"
-                        className="mt-2 flex h-9 w-full items-center gap-2 border-t border-gray-100 px-2 pt-2 text-left text-sm text-gray-800 hover:text-gray-950"
-                        onClick={openCustomVariantOption}
-                      >
-                        <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-500 text-[11px]">
-                          +
-                        </span>
-                        创建自定义选项
-                      </button>
-                    </div>
-                  ) : null}
                 </div>
               </div>
               ) : null}
