@@ -90,6 +90,8 @@ type ShopifySalesChannelOption = {
   catalogId: string | null;
   catalogTitle: string | null;
   status: string | null;
+  disabled?: boolean;
+  disabledReason?: string | null;
 };
 
 type ShopifyCatalogOption = {
@@ -5070,6 +5072,13 @@ function ProductFormPanel({
     removeVariantValueFromLinkedMetafield(value);
   }
 
+  function updateVariantValueAt(index: number, value: string) {
+    const values = parseVariantSizes(variantSizeText);
+    if (index < 0 || index >= values.length) return;
+    values[index] = value;
+    setVariantSizeText(values.join("\n"));
+  }
+
   function toggleVariantValueCandidate(value: string) {
     if (hasCategoryMetafieldInputValue(variantSizeText, value)) {
       removeVariantValue(value);
@@ -5294,6 +5303,8 @@ function ProductFormPanel({
   }
 
   function toggleBackendSalesChannel(id: string) {
+    const channel = backendSalesChannels.find((item) => item.id === id);
+    if (channel?.disabled) return;
     setBackendSelectedSalesChannelIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
     );
@@ -5331,7 +5342,11 @@ function ProductFormPanel({
   function getBackendSelectedPublicationIds() {
     const ids = [
       ...backendSalesChannels
-        .filter((channel) => backendSelectedSalesChannelIds.includes(channel.id))
+        .filter(
+          (channel) =>
+            backendSelectedSalesChannelIds.includes(channel.id) &&
+            !channel.disabled,
+        )
         .map((channel) => channel.publicationId),
       ...backendCatalogs
         .filter((catalog) => backendSelectedCatalogIds.includes(catalog.id))
@@ -5624,6 +5639,7 @@ function ProductFormPanel({
       ? editingOptionGroupIndex * 2 + 1
       : variantOptionGroups.length * 2 + 1;
   const variantGroupByOrder = variantOptionGroups.length * 2 + 2;
+  const variantTableOrder = variantGroupByOrder + 1;
 
   return (
     <div className="space-y-3">
@@ -6165,28 +6181,46 @@ function ProductFormPanel({
                         />
                       </div>
 
-                      <div className="space-y-2">
-                        <div className="relative">
-                          <div
-                            className={`flex min-h-[64px] w-full flex-wrap items-start gap-1.5 rounded-md border bg-white p-2 transition-colors ${
-                              variantValueInputFocused
-                                ? "border-blue-600 ring-2 ring-blue-100"
-                                : "border-gray-300"
-                            }`}
-                          >
-                            {parsedVariantSizes.map((size) => (
-                              <button
-                                key={size}
-                                type="button"
-                                className="inline-flex max-w-full items-center gap-1 rounded bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100"
-                                onMouseDown={(e) => e.preventDefault()}
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-medium text-gray-700">
+                          选项值
+                        </label>
+                        <div className="space-y-1.5">
+                          {parsedVariantSizes.map((size, index) => (
+                            <div
+                              key={`${size}-${index}`}
+                              className="grid grid-cols-[18px_minmax(0,1fr)_28px] items-center gap-2"
+                            >
+                              <GripVertical
+                                size={14}
+                                className="text-gray-400"
+                                strokeWidth={2}
+                              />
+                              <input
+                                value={size}
+                                onChange={(e) =>
+                                  updateVariantValueAt(index, e.target.value)
+                                }
+                                onBlur={(e) => {
+                                  const value =
+                                    normalizeCategoryMetafieldMemoryValue(
+                                      e.target.value,
+                                    );
+                                  if (value) addVariantValuesToLinkedMetafield([value]);
+                                }}
+                                className="h-8 w-full rounded-md border border-gray-400 bg-white px-3 text-sm text-gray-900 outline-none focus:border-gray-900 focus:ring-1 focus:ring-gray-900"
+                              />
+                              <IconButton
+                                size="sm"
+                                variant="ghost"
+                                icon={<Trash2 size={14} />}
+                                aria-label={`删除 ${size}`}
+                                title="删除"
                                 onClick={() => removeVariantValue(size)}
-                                title="移除选项值"
-                              >
-                                <span className="truncate">{size}</span>
-                                <X size={12} className="text-blue-600" />
-                              </button>
-                            ))}
+                              />
+                            </div>
+                          ))}
+                          <div className="relative ml-[26px]">
                             <input
                               value={variantValueDraft}
                               onChange={(e) => setVariantValueDraft(e.target.value)}
@@ -6209,69 +6243,71 @@ function ProductFormPanel({
                                   addVariantValuesFromText(variantValueDraft);
                                 }
                               }}
-                              placeholder={`添加 ${normalizeVariantOptionName(form.variantOptionName)}`}
-                              className="h-7 min-w-[140px] flex-1 basis-full bg-transparent px-1 text-sm text-gray-900 outline-none placeholder:text-gray-400"
+                              placeholder="添加另一个值"
+                              className="h-8 w-full rounded-md border border-gray-400 bg-white px-3 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-gray-900 focus:ring-1 focus:ring-gray-900"
                             />
+                            {variantValueInputFocused &&
+                            (filteredVariantLinkedValueCandidates.length > 0 ||
+                              variantValueDraft.trim()) ? (
+                              <div className="absolute bottom-[calc(100%+8px)] left-0 right-0 z-[120] overflow-hidden rounded-xl border border-gray-200 bg-white text-sm shadow-2xl">
+                                {filteredVariantLinkedValueCandidates.length > 0 ? (
+                                  <div className="max-h-72 overflow-y-auto py-1">
+                                    {filteredVariantLinkedValueCandidates.map((item) => {
+                                      const active = hasCategoryMetafieldInputValue(
+                                        variantSizeText,
+                                        item.value,
+                                      );
+                                      return (
+                                        <button
+                                          key={item.id}
+                                          type="button"
+                                          title={item.sourceLabel}
+                                          className={`flex h-8 w-full items-center gap-3 px-3 text-left text-sm transition-colors ${
+                                            active
+                                              ? "bg-gray-50 text-gray-950"
+                                              : "text-gray-800 hover:bg-gray-50"
+                                          }`}
+                                          onMouseDown={(e) => e.preventDefault()}
+                                          onClick={() =>
+                                            toggleVariantValueCandidate(item.value)
+                                          }
+                                        >
+                                          <input
+                                            type="checkbox"
+                                            readOnly
+                                            tabIndex={-1}
+                                            checked={active}
+                                            className="h-4 w-4 shrink-0 rounded border-gray-300 accent-gray-900"
+                                          />
+                                          <span className="min-w-0 flex-1 truncate">
+                                            {item.label}
+                                          </span>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                ) : (
+                                  <div className="px-3 py-3 text-xs text-gray-400">
+                                    暂无可选条目
+                                  </div>
+                                )}
+                                <button
+                                  type="button"
+                                  className="flex h-10 w-full items-center gap-2 border-t border-gray-100 px-3 text-left text-sm text-gray-800 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400"
+                                  disabled={!variantValueDraft.trim()}
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onClick={() =>
+                                    addVariantValuesFromText(variantValueDraft)
+                                  }
+                                >
+                                  <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-400 text-[11px]">
+                                    +
+                                  </span>
+                                  添加新条目
+                                </button>
+                              </div>
+                            ) : null}
                           </div>
-                          {variantValueInputFocused &&
-                          (filteredVariantLinkedValueCandidates.length > 0 ||
-                            variantValueDraft.trim()) ? (
-                            <div className="absolute bottom-[calc(100%+8px)] left-0 right-0 z-[120] overflow-hidden rounded-xl border border-gray-200 bg-white text-sm shadow-2xl">
-                              {filteredVariantLinkedValueCandidates.length > 0 ? (
-                                <div className="max-h-72 overflow-y-auto py-1">
-                                  {filteredVariantLinkedValueCandidates.map((item) => {
-                                    const active = hasCategoryMetafieldInputValue(
-                                      variantSizeText,
-                                      item.value,
-                                    );
-                                    return (
-                                      <button
-                                        key={item.id}
-                                        type="button"
-                                        title={item.sourceLabel}
-                                        className={`flex h-8 w-full items-center gap-3 px-3 text-left text-sm transition-colors ${
-                                          active
-                                            ? "bg-gray-50 text-gray-950"
-                                            : "text-gray-800 hover:bg-gray-50"
-                                        }`}
-                                        onMouseDown={(e) => e.preventDefault()}
-                                        onClick={() =>
-                                          toggleVariantValueCandidate(item.value)
-                                        }
-                                      >
-                                        <input
-                                          type="checkbox"
-                                          readOnly
-                                          tabIndex={-1}
-                                          checked={active}
-                                          className="h-4 w-4 shrink-0 rounded border-gray-300 accent-gray-900"
-                                        />
-                                        <span className="min-w-0 flex-1 truncate">
-                                          {item.label}
-                                        </span>
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              ) : (
-                                <div className="px-3 py-3 text-xs text-gray-400">
-                                  暂无可选条目
-                                </div>
-                              )}
-                              <button
-                                type="button"
-                                className="flex h-10 w-full items-center gap-2 border-t border-gray-100 px-3 text-left text-sm text-gray-800 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400"
-                                disabled={!variantValueDraft.trim()}
-                                onMouseDown={(e) => e.preventDefault()}
-                                onClick={() => addVariantValuesFromText(variantValueDraft)}
-                              >
-                                <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-400 text-[11px]">
-                                  +
-                                </span>
-                                添加新条目
-                              </button>
-                            </div>
-                          ) : null}
                         </div>
                       </div>
 
@@ -6346,7 +6382,10 @@ function ProductFormPanel({
               ) : null}
 
               {variantRows.length > 0 ? (
-              <div className="overflow-hidden rounded-md border border-gray-200 bg-white">
+              <div
+                className="overflow-hidden rounded-md border border-gray-200 bg-white"
+                style={{ order: variantTableOrder }}
+              >
                 <div>
                   <div className="grid grid-cols-[36px_82px_minmax(0,1fr)_132px_88px] items-center border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs font-medium text-fg-secondary">
                     <div className="flex items-center justify-center">
@@ -6688,18 +6727,29 @@ function ProductFormPanel({
                             const active = backendSelectedSalesChannelIds.includes(
                               channel.id,
                             );
+                            const disabled = Boolean(channel.disabled);
                             return (
                               <button
                                 key={`${channel.publicationId}-${channel.id}`}
                                 type="button"
+                                disabled={disabled}
                                 className={`flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left text-sm ${
-                                  active
+                                  disabled
+                                    ? "cursor-not-allowed text-gray-400"
+                                    : active
                                     ? "bg-gray-100 font-semibold text-gray-950"
                                     : "text-gray-800 hover:bg-gray-50"
                                 }`}
                                 onClick={() => toggleBackendSalesChannel(channel.id)}
                               >
-                                <span className="min-w-0 truncate">{channel.name}</span>
+                                <span className="min-w-0">
+                                  <span className="block truncate">{channel.name}</span>
+                                  {channel.disabledReason ? (
+                                    <span className="mt-0.5 block truncate text-[11px] text-gray-400">
+                                      {channel.disabledReason}
+                                    </span>
+                                  ) : null}
+                                </span>
                                 {active ? <Check size={14} /> : null}
                               </button>
                             );
@@ -6901,32 +6951,34 @@ function ProductFormPanel({
                                 const active = backendSelectedSalesChannelIds.includes(
                                   channel.id,
                                 );
+                                const disabled = Boolean(channel.disabled);
                                 return (
                                   <button
                                     key={`${channel.publicationId}-${channel.id}`}
                                     type="button"
+                                    disabled={disabled}
                                     className={`flex w-full items-start justify-between gap-3 rounded-md border px-2 py-2 text-left text-xs ${
-                                      active
+                                      disabled
+                                        ? "cursor-not-allowed border-gray-100 bg-gray-50 text-gray-400"
+                                        : active
                                         ? "border-gray-300 bg-gray-50"
                                         : "border-gray-100 hover:bg-gray-50"
                                     }`}
                                     onClick={() => toggleBackendSalesChannel(channel.id)}
                                   >
                                     <span className="min-w-0">
-                                      <span className="block font-medium text-gray-900">
+                                      <span
+                                        className={`block font-medium ${
+                                          disabled ? "text-gray-400" : "text-gray-900"
+                                        }`}
+                                      >
                                         {channel.name}
                                       </span>
-                                      <span className="mt-0.5 flex flex-wrap gap-1.5 text-[11px] text-gray-500">
-                                        {channel.catalogTitle ? (
-                                          <span>{channel.catalogTitle}</span>
-                                        ) : null}
-                                        {channel.status ? (
-                                          <span>{channel.status}</span>
-                                        ) : null}
-                                        {channel.autoPublish ? (
-                                          <span>自动发布</span>
-                                        ) : null}
-                                      </span>
+                                      {channel.disabledReason ? (
+                                        <span className="mt-0.5 flex flex-wrap gap-1.5 text-[11px] text-gray-500">
+                                          <span>{channel.disabledReason}</span>
+                                        </span>
+                                      ) : null}
                                     </span>
                                     {active ? <Check size={14} /> : null}
                                   </button>
@@ -6960,7 +7012,7 @@ function ProductFormPanel({
                                       {catalog.title}
                                     </span>
                                     <span className="mt-0.5 block text-[11px] text-gray-500">
-                                      {catalog.status || "无状态"}
+                                      区域
                                     </span>
                                   </span>
                                   {active ? <Check size={14} /> : null}

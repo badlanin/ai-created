@@ -4,6 +4,7 @@ import { getSession, requireUser } from "@/lib/auth";
 import {
   buildShopifyOAuthAuthorizeUrl,
   normalizeShopDomain,
+  SHOPIFY_OAUTH_SCOPES,
 } from "@/lib/shopify";
 import { getShopifyDeviceIdFromRequest } from "@/lib/shopify-device";
 
@@ -63,6 +64,7 @@ export async function POST(req: NextRequest) {
       clientId,
       redirectUri,
       state,
+      scopes: SHOPIFY_OAUTH_SCOPES,
     });
 
     return NextResponse.json({

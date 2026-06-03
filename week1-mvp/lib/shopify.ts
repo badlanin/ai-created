@@ -162,6 +162,8 @@ export type ShopifySalesChannelOption = {
   catalogId: string | null;
   catalogTitle: string | null;
   status: string | null;
+  disabled?: boolean;
+  disabledReason?: string | null;
 };
 
 export type ShopifyCatalogOption = {
@@ -1815,6 +1817,31 @@ export async function getShopifyCategoryMetafieldOptions(
   };
 }
 
+function normalizeShopifySalesChannelDisplayName(name: string) {
+  const normalized = name.trim().toLowerCase();
+  if (normalized === "online store") return "在线商店";
+  if (normalized === "point of sale" || normalized === "pos") return "POS";
+  return name;
+}
+
+function getShopifySalesChannelSortOrder(name: string) {
+  const normalized = name.trim().toLowerCase();
+  if (normalized === "在线商店" || normalized === "online store") return 10;
+  if (normalized === "inbox") return 20;
+  if (normalized === "pinterest") return 30;
+  if (normalized === "pos" || normalized === "point of sale") return 90;
+  return 50;
+}
+
+function isUnsupportedShopifyVariantPublicationChannel(name: string) {
+  const normalized = name.trim().toLowerCase();
+  return normalized === "pos" || normalized === "point of sale";
+}
+
+function isShopifyInternalChannelCatalogTitle(title: string) {
+  return /^channel catalog(?:\s+\d+)?$/i.test(title.trim());
+}
+
 export async function getShopifySellingContexts(
   userId: number,
   deviceId: string,
@@ -1876,15 +1903,19 @@ export async function getShopifySellingContexts(
         const key = `publication:${publicationId}`;
         if (seenChannels.has(key)) continue;
         seenChannels.add(key);
+        const rawName = catalogTitle || "未命名销售渠道";
+        const disabled = isUnsupportedShopifyVariantPublicationChannel(rawName);
         channels.push({
           id: publicationId,
-          name: catalogTitle || "未命名销售渠道",
+          name: normalizeShopifySalesChannelDisplayName(rawName),
           publicationId,
           autoPublish: Boolean(publication.autoPublish),
           supportsFuturePublishing: Boolean(publication.supportsFuturePublishing),
           catalogId,
           catalogTitle,
           status,
+          disabled,
+          disabledReason: disabled ? "目前不支持发布多属性。" : null,
         });
       }
 
@@ -1892,18 +1923,29 @@ export async function getShopifySellingContexts(
         const channelId = cleanField(channel.id);
         if (!channelId || seenChannels.has(channelId)) continue;
         seenChannels.add(channelId);
+        const rawName =
+          cleanField(channel.name) || catalogTitle || "未命名销售渠道";
+        const disabled = isUnsupportedShopifyVariantPublicationChannel(rawName);
         channels.push({
           id: channelId,
-          name: cleanField(channel.name) || catalogTitle || "未命名销售渠道",
+          name: normalizeShopifySalesChannelDisplayName(rawName),
           publicationId,
           autoPublish: Boolean(publication.autoPublish),
           supportsFuturePublishing: Boolean(publication.supportsFuturePublishing),
           catalogId,
           catalogTitle,
           status,
+          disabled,
+          disabledReason: disabled ? "目前不支持发布多属性。" : null,
         });
       }
     }
+    channels.sort(
+      (a, b) =>
+        getShopifySalesChannelSortOrder(a.name) -
+          getShopifySalesChannelSortOrder(b.name) ||
+        a.name.localeCompare(b.name, "zh-CN"),
+    );
   }
 
   const catalogsJson = await shopifyGraphql<ShopifyCatalogsResponse>(
@@ -1929,15 +1971,28 @@ export async function getShopifySellingContexts(
     const seenCatalogs = new Set<string>();
     for (const catalog of catalogsJson.data?.catalogs?.nodes || []) {
       const id = cleanField(catalog.id);
+      const title = cleanField(catalog.title) || "未命名目录";
       if (!id || seenCatalogs.has(id)) continue;
+      if (isShopifyInternalChannelCatalogTitle(title)) continue;
       seenCatalogs.add(id);
       catalogs.push({
         id,
-        title: cleanField(catalog.title) || "未命名目录",
+        title,
         status: cleanField(catalog.status) || null,
         publicationId: cleanField(catalog.publication?.id) || null,
       });
     }
+    catalogs.sort((a, b) => {
+      const priority = (title: string) => {
+        if (title === "国际") return 10;
+        if (title === "美国") return 20;
+        return 50;
+      };
+      return (
+        priority(a.title) - priority(b.title) ||
+        a.title.localeCompare(b.title, "zh-CN")
+      );
+    });
   }
 
   return { channels, catalogs, warnings };
