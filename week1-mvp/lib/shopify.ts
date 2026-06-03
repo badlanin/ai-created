@@ -2287,6 +2287,7 @@ export async function syncShopifyProduct(
     product.id,
     categoryId,
     input,
+    productOptionDrafts,
     warnings,
   );
 
@@ -3593,15 +3594,39 @@ function normalizeUserErrors(
     .filter(Boolean);
 }
 
+function buildLinkedProductOptionMetafieldKeySet(
+  productOptions: NormalizedProductOptionDraft[],
+) {
+  const keys = new Set<string>();
+  for (const option of productOptions) {
+    if (option.linkedMetafield?.namespace !== SHOPIFY_CATEGORY_METAFIELD_NAMESPACE) {
+      continue;
+    }
+    const key = cleanField(option.linkedMetafield.key).toLowerCase();
+    if (key) keys.add(key);
+  }
+  return keys;
+}
+
+function isCategoryMetafieldMappingLinkedToProductOption(
+  mapping: ShopifyCategoryMetafieldMapping,
+  linkedMetafieldKeys: Set<string>,
+) {
+  return mapping.keyHints.some((key) =>
+    linkedMetafieldKeys.has(cleanField(key).toLowerCase()),
+  );
+}
+
 async function syncShopifyCategoryMetafields(
   shopDomain: string,
   accessToken: string,
   productId: string,
   categoryId: string | null,
   input: ShopifyProductDraftInput,
+  productOptions: NormalizedProductOptionDraft[],
   warnings: string[],
 ) {
-  const drafts = SHOPIFY_CATEGORY_METAFIELD_MAPPINGS.map((mapping) => ({
+  const initialDrafts = SHOPIFY_CATEGORY_METAFIELD_MAPPINGS.map((mapping) => ({
     mapping,
     value: cleanCategoryMetafieldValue(input[mapping.field]),
   })).filter(
@@ -3612,6 +3637,23 @@ async function syncShopifyCategoryMetafields(
       value: string;
     } => Boolean(draft.value),
   );
+
+  const linkedMetafieldKeys =
+    buildLinkedProductOptionMetafieldKeySet(productOptions);
+  const drafts = initialDrafts.filter((draft) => {
+    if (
+      !isCategoryMetafieldMappingLinkedToProductOption(
+        draft.mapping,
+        linkedMetafieldKeys,
+      )
+    ) {
+      return true;
+    }
+    warnings.push(
+      `已跳过 Shopify 类别元字段「${draft.mapping.label}」直接同步：该字段已连接到多属性选项。`,
+    );
+    return false;
+  });
 
   if (!drafts.length) return;
   if (!categoryId || categoryId === SHOPIFY_UNCATEGORIZED_CATEGORY_ID) {
