@@ -19,7 +19,6 @@ export const SHOPIFY_OAUTH_SCOPES = [
   "write_metaobjects",
   "read_products",
   "write_products",
-  "read_publications",
 ].join(",");
 
 export type ShopifyAuthMode =
@@ -101,12 +100,6 @@ export type ShopifyProductDraftInput = {
   variantOptionName?: string;
   variantOptionMetafieldKey?: string;
   variantGroupByOptionName?: string;
-  publicationIds?: string[];
-  optionGroups?: Array<{
-    optionName: string;
-    optionMetafieldKey?: string;
-    values?: string[];
-  }>;
   media?: Array<{
     url: string;
     alt?: string;
@@ -120,12 +113,6 @@ export type ShopifyProductDraftInput = {
     inventory?: string;
     imageUrl?: string;
     isMainImage?: boolean;
-    optionValues?: Array<{
-      optionName: string;
-      optionMetafieldKey?: string;
-      value: string;
-      linkedMetafieldValue?: string;
-    }>;
   }>;
 };
 
@@ -150,30 +137,6 @@ export type ShopifyCategoryMetafieldOptionsResult = {
   categoryId: string;
   hierarchy: Array<{ id: string; name: string | null }>;
   fields: Record<string, ShopifyCategoryMetafieldOptionField>;
-  warnings: string[];
-};
-
-export type ShopifySalesChannelOption = {
-  id: string;
-  name: string;
-  publicationId: string;
-  autoPublish: boolean;
-  supportsFuturePublishing: boolean;
-  catalogId: string | null;
-  catalogTitle: string | null;
-  status: string | null;
-};
-
-export type ShopifyCatalogOption = {
-  id: string;
-  title: string;
-  status: string | null;
-  publicationId: string | null;
-};
-
-export type ShopifySellingContextsResult = {
-  channels: ShopifySalesChannelOption[];
-  catalogs: ShopifyCatalogOption[];
   warnings: string[];
 };
 
@@ -343,46 +306,6 @@ type ShopifyMetaobjectDefinitionByTypeResponse = {
   errors?: Array<{ message?: string }>;
 };
 
-type ShopifyPublicationsResponse = {
-  data?: {
-    publications?: {
-      nodes?: Array<{
-        id: string;
-        autoPublish?: boolean | null;
-        supportsFuturePublishing?: boolean | null;
-        catalog?: {
-          id?: string | null;
-          title?: string | null;
-          status?: string | null;
-        } | null;
-        channels?: {
-          nodes?: Array<{
-            id: string;
-            name?: string | null;
-          }>;
-        } | null;
-      }>;
-    } | null;
-  };
-  errors?: Array<{ message?: string }>;
-};
-
-type ShopifyCatalogsResponse = {
-  data?: {
-    catalogs?: {
-      nodes?: Array<{
-        id: string;
-        title?: string | null;
-        status?: string | null;
-        publication?: {
-          id?: string | null;
-        } | null;
-      }>;
-    } | null;
-  };
-  errors?: Array<{ message?: string }>;
-};
-
 type ShopifyMetaobjectDefinitionByIdResponse = {
   data?: {
     metaobjectDefinition?: ShopifyMetaobjectDefinitionNode | null;
@@ -473,15 +396,6 @@ type ShopifyTaxonomyCategoriesResponse = {
 type ShopifyVariantUpdateResponse = {
   data?: {
     productVariantsBulkUpdate?: {
-      userErrors?: Array<{ field?: string[]; message?: string }>;
-    };
-  };
-  errors?: Array<{ message?: string }>;
-};
-
-type ShopifyPublishablePublishResponse = {
-  data?: {
-    publishablePublish?: {
       userErrors?: Array<{ field?: string[]; message?: string }>;
     };
   };
@@ -587,13 +501,6 @@ type VariantMediaSyncTarget = {
   variantId: string;
   mediaIds: string[];
   label: string;
-};
-
-type ShopifyMediaInputWithSource = {
-  mediaContentType: "IMAGE";
-  originalSource: string;
-  alt?: string;
-  sourceUrl: string;
 };
 
 type ShopifyTaxonomySearchResponse = {
@@ -1337,30 +1244,6 @@ function normalizeShopifyTemplateSuffix(value?: string): string {
 
 type ShopifyVariantDraft = NonNullable<ShopifyProductDraftInput["variants"]>[number];
 
-type NormalizedVariantOptionValue = {
-  optionName: string;
-  optionMetafieldKey: string;
-  value: string;
-  linkedMetafieldValue: string;
-};
-
-type NormalizedProductVariantDraft = {
-  size: string;
-  sku: string;
-  price: string;
-  inventory: string;
-  imageUrl: string;
-  optionValues: NormalizedVariantOptionValue[];
-};
-
-type NormalizedProductOptionDraft = {
-  optionName: string;
-  optionMetafieldKey: string;
-  values: string[];
-  linkedMetafield: { namespace: string; key: string; values: string[] } | null;
-  linkedValueByValue: Map<string, string>;
-};
-
 function findShopifyCategoryMetafieldMappingByField(field?: string) {
   const normalized = cleanField(field);
   if (!normalized) return null;
@@ -1384,20 +1267,12 @@ function buildVariantOptionLinkedMetafieldInput(
   const key = cleanField(mapping.keyHints[0]);
   if (!key) return null;
 
-  const missingLinkedValues = variants.some(
-    (variant) => cleanField(variant.size) && !cleanField(variant.linkedMetafieldValue),
-  );
-  if (missingLinkedValues) {
-    warnings.push(
-      "已跳过多属性选项与 Shopify 类别元字段的关联：部分选项值不是 Shopify 标准元字段值。",
-    );
-    return null;
-  }
-
   const values = Array.from(
     new Set(
       variants
-        .map((variant) => cleanField(variant.linkedMetafieldValue))
+        .map((variant) =>
+          cleanField(variant.linkedMetafieldValue || variant.size),
+        )
         .filter(Boolean),
     ),
   );
@@ -1411,167 +1286,12 @@ function buildVariantOptionLinkedMetafieldInput(
   };
 }
 
-function buildProductOptionDrafts(
-  input: ShopifyProductDraftInput,
-  variants: NormalizedProductVariantDraft[],
-  warnings: string[],
-): NormalizedProductOptionDraft[] {
-  const fallbackOptionName =
-    cleanField(input.variantGroupByOptionName) ||
-    cleanField(input.variantOptionName) ||
-    "Size";
-  const fallbackOptionMetafieldKey = cleanField(input.variantOptionMetafieldKey);
-  const groups = new Map<
-    string,
-    { optionName: string; optionMetafieldKey: string; values: string[] }
-  >();
-
-  const ensureGroup = (optionName: string, optionMetafieldKey = "") => {
-    const name = cleanField(optionName) || fallbackOptionName;
-    const key = name.toLowerCase();
-    const existing = groups.get(key);
-    if (existing) {
-      if (!existing.optionMetafieldKey && optionMetafieldKey) {
-        existing.optionMetafieldKey = optionMetafieldKey;
-      }
-      return existing;
-    }
-    const group = {
-      optionName: name,
-      optionMetafieldKey: cleanField(optionMetafieldKey),
-      values: [] as string[],
-    };
-    groups.set(key, group);
-    return group;
-  };
-  const addValue = (
-    optionName: string,
-    value: string,
-    optionMetafieldKey = "",
-  ) => {
-    const cleanedValue = cleanField(value);
-    if (!cleanedValue) return;
-    const group = ensureGroup(optionName, optionMetafieldKey);
-    if (
-      !group.values.some(
-        (item) => item.toLowerCase() === cleanedValue.toLowerCase(),
-      )
-    ) {
-      group.values.push(cleanedValue);
-    }
-  };
-
-  for (const group of input.optionGroups || []) {
-    const optionName = cleanField(group.optionName);
-    if (!optionName) continue;
-    ensureGroup(optionName, cleanField(group.optionMetafieldKey));
-  }
-
-  const firstVariant = variants[0];
-  for (const option of firstVariant?.optionValues || []) {
-    addValue(option.optionName, option.value, option.optionMetafieldKey);
-  }
-
-  for (const variant of variants) {
-    if (variant.optionValues.length) {
-      for (const option of variant.optionValues) {
-        addValue(option.optionName, option.value, option.optionMetafieldKey);
-      }
-    } else {
-      addValue(fallbackOptionName, variant.size, fallbackOptionMetafieldKey);
-    }
-  }
-
-  if (!groups.size && variants.length) {
-    for (const variant of variants) {
-      addValue(fallbackOptionName, variant.size, fallbackOptionMetafieldKey);
-    }
-  }
-
-  return Array.from(groups.values())
-    .filter((group) => group.optionName && group.values.length)
-    .map((group) => {
-      const linkedValueByValue = buildLinkedValueMapForOption(
-        group.optionName,
-        variants,
-      );
-      const linkedMetafield = buildOptionLinkedMetafieldInput(
-        group.optionName,
-        group.optionMetafieldKey,
-        group.values,
-        linkedValueByValue,
-        warnings,
-      );
-      return {
-        ...group,
-        linkedMetafield,
-        linkedValueByValue,
-      };
-    });
-}
-
-function buildLinkedValueMapForOption(
-  optionName: string,
-  variants: NormalizedProductVariantDraft[],
-) {
-  const target = cleanField(optionName).toLowerCase();
-  const result = new Map<string, string>();
-  for (const variant of variants) {
-    const option = variant.optionValues.find(
-      (item) => cleanField(item.optionName).toLowerCase() === target,
-    );
-    if (!option?.value || !option.linkedMetafieldValue) continue;
-    result.set(option.value.toLowerCase(), option.linkedMetafieldValue);
-  }
-  return result;
-}
-
-function buildOptionLinkedMetafieldInput(
-  optionName: string,
-  optionMetafieldKey: string,
-  values: string[],
-  linkedValueByValue: Map<string, string>,
-  warnings: string[],
-): { namespace: string; key: string; values: string[] } | null {
-  const mapping = findShopifyCategoryMetafieldMappingByField(optionMetafieldKey);
-  if (!mapping) return null;
-
-  const key = cleanField(mapping.keyHints[0]);
-  if (!key) return null;
-
-  const missing = values.some(
-    (value) => !linkedValueByValue.get(value.toLowerCase()),
-  );
-  if (missing) {
-    warnings.push(
-      `已跳过多属性「${optionName}」与 Shopify 类别元字段的关联：部分选项值不是 Shopify 标准元字段值。`,
-    );
-    return null;
-  }
-
-  const linkedValues = Array.from(
-    new Set(
-      values
-        .map((value) => cleanField(linkedValueByValue.get(value.toLowerCase())))
-        .filter(Boolean),
-    ),
-  );
-  if (!linkedValues.length) return null;
-
-  warnings.push(`已将多属性「${optionName}」关联到 Shopify 类别元字段：shopify.${key}`);
-  return {
-    namespace: SHOPIFY_CATEGORY_METAFIELD_NAMESPACE,
-    key,
-    values: linkedValues,
-  };
-}
-
 function buildVariantOptionCreateValueInput(
   variant: ShopifyVariantDraft,
   linkedMetafield: { namespace: string; key: string; values: string[] } | null,
 ) {
   const name = cleanField(variant.size);
-  const linkedMetafieldValue = cleanField(variant.linkedMetafieldValue);
+  const linkedMetafieldValue = cleanField(variant.linkedMetafieldValue || name);
   return {
     name,
     ...(linkedMetafield && linkedMetafieldValue
@@ -1586,7 +1306,7 @@ function buildVariantOptionValueInput(
   linkedMetafield: { namespace: string; key: string; values: string[] } | null,
 ) {
   const name = cleanField(variant.size);
-  const linkedMetafieldValue = cleanField(variant.linkedMetafieldValue);
+  const linkedMetafieldValue = cleanField(variant.linkedMetafieldValue || name);
   return {
     optionName,
     name,
@@ -1594,71 +1314,6 @@ function buildVariantOptionValueInput(
       ? { linkedMetafieldValue }
       : {}),
   };
-}
-
-function buildProductOptionCreateValueInput(
-  option: NormalizedProductOptionDraft,
-  value: string,
-) {
-  const name = cleanField(value);
-  const linkedMetafieldValue = cleanField(
-    option.linkedValueByValue.get(name.toLowerCase()),
-  );
-  return {
-    name,
-    ...(option.linkedMetafield && linkedMetafieldValue
-      ? { linkedMetafieldValue }
-      : {}),
-  };
-}
-
-function buildVariantOptionValueInputForSelection(
-  selection: NormalizedVariantOptionValue,
-  optionByName: Map<string, NormalizedProductOptionDraft>,
-) {
-  const optionName = cleanField(selection.optionName);
-  const option = optionByName.get(optionName.toLowerCase());
-  const linkedMetafieldValue = cleanField(selection.linkedMetafieldValue);
-  return {
-    optionName,
-    name: cleanField(selection.value),
-    ...(option?.linkedMetafield && linkedMetafieldValue
-      ? { linkedMetafieldValue }
-      : {}),
-  };
-}
-
-function buildVariantOptionValueInputsForVariant(
-  variant: NormalizedProductVariantDraft,
-  productOptions: NormalizedProductOptionDraft[],
-) {
-  const optionByName = new Map(
-    productOptions.map((option) => [option.optionName.toLowerCase(), option]),
-  );
-  return productOptions
-    .map((option, index) => {
-      const selection =
-        variant.optionValues.find(
-          (item) =>
-            cleanField(item.optionName).toLowerCase() ===
-            option.optionName.toLowerCase(),
-        ) ||
-        (productOptions.length === 1
-          ? {
-              optionName: option.optionName,
-              optionMetafieldKey: option.optionMetafieldKey,
-              value: variant.size,
-              linkedMetafieldValue: variant.optionValues[0]?.linkedMetafieldValue || "",
-            }
-          : {
-              optionName: option.optionName,
-              optionMetafieldKey: option.optionMetafieldKey,
-              value: option.values[index] || option.values[0] || "",
-              linkedMetafieldValue: "",
-            });
-      return buildVariantOptionValueInputForSelection(selection, optionByName);
-    })
-    .filter((item) => item.optionName && item.name);
 }
 
 export async function getShopifyCategoryMetafieldOptions(
@@ -1815,134 +1470,6 @@ export async function getShopifyCategoryMetafieldOptions(
   };
 }
 
-export async function getShopifySellingContexts(
-  userId: number,
-  deviceId: string,
-): Promise<ShopifySellingContextsResult> {
-  const stored = await getStoredShopifyAccessToken(userId, deviceId);
-  if (!stored) throw new Error("尚未绑定 Shopify");
-
-  if (isTestShopifyCredentials(stored.shopDomain, stored.accessToken)) {
-    return {
-      channels: [],
-      catalogs: [],
-      warnings: ["当前使用测试密钥，销售渠道和目录需要真实店铺读取。"],
-    };
-  }
-
-  const warnings: string[] = [];
-  const channels: ShopifySalesChannelOption[] = [];
-  const catalogs: ShopifyCatalogOption[] = [];
-
-  const publicationsJson = await shopifyGraphql<ShopifyPublicationsResponse>(
-    stored.shopDomain,
-    stored.accessToken,
-    `query BuqiqiShopifyPublications {
-      publications(first: 50) {
-        nodes {
-          id
-          autoPublish
-          supportsFuturePublishing
-          catalog {
-            id
-            title
-            status
-          }
-          channels(first: 20) {
-            nodes {
-              id
-              name
-            }
-          }
-        }
-      }
-    }`,
-  );
-  const publicationErrors = formatGraphqlMessages(publicationsJson.errors);
-  if (publicationErrors) {
-    warnings.push(
-      `读取 Shopify 销售渠道失败：${publicationErrors}。如使用 OAuth，请确认应用权限包含 read_publications 并重新授权。`,
-    );
-  } else {
-    const seenChannels = new Set<string>();
-    for (const publication of publicationsJson.data?.publications?.nodes || []) {
-      const catalogId = cleanField(publication.catalog?.id) || null;
-      const catalogTitle = cleanField(publication.catalog?.title) || null;
-      const status = cleanField(publication.catalog?.status) || null;
-      const publicationId = cleanField(publication.id);
-      const channelNodes = publication.channels?.nodes || [];
-
-      if (!channelNodes.length && publicationId) {
-        const key = `publication:${publicationId}`;
-        if (seenChannels.has(key)) continue;
-        seenChannels.add(key);
-        channels.push({
-          id: publicationId,
-          name: catalogTitle || "未命名销售渠道",
-          publicationId,
-          autoPublish: Boolean(publication.autoPublish),
-          supportsFuturePublishing: Boolean(publication.supportsFuturePublishing),
-          catalogId,
-          catalogTitle,
-          status,
-        });
-      }
-
-      for (const channel of channelNodes) {
-        const channelId = cleanField(channel.id);
-        if (!channelId || seenChannels.has(channelId)) continue;
-        seenChannels.add(channelId);
-        channels.push({
-          id: channelId,
-          name: cleanField(channel.name) || catalogTitle || "未命名销售渠道",
-          publicationId,
-          autoPublish: Boolean(publication.autoPublish),
-          supportsFuturePublishing: Boolean(publication.supportsFuturePublishing),
-          catalogId,
-          catalogTitle,
-          status,
-        });
-      }
-    }
-  }
-
-  const catalogsJson = await shopifyGraphql<ShopifyCatalogsResponse>(
-    stored.shopDomain,
-    stored.accessToken,
-    `query BuqiqiShopifyCatalogs {
-      catalogs(first: 50) {
-        nodes {
-          id
-          title
-          status
-          publication {
-            id
-          }
-        }
-      }
-    }`,
-  );
-  const catalogErrors = formatGraphqlMessages(catalogsJson.errors);
-  if (catalogErrors) {
-    warnings.push(`读取 Shopify 目录失败：${catalogErrors}`);
-  } else {
-    const seenCatalogs = new Set<string>();
-    for (const catalog of catalogsJson.data?.catalogs?.nodes || []) {
-      const id = cleanField(catalog.id);
-      if (!id || seenCatalogs.has(id)) continue;
-      seenCatalogs.add(id);
-      catalogs.push({
-        id,
-        title: cleanField(catalog.title) || "未命名目录",
-        status: cleanField(catalog.status) || null,
-        publicationId: cleanField(catalog.publication?.id) || null,
-      });
-    }
-  }
-
-  return { channels, catalogs, warnings };
-}
-
 export async function getShopifyTaxonomyCategoryOptions(
   userId: number,
   deviceId: string,
@@ -2056,7 +1583,7 @@ export async function syncShopifyProduct(
   if (!title) throw new Error("商品标题不能为空");
 
   const warnings: string[] = [];
-  const variantDrafts = normalizeProductVariantDrafts(input);
+  const variantDrafts = normalizeProductVariantDrafts(input.variants);
   const categoryId = await resolveShopifyProductCategoryId(
     stored.shopDomain,
     stored.accessToken,
@@ -2072,16 +1599,15 @@ export async function syncShopifyProduct(
   const templateSuffix = normalizeShopifyTemplateSuffix(
     input.templateStyle || input.templateSuffix,
   );
-  const productOptionDrafts = buildProductOptionDrafts(
+  const variantOptionName =
+    cleanField(input.variantGroupByOptionName) ||
+    cleanField(input.variantOptionName) ||
+    "Size";
+  const variantOptionLinkedMetafield = buildVariantOptionLinkedMetafieldInput(
     input,
     variantDrafts,
     warnings,
   );
-  const variantOptionName =
-    productOptionDrafts[0]?.optionName ||
-    cleanField(input.variantGroupByOptionName) ||
-    cleanField(input.variantOptionName) ||
-    "Size";
   const productInput = {
     title,
     descriptionHtml: textToHtml(input.description),
@@ -2097,21 +1623,30 @@ export async function syncShopifyProduct(
       description: cleanField(input.seoDescription),
     },
     metafields: buildProductMetafields(input),
-    ...(variantDrafts.length && productOptionDrafts.length
+    ...(variantDrafts.length
       ? {
-          productOptions: productOptionDrafts.map((option) => ({
-            name: option.optionName,
-            ...(option.linkedMetafield
-              ? { linkedMetafield: option.linkedMetafield }
-              : {}),
-            values: option.values.map((value) =>
-              buildProductOptionCreateValueInput(option, value),
-            ),
-          })),
+          productOptions: [
+            {
+              name: variantOptionName,
+              ...(variantOptionLinkedMetafield
+                ? { linkedMetafield: variantOptionLinkedMetafield }
+                : {}),
+              values: variantDrafts.map((variant) =>
+                buildVariantOptionCreateValueInput(
+                  variant,
+                  variantOptionLinkedMetafield,
+                ),
+              ),
+            },
+          ],
         }
       : {}),
   };
-  let mediaInput: ShopifyMediaInputWithSource[] = [];
+  let mediaInput: Array<{
+    mediaContentType: "IMAGE";
+    originalSource: string;
+    alt?: string;
+  }> = [];
   try {
     mediaInput = await buildProductMediaInput(
       stored.shopDomain,
@@ -2160,10 +1695,7 @@ export async function syncShopifyProduct(
         }
       }
     }`,
-    {
-      product: productInput,
-      media: mediaInput.map(({ sourceUrl: _sourceUrl, ...item }) => item),
-    },
+    { product: productInput, media: mediaInput },
   );
 
   assertNoTopLevelGraphqlErrors(createJson.errors);
@@ -2174,14 +1706,6 @@ export async function syncShopifyProduct(
   }
   const product = createPayload?.product;
   if (!product?.id) throw new Error("Shopify 未返回已创建商品 ID");
-
-  await syncShopifyProductPublications(
-    stored.shopDomain,
-    stored.accessToken,
-    product.id,
-    input.publicationIds,
-    warnings,
-  );
 
   const categoryMetafieldsPromise = syncShopifyCategoryMetafields(
     stored.shopDomain,
@@ -2207,11 +1731,6 @@ export async function syncShopifyProduct(
   if (mediaInput.length && !fallbackMediaIds.length) {
     warnings.push("Shopify 商品图片仍在处理中，多属性图片本次未关联到变体；稍后重新同步即可。");
   }
-  const mediaIdBySource = buildMediaIdBySource(
-    mediaInput,
-    product.media?.nodes || [],
-    fallbackMediaIds,
-  );
   const variantMediaTargets: VariantMediaSyncTarget[] = [];
   const firstInventoryQuantity = normalizeInventoryQuantity(
     firstVariantDraft?.inventory || input.inventory,
@@ -2227,7 +1746,6 @@ export async function syncShopifyProduct(
     variantMediaTargets,
     firstVariant?.id,
     firstVariantDraft,
-    mediaIdBySource,
     fallbackMediaIds,
   );
   const variantInput: Record<string, unknown> = {};
@@ -2273,10 +1791,13 @@ export async function syncShopifyProduct(
   if (extraVariantDrafts.length) {
     const createVariantInput = extraVariantDrafts.map((variant) => {
       const inputVariant: Record<string, unknown> = {
-        optionValues: buildVariantOptionValueInputsForVariant(
-          variant,
-          productOptionDrafts,
-        ),
+        optionValues: [
+          buildVariantOptionValueInput(
+            variantOptionName,
+            variant,
+            variantOptionLinkedMetafield,
+          ),
+        ],
       };
       const variantPrice = normalizeVariantPrice(variant.price, input.price);
       if (variantPrice) inputVariant.price = variantPrice;
@@ -2341,7 +1862,6 @@ export async function syncShopifyProduct(
         variantMediaTargets,
         variant?.id,
         draft,
-        mediaIdBySource,
         fallbackMediaIds,
       );
     }
@@ -2461,40 +1981,15 @@ function pushVariantMediaTarget(
         imageUrl: string;
       }
     | undefined,
-  mediaIdBySource: Map<string, string>,
   mediaIds: string[],
 ) {
   if (!variantId || !mediaIds.length) return;
   if (draft && !cleanField(draft.imageUrl)) return;
-  const matchedMediaId = draft
-    ? mediaIdBySource.get(normalizeMediaSourceKey(draft.imageUrl))
-    : "";
   targets.push({
     variantId,
-    mediaIds: [matchedMediaId || mediaIds[0]],
+    mediaIds: [mediaIds[0]],
     label: draft?.size || "默认变体",
   });
-}
-
-function buildMediaIdBySource(
-  mediaInput: ShopifyMediaInputWithSource[],
-  nodes: ShopifyProductMediaNode[],
-  readyMediaIds: string[],
-) {
-  const result = new Map<string, string>();
-  for (let index = 0; index < mediaInput.length; index += 1) {
-    const mediaId = nodes[index]?.id || readyMediaIds[index] || "";
-    if (!mediaId) continue;
-    const item = mediaInput[index];
-    result.set(normalizeMediaSourceKey(item.sourceUrl), mediaId);
-    result.set(normalizeMediaSourceKey(item.originalSource), mediaId);
-  }
-  return result;
-}
-
-function normalizeMediaSourceKey(value: string): string {
-  const cleaned = cleanField(value).split("?")[0] || "";
-  return cleaned.toLowerCase();
 }
 
 async function syncShopifyVariantMedia(
@@ -2556,57 +2051,6 @@ async function syncShopifyVariantMedia(
     );
   } catch (e) {
     warnings.push(`多属性图片同步到 Shopify 失败：${formatUnknownError(e)}`);
-  }
-}
-
-async function syncShopifyProductPublications(
-  shopDomain: string,
-  accessToken: string,
-  productId: string,
-  publicationIds: string[] | undefined,
-  warnings: string[],
-) {
-  const ids = Array.from(
-    new Set((publicationIds || []).map(cleanField).filter(Boolean)),
-  );
-  if (!ids.length) return;
-
-  try {
-    const json = await shopifyGraphql<ShopifyPublishablePublishResponse>(
-      shopDomain,
-      accessToken,
-      `mutation PublishBuqiqiProduct(
-        $id: ID!
-        $input: [PublicationInput!]!
-      ) {
-        publishablePublish(id: $id, input: $input) {
-          userErrors {
-            field
-            message
-          }
-        }
-      }`,
-      {
-        id: productId,
-        input: ids.map((publicationId) => ({ publicationId })),
-      },
-    );
-    const topLevelErrors = formatGraphqlMessages(json.errors);
-    if (topLevelErrors) {
-      warnings.push(`发布到 Shopify 销售渠道/目录失败：${topLevelErrors}`);
-    }
-    warnings.push(
-      ...normalizeUserErrors(json.data?.publishablePublish?.userErrors).map(
-        (message) => `发布到 Shopify 销售渠道/目录失败：${message}`,
-      ),
-    );
-    if (!topLevelErrors) {
-      warnings.push(`已匹配发布到 Shopify 销售渠道/目录：${ids.length} 个。`);
-    }
-  } catch (e) {
-    warnings.push(
-      `发布到 Shopify 销售渠道/目录失败：${e instanceof Error ? e.message : String(e)}`,
-    );
   }
 }
 
@@ -3135,8 +2579,14 @@ async function buildProductMediaInput(
   shopDomain: string,
   accessToken: string,
   media: NonNullable<ShopifyProductDraftInput["media"]>,
-): Promise<ShopifyMediaInputWithSource[]> {
-  const result: ShopifyMediaInputWithSource[] = [];
+): Promise<
+  Array<{ mediaContentType: "IMAGE"; originalSource: string; alt?: string }>
+> {
+  const result: Array<{
+    mediaContentType: "IMAGE";
+    originalSource: string;
+    alt?: string;
+  }> = [];
   for (const item of media) {
     const url = cleanField(item.url);
     if (!url) continue;
@@ -3147,7 +2597,6 @@ async function buildProductMediaInput(
     result.push({
       mediaContentType: "IMAGE",
       originalSource,
-      sourceUrl: url,
       alt: cleanField(item.alt) || undefined,
     });
   }
@@ -4543,23 +3992,14 @@ function findShopifyTaxonomyValueInAttributes(
       const normalizedName = normalizeMetafieldMatchText(node.name);
       return normalizedCandidates.some(
         (candidate) =>
-          canUseLooseShopifyTaxonomyMatch(candidate, normalizedName) &&
-          (normalizedName.includes(candidate) ||
-            candidate.includes(normalizedName)),
+          normalizedName.includes(candidate) ||
+          candidate.includes(normalizedName),
       );
     });
     if (match?.id) return match;
   }
 
   return null;
-}
-
-function canUseLooseShopifyTaxonomyMatch(candidate: string, valueName: string) {
-  if (!candidate || !valueName) return false;
-  if (candidate.length < 3 || valueName.length < 3) return false;
-  if (/^\d+(?:\.\d+)?$/.test(candidate)) return false;
-  if (/^\d+(?:\.\d+)?$/.test(valueName)) return false;
-  return true;
 }
 
 function buildShopifyCategoryHierarchyIds(categoryId: string): string[] {
@@ -5130,76 +4570,29 @@ function normalizeTags(tags?: string): string[] {
 }
 
 function normalizeProductVariantDrafts(
-  input: ShopifyProductDraftInput,
-): NormalizedProductVariantDraft[] {
+  variants?: ShopifyProductDraftInput["variants"],
+): Array<{
+  size: string;
+  sku: string;
+  price: string;
+  inventory: string;
+  imageUrl: string;
+}> {
   const seen = new Set<string>();
-  const fallbackOptionName =
-    cleanField(input.variantGroupByOptionName) ||
-    cleanField(input.variantOptionName) ||
-    "Size";
-  const fallbackOptionMetafieldKey = cleanField(input.variantOptionMetafieldKey);
-  return (input.variants || [])
-    .map((variant) => {
-      const size = cleanField(variant.size);
-      const optionValues = normalizeVariantOptionValues(
-        variant,
-        fallbackOptionName,
-        fallbackOptionMetafieldKey,
-      );
-      return {
-        size:
-          size ||
-          optionValues
-            .map((item) => item.value)
-            .filter(Boolean)
-            .join(" / "),
-        sku: cleanField(variant.sku),
-        price: cleanField(variant.price),
-        inventory: cleanField(variant.inventory),
-        imageUrl: cleanField(variant.imageUrl),
-        optionValues,
-      };
-    })
+  return (variants || [])
+    .map((variant) => ({
+      size: cleanField(variant.size),
+      sku: cleanField(variant.sku),
+      price: cleanField(variant.price),
+      inventory: cleanField(variant.inventory),
+      imageUrl: cleanField(variant.imageUrl),
+    }))
     .filter((variant) => {
       if (!variant.size || seen.has(variant.size)) return false;
       seen.add(variant.size);
       return true;
     })
     .slice(0, 100);
-}
-
-function normalizeVariantOptionValues(
-  variant: ShopifyVariantDraft,
-  fallbackOptionName: string,
-  fallbackOptionMetafieldKey: string,
-): NormalizedVariantOptionValue[] {
-  const seen = new Set<string>();
-  const values = (variant.optionValues || [])
-    .map((item) => ({
-      optionName: cleanField(item.optionName),
-      optionMetafieldKey: cleanField(item.optionMetafieldKey),
-      value: cleanField(item.value),
-      linkedMetafieldValue: cleanField(item.linkedMetafieldValue),
-    }))
-    .filter((item) => item.optionName && item.value)
-    .filter((item) => {
-      const key = item.optionName.toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  if (values.length) return values;
-
-  const value = cleanField(variant.size);
-  if (!value) return [];
-  return [
-    {
-      optionName: fallbackOptionName,
-      optionMetafieldKey: fallbackOptionMetafieldKey,
-      value,
-      linkedMetafieldValue: cleanField(variant.linkedMetafieldValue),
-    },
-  ];
 }
 
 function normalizePrice(price?: string): string | null {
