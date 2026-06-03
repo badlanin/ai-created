@@ -207,6 +207,17 @@ type ShopifyProductMediaNode = {
   status?: string | null;
 };
 
+type ShopifyProductOptionValueNode = {
+  id: string;
+  name?: string | null;
+};
+
+type ShopifyProductOptionNode = {
+  id: string;
+  name?: string | null;
+  optionValues?: ShopifyProductOptionValueNode[] | null;
+};
+
 type ShopifyProductCreateResponse = {
   data?: {
     productCreate?: {
@@ -224,9 +235,28 @@ type ShopifyProductCreateResponse = {
             inventoryItem?: { id: string; sku?: string | null } | null;
           }>;
         };
+        options?: ShopifyProductOptionNode[] | null;
       } | null;
       userErrors?: Array<{ field?: string[]; message?: string }>;
     };
+  };
+  errors?: Array<{ message?: string }>;
+};
+
+type ShopifyProductOptionsResponse = {
+  data?: {
+    product?: {
+      options?: ShopifyProductOptionNode[] | null;
+    } | null;
+  };
+  errors?: Array<{ message?: string }>;
+};
+
+type ShopifyProductOptionUpdateResponse = {
+  data?: {
+    productOptionUpdate?: {
+      userErrors?: Array<{ field?: string[]; message?: string }>;
+    } | null;
   };
   errors?: Array<{ message?: string }>;
 };
@@ -1603,36 +1633,36 @@ function buildProductOptionCreateValueInput(
   value: string,
 ) {
   const name = cleanField(value);
-  const linkedMetafieldValue = cleanField(
-    option.linkedValueByValue.get(name.toLowerCase()),
-  );
-  return {
-    name,
-    ...(option.linkedMetafield && linkedMetafieldValue
-      ? { linkedMetafieldValue }
-      : {}),
-  };
+  return { name };
 }
 
 function buildVariantOptionValueInputForSelection(
   selection: NormalizedVariantOptionValue,
   optionByName: Map<string, NormalizedProductOptionDraft>,
+  useLinkedMetafieldValues = false,
 ) {
   const optionName = cleanField(selection.optionName);
   const option = optionByName.get(optionName.toLowerCase());
   const linkedMetafieldValue = cleanField(selection.linkedMetafieldValue);
-  return {
+  const base = {
     optionName,
+  };
+  if (useLinkedMetafieldValues && option?.linkedMetafield && linkedMetafieldValue) {
+    return {
+      ...base,
+      linkedMetafieldValue,
+    };
+  }
+  return {
+    ...base,
     name: cleanField(selection.value),
-    ...(option?.linkedMetafield && linkedMetafieldValue
-      ? { linkedMetafieldValue }
-      : {}),
   };
 }
 
 function buildVariantOptionValueInputsForVariant(
   variant: NormalizedProductVariantDraft,
   productOptions: NormalizedProductOptionDraft[],
+  opts: { useLinkedMetafieldValues?: boolean } = {},
 ) {
   const optionByName = new Map(
     productOptions.map((option) => [option.optionName.toLowerCase(), option]),
@@ -1658,9 +1688,17 @@ function buildVariantOptionValueInputsForVariant(
               value: option.values[index] || option.values[0] || "",
               linkedMetafieldValue: "",
             });
-      return buildVariantOptionValueInputForSelection(selection, optionByName);
+      return buildVariantOptionValueInputForSelection(
+        selection,
+        optionByName,
+        Boolean(opts.useLinkedMetafieldValues),
+      );
     })
-    .filter((item) => item.optionName && item.name);
+    .filter(
+      (item) =>
+        item.optionName &&
+        ("linkedMetafieldValue" in item ? item.linkedMetafieldValue : item.name),
+    );
 }
 
 export async function getShopifyCategoryMetafieldOptions(
@@ -2156,9 +2194,6 @@ export async function syncShopifyProduct(
       ? {
           productOptions: productOptionDrafts.map((option) => ({
             name: option.optionName,
-            ...(option.linkedMetafield
-              ? { linkedMetafield: option.linkedMetafield }
-              : {}),
             values: option.values.map((value) =>
               buildProductOptionCreateValueInput(option, value),
             ),
@@ -2206,6 +2241,14 @@ export async function syncShopifyProduct(
                 id
                 sku
               }
+            }
+          }
+          options {
+            id
+            name
+            optionValues {
+              id
+              name
             }
           }
         }
@@ -2293,8 +2336,24 @@ export async function syncShopifyProduct(
   if (price) variantInput.price = price;
   const sku = cleanField(firstVariantDraft?.sku || input.sku);
   variantInput.inventoryItem = sku ? { sku, tracked: true } : { tracked: true };
+  const firstVariantOptionValues = firstVariantDraft
+    ? buildVariantOptionValueInputsForVariant(
+        firstVariantDraft,
+        productOptionDrafts,
+      )
+    : [];
+  if (firstVariantOptionValues.length) {
+    variantInput.optionValues = firstVariantOptionValues;
+  }
 
-  if (firstVariant?.id && (compareAtPrice || price || sku || firstInventoryQuantity !== null)) {
+  if (
+    firstVariant?.id &&
+    (compareAtPrice ||
+      price ||
+      sku ||
+      firstInventoryQuantity !== null ||
+      firstVariantOptionValues.length)
+  ) {
     const updateJson = await shopifyGraphql<ShopifyVariantUpdateResponse>(
       stored.shopDomain,
       stored.accessToken,
@@ -2401,6 +2460,14 @@ export async function syncShopifyProduct(
       );
     }
   }
+
+  await syncShopifyLinkedProductOptions(
+    stored.shopDomain,
+    stored.accessToken,
+    product.id,
+    productOptionDrafts,
+    warnings,
+  );
 
   await syncShopifyVariantMedia(
     stored.shopDomain,
@@ -2611,6 +2678,172 @@ async function syncShopifyVariantMedia(
     );
   } catch (e) {
     warnings.push(`多属性图片同步到 Shopify 失败：${formatUnknownError(e)}`);
+  }
+}
+
+async function fetchShopifyProductOptions(
+  shopDomain: string,
+  accessToken: string,
+  productId: string,
+  warnings: string[],
+): Promise<ShopifyProductOptionNode[]> {
+  try {
+    const json = await shopifyGraphql<ShopifyProductOptionsResponse>(
+      shopDomain,
+      accessToken,
+      `query BuqiqiProductOptions($id: ID!) {
+        product(id: $id) {
+          options {
+            id
+            name
+            optionValues {
+              id
+              name
+            }
+          }
+        }
+      }`,
+      { id: productId },
+    );
+    const topLevelErrors = formatGraphqlMessages(json.errors);
+    if (topLevelErrors) {
+      warnings.push(`读取 Shopify 多属性选项失败：${topLevelErrors}`);
+      return [];
+    }
+    return json.data?.product?.options || [];
+  } catch (e) {
+    warnings.push(`读取 Shopify 多属性选项失败：${formatUnknownError(e)}`);
+    return [];
+  }
+}
+
+async function syncShopifyLinkedProductOptions(
+  shopDomain: string,
+  accessToken: string,
+  productId: string,
+  productOptions: NormalizedProductOptionDraft[],
+  warnings: string[],
+) {
+  const linkedOptions = productOptions.filter((option) => option.linkedMetafield);
+  if (!linkedOptions.length) return;
+
+  const shopifyOptions = await fetchShopifyProductOptions(
+    shopDomain,
+    accessToken,
+    productId,
+    warnings,
+  );
+  if (!shopifyOptions.length) return;
+
+  const shopifyOptionByName = new Map(
+    shopifyOptions
+      .map((option) => [cleanField(option.name).toLowerCase(), option] as const)
+      .filter(([name]) => Boolean(name)),
+  );
+
+  for (const option of linkedOptions) {
+    const linkedMetafield = option.linkedMetafield;
+    if (!linkedMetafield) continue;
+
+    const shopifyOption = shopifyOptionByName.get(option.optionName.toLowerCase());
+    if (!shopifyOption?.id) {
+      warnings.push(
+        `Shopify 多属性「${option.optionName}」官方元字段映射失败：未找到对应选项。`,
+      );
+      continue;
+    }
+
+    const optionValueByName = new Map(
+      (shopifyOption.optionValues || [])
+        .map((value) => [cleanField(value.name).toLowerCase(), value] as const)
+        .filter(([name, value]) => Boolean(name && value.id)),
+    );
+    const optionValuesToUpdate = option.values
+      .map((value) => {
+        const name = cleanField(value);
+        const shopifyValue = optionValueByName.get(name.toLowerCase());
+        const linkedMetafieldValue = cleanField(
+          option.linkedValueByValue.get(name.toLowerCase()),
+        );
+        if (!shopifyValue?.id || !linkedMetafieldValue) return null;
+        return {
+          id: shopifyValue.id,
+          linkedMetafieldValue,
+        };
+      })
+      .filter(
+        (
+          value,
+        ): value is {
+          id: string;
+          linkedMetafieldValue: string;
+        } => Boolean(value),
+      );
+
+    if (optionValuesToUpdate.length !== option.values.length) {
+      warnings.push(
+        `Shopify 多属性「${option.optionName}」官方元字段映射失败：部分选项值未找到官方条目。`,
+      );
+      continue;
+    }
+
+    try {
+      const json = await shopifyGraphql<ShopifyProductOptionUpdateResponse>(
+        shopDomain,
+        accessToken,
+        `mutation UpdateBuqiqiLinkedProductOption(
+          $productId: ID!
+          $option: OptionUpdateInput!
+          $optionValuesToUpdate: [OptionValueUpdateInput!]
+        ) {
+          productOptionUpdate(
+            productId: $productId
+            option: $option
+            optionValuesToUpdate: $optionValuesToUpdate
+          ) {
+            userErrors {
+              field
+              message
+            }
+          }
+        }`,
+        {
+          productId,
+          option: {
+            id: shopifyOption.id,
+            name: option.optionName,
+            linkedMetafield: {
+              namespace: linkedMetafield.namespace,
+              key: linkedMetafield.key,
+            },
+          },
+          optionValuesToUpdate,
+        },
+      );
+      const topLevelErrors = formatGraphqlMessages(json.errors);
+      if (topLevelErrors) {
+        warnings.push(
+          `Shopify 多属性「${option.optionName}」官方元字段映射失败：${topLevelErrors}`,
+        );
+        continue;
+      }
+      const userErrors = normalizeUserErrors(
+        json.data?.productOptionUpdate?.userErrors,
+      );
+      if (userErrors.length) {
+        warnings.push(
+          `Shopify 多属性「${option.optionName}」官方元字段映射失败：${userErrors.join("；")}`,
+        );
+        continue;
+      }
+      warnings.push(
+        `已将 Shopify 多属性「${option.optionName}」映射到官方元字段：shopify.${linkedMetafield.key}`,
+      );
+    } catch (e) {
+      warnings.push(
+        `Shopify 多属性「${option.optionName}」官方元字段映射失败：${formatUnknownError(e)}`,
+      );
+    }
   }
 }
 
