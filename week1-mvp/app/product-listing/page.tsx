@@ -4470,6 +4470,71 @@ function ProductFormPanel({
   const activeVariantLinkedOptions = activeVariantLinkedRow
     ? activeVariantLinkedField?.options || []
     : [];
+  const variantTableRows = useMemo(() => {
+    if (!variantRows.length) return [];
+    if (!activeOptionGroup) {
+      return variantRows.map((row) => ({
+        id: row.id,
+        label: row.size,
+        rows: [row],
+        representative: row,
+        selected: row.selected,
+        price: row.price,
+        inventory: row.inventory,
+        childCount: 1,
+      }));
+    }
+
+    const values = activeOptionGroup.values.length
+      ? activeOptionGroup.values
+      : Array.from(
+          new Set(
+            variantRows
+              .map((row) => getVariantRowOptionValue(row, activeOptionGroup))
+              .filter(Boolean),
+          ),
+        );
+    return values
+      .map((value) => {
+        const normalized = normalizeCategoryMetafieldMemoryValue(value).toLowerCase();
+        const rows = variantRows.filter(
+          (row) =>
+            normalizeCategoryMetafieldMemoryValue(
+              getVariantRowOptionValue(row, activeOptionGroup),
+            ).toLowerCase() === normalized,
+        );
+        if (!rows.length) return null;
+        const representative = rows[0];
+        const inventoryTotal = rows.reduce((sum, row) => {
+          const value = Number(row.inventory);
+          return sum + (Number.isFinite(value) ? value : 0);
+        }, 0);
+        return {
+          id: `${activeOptionGroup.id}-${normalized}`,
+          label: value,
+          rows,
+          representative,
+          selected: rows.every((row) => row.selected),
+          price: representative.price,
+          inventory: inventoryTotal ? String(inventoryTotal) : representative.inventory,
+          childCount: rows.length,
+        };
+      })
+      .filter(
+        (
+          row,
+        ): row is {
+          id: string;
+          label: string;
+          rows: ProductVariantRow[];
+          representative: ProductVariantRow;
+          selected: boolean;
+          price: string;
+          inventory: string;
+          childCount: number;
+        } => Boolean(row),
+      );
+  }, [activeOptionGroup, variantRows]);
   const backendVisibleVariantGroups = useMemo<ProductVariantOptionGroup[]>(() => {
     if (variantOptionGroups.length > 0) return variantOptionGroups;
     if (variantRows.length > 0) {
@@ -4897,6 +4962,163 @@ function ProductFormPanel({
       : option.value || option.label;
   }
 
+  function buildVariantOptionSelection(
+    group: ProductVariantOptionGroup,
+    value: string,
+  ): ProductVariantOptionSelection {
+    const linkedMetafieldValue = getLinkedMetafieldValueForOption(
+      value,
+      group.optionMetafieldKey,
+    );
+    return {
+      optionName: group.optionName,
+      optionMetafieldKey: group.optionMetafieldKey,
+      value,
+      linkedMetafieldValue,
+    };
+  }
+
+  function getVariantRowOptionValue(
+    row: ProductVariantRow,
+    group: ProductVariantOptionGroup,
+  ) {
+    const groupName = normalizeVariantOptionName(group.optionName).toLowerCase();
+    const selection = row.optionValues?.find(
+      (item) =>
+        normalizeVariantOptionName(item.optionName).toLowerCase() === groupName,
+    );
+    if (selection?.value) return selection.value;
+    if (row.optionValues?.length) return "";
+    return row.size;
+  }
+
+  function getVariantSelectionKey(selections: ProductVariantOptionSelection[]) {
+    return selections
+      .map(
+        (selection) =>
+          `${normalizeVariantOptionName(selection.optionName).toLowerCase()}:${normalizeCategoryMetafieldMemoryValue(selection.value).toLowerCase()}`,
+      )
+      .join("|");
+  }
+
+  function getVariantRowSelectionKey(row: ProductVariantRow) {
+    return row.optionValues?.length
+      ? getVariantSelectionKey(row.optionValues)
+      : normalizeCategoryMetafieldMemoryValue(row.size).toLowerCase();
+  }
+
+  function findBestExistingVariantRow(
+    rows: ProductVariantRow[],
+    selections: ProductVariantOptionSelection[],
+  ) {
+    const selectionByName = new Map(
+      selections.map((selection) => [
+        normalizeVariantOptionName(selection.optionName).toLowerCase(),
+        normalizeCategoryMetafieldMemoryValue(selection.value).toLowerCase(),
+      ]),
+    );
+    let best: { row: ProductVariantRow; score: number } | null = null;
+    for (const row of rows) {
+      if (!row.optionValues?.length) {
+        const rowValue = normalizeCategoryMetafieldMemoryValue(row.size).toLowerCase();
+        const matchesLegacyValue = selections.some(
+          (selection) =>
+            normalizeCategoryMetafieldMemoryValue(selection.value).toLowerCase() ===
+            rowValue,
+        );
+        if (!matchesLegacyValue) continue;
+        if (!best || best.score < 1) best = { row, score: 1 };
+        continue;
+      }
+
+      let score = 0;
+      let mismatch = false;
+      for (const option of row.optionValues) {
+        const expected = selectionByName.get(
+          normalizeVariantOptionName(option.optionName).toLowerCase(),
+        );
+        if (!expected) continue;
+        const actual = normalizeCategoryMetafieldMemoryValue(
+          option.value,
+        ).toLowerCase();
+        if (actual !== expected) {
+          mismatch = true;
+          break;
+        }
+        score += 1;
+      }
+      if (mismatch || score === 0) continue;
+      if (!best || score > best.score) best = { row, score };
+    }
+    return best?.row || null;
+  }
+
+  function buildVariantCombinationRows(
+    groups: ProductVariantOptionGroup[],
+    existingRows: ProductVariantRow[],
+  ): ProductVariantRow[] {
+    const normalizedGroups = groups
+      .map((group) => ({
+        ...group,
+        optionName: normalizeVariantOptionName(group.optionName),
+        values: Array.from(
+          new Set(
+            group.values
+              .map(normalizeCategoryMetafieldMemoryValue)
+              .filter(Boolean),
+          ),
+        ),
+      }))
+      .filter((group) => group.optionName && group.values.length);
+    if (!normalizedGroups.length) return [];
+
+    const existingByKey = new Map(
+      existingRows.map((row) => [getVariantRowSelectionKey(row), row]),
+    );
+    const rows: ProductVariantRow[] = [];
+    const walk = (
+      groupIndex: number,
+      selections: ProductVariantOptionSelection[],
+    ) => {
+      if (rows.length >= 100) return;
+      if (groupIndex >= normalizedGroups.length) {
+        const key = getVariantSelectionKey(selections);
+        const label = selections.map((selection) => selection.value).join(" / ");
+        const existing =
+          existingByKey.get(key) ||
+          existingByKey.get(normalizeCategoryMetafieldMemoryValue(label).toLowerCase()) ||
+          findBestExistingVariantRow(existingRows, selections);
+        rows.push({
+          id: existing?.id || `variant-${Date.now()}-${rows.length}`,
+          size: label,
+          linkedMetafieldValue:
+            selections[0]?.linkedMetafieldValue ||
+            existing?.linkedMetafieldValue ||
+            "",
+          optionValues: selections,
+          sku: existing?.sku || variantSku(form.sku, label, rows.length),
+          price: existing?.price || form.price || "0.00",
+          inventory: existing ? existing.inventory : form.inventory || "",
+          selected: existing?.selected ?? true,
+          isMainImage: existing?.isMainImage ?? true,
+          imageUrl: existing?.imageUrl || selectedMainMedia?.url || "",
+          imageAlt: existing?.imageAlt || selectedMainMedia?.alt || label,
+        });
+        return;
+      }
+
+      const group = normalizedGroups[groupIndex];
+      for (const value of group.values) {
+        walk(groupIndex + 1, [
+          ...selections,
+          buildVariantOptionSelection(group, value),
+        ]);
+      }
+    };
+    walk(0, []);
+    return rows;
+  }
+
   function buildVariantRowsForValues(
     values: string[],
     optionMetafieldKey: string,
@@ -4942,7 +5164,6 @@ function ProductFormPanel({
         group?.optionMetafieldKey || getVariantOptionMetafieldKey(normalized),
       variantGroupByOptionName: group?.optionName || normalized,
     }));
-    setVariantRows(group?.rows || []);
     setVariantGroupByMenuOpen(false);
   }
 
@@ -4971,7 +5192,6 @@ function ProductFormPanel({
         typeof updater === "function"
           ? (updater as (rows: ProductVariantRow[]) => ProductVariantRow[])(prev)
           : updater;
-      syncActiveOptionGroupRows(next);
       return next;
     });
   }
@@ -5092,7 +5312,15 @@ function ProductFormPanel({
       const remainingGroups = variantOptionGroups.filter(
         (group) => group.id !== editingOptionGroupId,
       );
-      setVariantOptionGroups(remainingGroups);
+      const nextRows = remainingGroups.length
+        ? buildVariantCombinationRows(remainingGroups, variantRows)
+        : [];
+      setVariantOptionGroups(
+        remainingGroups.map((group) => ({
+          ...group,
+          rows: nextRows,
+        })),
+      );
       const nextActive = remainingGroups[0] || null;
       setForm((prev) => ({
         ...prev,
@@ -5104,7 +5332,7 @@ function ProductFormPanel({
           "",
         variantGroupByOptionName: nextActive?.optionName || "",
       }));
-      setVariantRows(nextActive?.rows || []);
+      setVariantRows(nextRows);
     } else if (variantEditorSnapshot?.groups.length) {
       setVariantOptionGroups(variantEditorSnapshot.groups);
       setForm((prev) => ({
@@ -5526,17 +5754,12 @@ function ProductFormPanel({
       (editingOptionGroupId
         ? variantOptionGroups.find((group) => group.id === editingOptionGroupId)
         : findVariantOptionGroup(normalizedOptionName)) || null;
-    const nextRows = buildVariantRowsForValues(
-      sizes,
-      linkedKey,
-      existingGroup?.rows || variantRows,
-    );
     const nextGroup: ProductVariantOptionGroup = {
       id: existingGroup?.id || makeVariantOptionGroupId(),
       optionName: normalizedOptionName,
       optionMetafieldKey: linkedKey,
       values: sizes,
-      rows: nextRows,
+      rows: [],
     };
     if (linkedKey) {
       for (const size of sizes) {
@@ -5557,32 +5780,37 @@ function ProductFormPanel({
           }
         : {}),
     }));
-    setVariantOptionGroups((groups) => {
-      const baseGroups =
-        groups.length === 0 && variantRows.length > 0 && !existingGroup
-          ? [
-              {
-                id: makeVariantOptionGroupId(),
-                optionName: variantOptionName,
-                optionMetafieldKey: form.variantOptionMetafieldKey,
-                values: variantRows.map((row) => row.size),
-                rows: variantRows,
-              },
-            ]
-          : groups;
-      const existingIndex = baseGroups.findIndex(
-        (group) =>
-          group.id === nextGroup.id ||
-          normalizeVariantOptionName(group.optionName).toLowerCase() ===
-            normalizedOptionName.toLowerCase(),
-      );
-      if (existingIndex >= 0) {
-        return baseGroups.map((group, index) =>
-          index === existingIndex ? nextGroup : group,
-        );
-      }
-      return [...baseGroups, nextGroup];
-    });
+    const baseGroups =
+      variantOptionGroups.length === 0 && variantRows.length > 0 && !existingGroup
+        ? [
+            {
+              id: makeVariantOptionGroupId(),
+              optionName: variantOptionName,
+              optionMetafieldKey: form.variantOptionMetafieldKey,
+              values: variantRows.map((row) => row.size),
+              rows: variantRows,
+            },
+          ]
+        : variantOptionGroups;
+    const existingIndex = baseGroups.findIndex(
+      (group) =>
+        group.id === nextGroup.id ||
+        normalizeVariantOptionName(group.optionName).toLowerCase() ===
+          normalizedOptionName.toLowerCase(),
+    );
+    const nextGroups =
+      existingIndex >= 0
+        ? baseGroups.map((group, index) =>
+            index === existingIndex ? nextGroup : group,
+          )
+        : [...baseGroups, nextGroup];
+    const nextRows = buildVariantCombinationRows(nextGroups, variantRows);
+    setVariantOptionGroups(
+      nextGroups.map((group) => ({
+        ...group,
+        rows: nextRows,
+      })),
+    );
     setVariantRows(nextRows);
     setVariantDialogOpen(false);
     setVariantValueDraft("");
@@ -6407,22 +6635,29 @@ function ProductFormPanel({
                     <div>价格</div>
                     <div>可用数量</div>
                   </div>
-                  {variantRows.map((row) => {
+                  {variantTableRows.map((displayRow) => {
+                    const row = displayRow.representative;
                     const variantImageUrl = row.imageUrl || selectedMainMedia?.url;
                     const variantImageAlt =
-                      row.imageAlt || selectedMainMedia?.alt || row.size;
+                      row.imageAlt || selectedMainMedia?.alt || displayRow.label;
                     return (
                       <div
-                        key={row.id}
+                        key={displayRow.id}
                         className="grid grid-cols-[36px_82px_minmax(0,1fr)_132px_88px] items-center border-b border-gray-100 px-3 py-3 last:border-b-0"
                       >
                         <div className="flex items-center justify-center">
                           <input
                             type="checkbox"
                             className="h-4 w-4 rounded border-gray-300"
-                            checked={row.selected}
+                            checked={displayRow.selected}
                             onChange={(e) =>
-                              updateVariantRow(row.id, { selected: e.target.checked })
+                              setCurrentVariantRows((prev) =>
+                                prev.map((item) =>
+                                  displayRow.rows.some((child) => child.id === item.id)
+                                    ? { ...item, selected: e.target.checked }
+                                    : item,
+                                ),
+                              )
                             }
                           />
                         </div>
@@ -6442,15 +6677,26 @@ function ProductFormPanel({
                         </div>
                         <div className="min-w-0 pr-3">
                           <div className="whitespace-normal break-words text-xs font-semibold leading-4 text-gray-900">
-                            {row.size}
+                            {displayRow.label}
                           </div>
+                          {displayRow.childCount > 1 ? (
+                            <div className="mt-0.5 text-xs text-gray-500">
+                              {displayRow.childCount} 个多属性
+                            </div>
+                          ) : null}
                         </div>
                         <div className="pr-2">
                           <Input
                             label=""
-                            value={row.price}
+                            value={displayRow.price}
                             onChange={(e) =>
-                              updateVariantRow(row.id, { price: e.target.value })
+                              setCurrentVariantRows((prev) =>
+                                prev.map((item) =>
+                                  displayRow.rows.some((child) => child.id === item.id)
+                                    ? { ...item, price: e.target.value }
+                                    : item,
+                                ),
+                              )
                             }
                             placeholder="0.00"
                             leftAddon={<span className="text-xs font-medium">$</span>}
@@ -6458,9 +6704,15 @@ function ProductFormPanel({
                         </div>
                         <Input
                           label=""
-                          value={row.inventory}
+                          value={displayRow.inventory}
                           onChange={(e) =>
-                            updateVariantRow(row.id, { inventory: e.target.value })
+                            setCurrentVariantRows((prev) =>
+                              prev.map((item) =>
+                                displayRow.rows.some((child) => child.id === item.id)
+                                  ? { ...item, inventory: e.target.value }
+                                  : item,
+                              ),
+                            )
                           }
                           placeholder="0"
                         />
