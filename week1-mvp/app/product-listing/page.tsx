@@ -1157,6 +1157,97 @@ function getShopifyCategoryOptionFullLabel(
   return parts.length ? parts.join(" > ") : getShopifyCategoryOptionLabel(category);
 }
 
+function getShopifyCategoryParentIdFromTaxonomyId(id: string) {
+  const prefix = "gid://shopify/TaxonomyCategory/";
+  if (!id.startsWith(prefix)) return null;
+  const slug = id.slice(prefix.length);
+  const separatorIndex = slug.lastIndexOf("-");
+  if (separatorIndex <= 0) return null;
+  return `${prefix}${slug.slice(0, separatorIndex)}`;
+}
+
+const SHOPIFY_LOCAL_CATEGORY_IDS = Array.from(
+  new Set([
+    ...Object.keys(SHOPIFY_TAXONOMY_ZH_FULL_NAME_BY_ID),
+    ...SHOPIFY_ALL_CATEGORY_OPTIONS.map((category) => category.id),
+  ]),
+);
+
+const SHOPIFY_LOCAL_CATEGORY_PARENT_BY_ID = new Map(
+  SHOPIFY_LOCAL_CATEGORY_IDS.map((id) => {
+    const local = SHOPIFY_ALL_CATEGORY_OPTIONS.find((category) => category.id === id);
+    const parentId =
+      (local as { parentId?: string } | undefined)?.parentId ||
+      getShopifyCategoryParentIdFromTaxonomyId(id);
+    return [id, parentId] as const;
+  }),
+);
+
+const SHOPIFY_LOCAL_CATEGORY_CHILDREN_COUNT_BY_ID = (() => {
+  const counts = new Map<string, number>();
+  for (const parentId of SHOPIFY_LOCAL_CATEGORY_PARENT_BY_ID.values()) {
+    if (!parentId) continue;
+    counts.set(parentId, (counts.get(parentId) || 0) + 1);
+  }
+  return counts;
+})();
+
+function getLocalShopifyCategoryParentId(id: string) {
+  return SHOPIFY_LOCAL_CATEGORY_PARENT_BY_ID.get(id) || null;
+}
+
+function getLocalShopifyCategoryChildrenCount(id: string) {
+  return SHOPIFY_LOCAL_CATEGORY_CHILDREN_COUNT_BY_ID.get(id) || 0;
+}
+
+function makeLocalShopifyCategoryOption(
+  id: string,
+): ShopifyTaxonomyCategoryOption | null {
+  const local = findShopifyCategoryById(id);
+  const officialFullName = getShopifyTaxonomyZhFullNameById(id);
+  if (!local && !officialFullName) return null;
+
+  const parentId = getLocalShopifyCategoryParentId(id);
+  const fullName = officialFullName || local?.zh || local?.en || id;
+  const name = local?.en || getShopifyTaxonomyLeafLabel(fullName) || local?.zh || id;
+  const childrenCount = getLocalShopifyCategoryChildrenCount(id);
+  return {
+    id,
+    name,
+    fullName,
+    parentId,
+    level: fullName.split(/\s*>\s*/).filter(Boolean).length - 1,
+    isRoot: !parentId,
+    isLeaf: childrenCount === 0,
+    childrenCount,
+  };
+}
+
+function getLocalShopifyCategoryOptions(opts: {
+  search?: string;
+  childrenOf?: string | null;
+}) {
+  const search = normalizeShopifyCategoryLabel(opts.search || "");
+  return SHOPIFY_LOCAL_CATEGORY_IDS.map(makeLocalShopifyCategoryOption)
+    .filter((category): category is ShopifyTaxonomyCategoryOption => Boolean(category))
+    .filter((category) => {
+      if (search) {
+        const label = normalizeShopifyCategoryLabel(
+          `${getShopifyCategoryOptionFullLabel(category)} ${category.name}`,
+        );
+        return label.includes(search);
+      }
+      return (category.parentId || null) === (opts.childrenOf || null);
+    })
+    .sort((a, b) =>
+      getShopifyCategoryOptionFullLabel(a).localeCompare(
+        getShopifyCategoryOptionFullLabel(b),
+        "zh-CN",
+      ),
+    )
+    .slice(0, 250);
+}
+
 function getShopifySelectedCategoryLabel(id: string, fallbackName: string) {
   const officialFullName = getShopifyTaxonomyZhFullNameById(id);
   if (officialFullName) return getShopifyTaxonomyLeafLabel(officialFullName);
@@ -2692,6 +2783,11 @@ export default function ProductListingPage() {
             <ProductFormPanel
               form={form}
               setForm={setForm}
+              shopifyBindingKey={
+                hasActiveShopifyBinding && binding
+                  ? `${binding.shopDomain}:${binding.updatedAt || 0}`
+                  : ""
+              }
               variantRows={variantRows}
               setVariantRows={setVariantRows}
               variantOptionGroups={variantOptionGroups}
@@ -3976,23 +4072,38 @@ function ShopifyCategoryPicker({
       } else if (parent?.id) {
         params.set("childrenOf", parent.id);
       }
-      setLoading(true);
+      const localItems = getLocalShopifyCategoryOptions({
+        search: searchText,
+        childrenOf: parent?.id || null,
+      });
+      setItems(localItems);
+      setLoading(localItems.length === 0);
       setError("");
       fetchWithShopifyDevice(`/api/shopify/categories?${params.toString()}`, {
         signal: controller.signal,
       })
         .then(async (res) => {
+          const contentType = res.headers.get("content-type") || "";
+          if (!contentType.includes("application/json")) {
+            throw new Error("Shopify 类别接口暂不可用");
+          }
           const data = (await res.json()) as {
             categories?: ShopifyTaxonomyCategoryOption[];
             error?: string;
           };
           if (!res.ok) throw new Error(data.error || res.statusText);
-          setItems(data.categories || []);
+          setItems(data.categories?.length ? data.categories : localItems);
         })
         .catch((e) => {
           if (controller.signal.aborted) return;
-          setItems([]);
-          setError(e instanceof Error ? e.message : String(e));
+          setItems(localItems);
+          setError(
+            localItems.length
+              ? ""
+              : e instanceof Error
+                ? e.message
+                : String(e),
+          );
         })
         .finally(() => {
           if (!controller.signal.aborted) setLoading(false);
@@ -4183,6 +4294,7 @@ function ShopifyCategoryPicker({
 function ProductFormPanel({
   form,
   setForm,
+  shopifyBindingKey,
   variantRows,
   setVariantRows,
   variantOptionGroups,
@@ -4197,6 +4309,7 @@ function ProductFormPanel({
 }: {
   form: ProductForm;
   setForm: React.Dispatch<React.SetStateAction<ProductForm>>;
+  shopifyBindingKey: string;
   variantRows: ProductVariantRow[];
   setVariantRows: React.Dispatch<React.SetStateAction<ProductVariantRow[]>>;
   variantOptionGroups: ProductVariantOptionGroup[];
@@ -4214,6 +4327,7 @@ function ProductFormPanel({
   const mediaInputRef = useRef<HTMLInputElement | null>(null);
   const variantOptionMenuRef = useRef<HTMLDivElement | null>(null);
   const variantGroupByMenuRef = useRef<HTMLDivElement | null>(null);
+  const categoryMetafieldsCategoryIdRef = useRef("");
   const rootCategoryId = getShopifyRootCategoryId(form.shopifyCategoryId);
   const apparelSubcategoryId = getShopifyApparelSubcategoryId(
     form.shopifyCategoryId,
@@ -4559,6 +4673,7 @@ function ProductFormPanel({
   useEffect(() => {
     const categoryId = form.shopifyCategoryId;
     if (
+      !shopifyBindingKey ||
       !categoryId ||
       categoryId === SHOPIFY_UNCATEGORIZED_CATEGORY_ID ||
       !isShopifyTaxonomyCategoryId(categoryId)
@@ -4566,10 +4681,14 @@ function ProductFormPanel({
       setShopifyCategoryMetafields({});
       setCategoryMetafieldLoadError("");
       setLoadingCategoryMetafields(false);
+      categoryMetafieldsCategoryIdRef.current = "";
       return;
     }
 
     const controller = new AbortController();
+    if (categoryMetafieldsCategoryIdRef.current !== categoryId) {
+      setShopifyCategoryMetafields({});
+    }
     setLoadingCategoryMetafields(true);
     setCategoryMetafieldLoadError("");
     fetchWithShopifyDevice(
@@ -4577,16 +4696,23 @@ function ProductFormPanel({
       { signal: controller.signal },
     )
       .then(async (res) => {
+        const contentType = res.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) {
+          throw new Error("Shopify 类别元字段接口暂不可用，请刷新页面后重试。");
+        }
         const data = (await res.json()) as {
           fields?: ShopifyCategoryMetafieldFields;
           error?: string;
         };
         if (!res.ok) throw new Error(data.error || res.statusText);
         setShopifyCategoryMetafields(data.fields || {});
+        categoryMetafieldsCategoryIdRef.current = categoryId;
       })
       .catch((e) => {
         if (controller.signal.aborted) return;
-        setShopifyCategoryMetafields({});
+        if (categoryMetafieldsCategoryIdRef.current !== categoryId) {
+          setShopifyCategoryMetafields({});
+        }
         setCategoryMetafieldLoadError(e instanceof Error ? e.message : String(e));
       })
       .finally(() => {
@@ -4594,7 +4720,7 @@ function ProductFormPanel({
       });
 
     return () => controller.abort();
-  }, [form.shopifyCategoryId]);
+  }, [form.shopifyCategoryId, shopifyBindingKey]);
 
   function update<K extends keyof ProductForm>(key: K, value: ProductForm[K]) {
     if (key === "inventory") {
@@ -5490,6 +5616,15 @@ function ProductFormPanel({
     });
   }
 
+  const editingOptionGroupIndex = editingOptionGroupId
+    ? variantOptionGroups.findIndex((group) => group.id === editingOptionGroupId)
+    : -1;
+  const variantOptionEditorOrder =
+    editingOptionGroupIndex >= 0
+      ? editingOptionGroupIndex * 2 + 1
+      : variantOptionGroups.length * 2 + 1;
+  const variantGroupByOrder = variantOptionGroups.length * 2 + 2;
+
   return (
     <div className="space-y-3">
       <ShopifySection>
@@ -5895,10 +6030,10 @@ function ProductFormPanel({
 
           {(hasVariantOptions || variantDialogOpen) &&
           !variantSectionCollapsed ? (
-            <div className="space-y-3">
+            <div className="flex flex-col gap-3">
               {variantOptionGroups.length > 0 ? (
-                <div className="space-y-2">
-                  {variantOptionGroups.map((group) => {
+                <>
+                  {variantOptionGroups.map((group, index) => {
                     const active =
                       normalizeVariantOptionName(group.optionName) ===
                       normalizeVariantOptionName(variantGroupByOptionName);
@@ -5906,6 +6041,7 @@ function ProductFormPanel({
                       <button
                         key={group.id}
                         type="button"
+                        style={{ order: index * 2 }}
                         className={`w-full rounded-md border bg-white px-4 py-3 text-left transition-colors ${
                           active
                             ? "border-blue-200 ring-1 ring-blue-100"
@@ -5942,9 +6078,12 @@ function ProductFormPanel({
                       </button>
                     );
                   })}
-                </div>
+                </>
               ) : variantRows.length > 0 ? (
-                <div className="rounded-md border border-gray-200 bg-white">
+                <div
+                  className="rounded-md border border-gray-200 bg-white"
+                  style={{ order: 0 }}
+                >
                   <div className="border-b border-gray-200 px-4 py-3">
                     <div className="text-xs font-semibold text-gray-900">
                       {variantOptionName}
@@ -5964,7 +6103,10 @@ function ProductFormPanel({
               ) : null}
 
               {variantDialogOpen ? (
-                <div className="relative z-40 rounded-md border border-gray-200 bg-white">
+                <div
+                  className="relative z-40 rounded-md border border-gray-200 bg-white"
+                  style={{ order: variantOptionEditorOrder }}
+                >
                   <div className="grid grid-cols-[38px_minmax(0,1fr)]">
                     <div className="flex justify-center pt-14 text-gray-300">
                       <GripVertical size={16} strokeWidth={2} />
@@ -6157,7 +6299,10 @@ function ProductFormPanel({
               ) : null}
 
               {variantRows.length > 0 ? (
-                <div className="flex flex-wrap items-center gap-2 text-xs text-gray-700">
+                <div
+                  className="flex flex-wrap items-center gap-2 text-xs text-gray-700"
+                  style={{ order: variantGroupByOrder }}
+                >
                   <span className="text-gray-600">分组依据</span>
                   <div ref={variantGroupByMenuRef} className="relative">
                     <button
