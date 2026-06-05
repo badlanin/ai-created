@@ -4018,6 +4018,10 @@ async function buildShopifyCategoryMetafieldValue(
     const ids: string[] = [];
     const fieldKey = cleanField(definition.key) || "taxonomy_reference";
     for (const value of values) {
+      if (isShopifyTaxonomyValueId(value)) {
+        ids.push(value);
+        continue;
+      }
       const inferredValue = inferShopifyCategoryValueForField(
         type,
         fieldKey,
@@ -4052,6 +4056,10 @@ async function buildShopifyCategoryMetafieldValue(
     }
     const ids: string[] = [];
     for (const value of values) {
+      if (isShopifyMetaobjectId(value)) {
+        ids.push(value);
+        continue;
+      }
       const id = await findOrCreateShopifyCategoryMetaobject(
         shopDomain,
         accessToken,
@@ -4671,6 +4679,14 @@ function isShopifyTaxonomyValueReferenceType(type: string): boolean {
     normalized.includes("taxonomyvaluereference") ||
     normalized.includes("producttaxonomyvaluereference")
   );
+}
+
+function isShopifyMetaobjectId(value: string): boolean {
+  return /^gid:\/\/shopify\/Metaobject\//.test(cleanField(value));
+}
+
+function isShopifyTaxonomyValueId(value: string): boolean {
+  return /^gid:\/\/shopify\/TaxonomyValue\//.test(cleanField(value));
 }
 
 async function resolveShopifyTaxonomyValueId(

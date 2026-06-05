@@ -1456,6 +1456,61 @@ function toggleCategoryMetafieldInputValue(value: string, item: string): string 
     : addCategoryMetafieldInputValues(value, [item]);
 }
 
+function isShopifyCategoryMetafieldReferenceId(value: string): boolean {
+  return /^gid:\/\/shopify\/Metaobject\//.test(value);
+}
+
+function getCategoryMetafieldOptionStoredValue(
+  option: ShopifyCategoryMetafieldOption,
+): string {
+  return isShopifyCategoryMetafieldReferenceId(option.id)
+    ? option.id
+    : option.value || option.label;
+}
+
+function getCategoryMetafieldOptionMatchValues(
+  option: ShopifyCategoryMetafieldOption,
+): string[] {
+  return Array.from(
+    new Set(
+      [
+        getCategoryMetafieldOptionStoredValue(option),
+        option.id,
+        option.value,
+        option.label,
+      ].filter(Boolean),
+    ),
+  );
+}
+
+function hasCategoryMetafieldOptionInputValue(
+  value: string,
+  option: ShopifyCategoryMetafieldOption,
+): boolean {
+  return getCategoryMetafieldOptionMatchValues(option).some((candidate) =>
+    hasCategoryMetafieldInputValue(value, candidate),
+  );
+}
+
+function toggleCategoryMetafieldOptionInputValue(
+  value: string,
+  option: ShopifyCategoryMetafieldOption,
+): string {
+  const candidates = getCategoryMetafieldOptionMatchValues(option);
+  const active = candidates.some((candidate) =>
+    hasCategoryMetafieldInputValue(value, candidate),
+  );
+  if (!active) {
+    return addCategoryMetafieldInputValues(value, [
+      getCategoryMetafieldOptionStoredValue(option),
+    ]);
+  }
+  return candidates.reduce(
+    (current, candidate) => removeCategoryMetafieldInputValue(current, candidate),
+    value,
+  );
+}
+
 function getCategoryMetafieldOptionForValue(
   value: string,
   shopifyOptions: ShopifyCategoryMetafieldOption[] = [],
@@ -1463,6 +1518,7 @@ function getCategoryMetafieldOptionForValue(
   const normalized = normalizeCategoryMetafieldMemoryValue(value).toLowerCase();
   return shopifyOptions.find((option) => {
     return (
+      normalizeCategoryMetafieldMemoryValue(option.id).toLowerCase() === normalized ||
       normalizeCategoryMetafieldMemoryValue(option.value).toLowerCase() === normalized ||
       normalizeCategoryMetafieldMemoryValue(option.label).toLowerCase() === normalized
     );
@@ -3710,8 +3766,12 @@ function CategoryColorInput({
     return getCategoryMetafieldOptionForValue(item, shopifyOptions)?.label || item;
   }
 
-  function toggleValue(item: string) {
-    onChange(toggleCategoryMetafieldInputValue(value, item));
+  function toggleValue(item: string | ShopifyCategoryMetafieldOption) {
+    onChange(
+      typeof item === "string"
+        ? toggleCategoryMetafieldInputValue(value, item)
+        : toggleCategoryMetafieldOptionInputValue(value, item),
+    );
   }
 
   function removeValue(item: string) {
@@ -3740,7 +3800,7 @@ function CategoryColorInput({
 
   function renderShopifyOption(item: ShopifyCategoryMetafieldOption) {
     const option = getColorOption(item.value);
-    const active = hasCategoryMetafieldInputValue(value, item.value);
+    const active = hasCategoryMetafieldOptionInputValue(value, item);
 
     return (
       <button
@@ -3750,7 +3810,7 @@ function CategoryColorInput({
           active ? "bg-purple-50 text-purple-700" : "text-gray-800 hover:bg-gray-50"
         }`}
         onMouseDown={(e) => e.preventDefault()}
-        onClick={() => toggleValue(item.value)}
+        onClick={() => toggleValue(item)}
       >
         {option ? (
           <CategoryColorSwatch option={option} />
@@ -3877,7 +3937,7 @@ function CategoryMetafieldMemoryInput({
     return getCategoryMetafieldOptionForValue(item, shopifyOptions)?.label || item;
   }
 
-  function chooseValue(item: string) {
+  function chooseValue(item: string, remember = true) {
     const items = splitCategoryMetafieldInputValues(item);
     if (!items.length) return;
     const allSelected = items.every((candidate) =>
@@ -3891,9 +3951,14 @@ function CategoryMetafieldMemoryInput({
         )
       : addCategoryMetafieldInputValues(value, items);
     onChange(next);
-    if (!allSelected) {
+    if (!allSelected && remember) {
       for (const candidate of items) onRemember(candidate);
     }
+  }
+
+  function chooseShopifyOption(item: ShopifyCategoryMetafieldOption) {
+    const next = toggleCategoryMetafieldOptionInputValue(value, item);
+    onChange(next);
   }
 
   function removeValue(item: string) {
@@ -3978,7 +4043,7 @@ function CategoryMetafieldMemoryInput({
               </div>
               <div className="space-y-0.5">
                 {shopifyOptions.map((item) => {
-                  const active = hasCategoryMetafieldInputValue(value, item.value);
+                  const active = hasCategoryMetafieldOptionInputValue(value, item);
                   return (
                     <button
                       key={`shopify-${item.id}`}
@@ -3989,7 +4054,7 @@ function CategoryMetafieldMemoryInput({
                           : "text-gray-800 hover:bg-gray-50"
                       }`}
                       onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => chooseValue(item.value)}
+                      onClick={() => chooseShopifyOption(item)}
                     >
                       <span className="min-w-0 flex-1 truncate">{item.label}</span>
                       {active ? <Check size={13} className="shrink-0" /> : null}
