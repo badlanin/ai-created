@@ -2707,10 +2707,15 @@ async function syncShopifyVariantMedia(
         "Shopify 商品图片仍在处理中，多属性图片本次未关联到变体；稍后重新同步即可。",
       );
     }
+    const actionableAppendMediaErrors = appendMediaErrors.filter(
+      (message) =>
+        !/non-ready media/i.test(message) &&
+        !/already has attached media/i.test(message),
+    );
     warnings.push(
-      ...appendMediaErrors
-        .filter((message) => !/non-ready media/i.test(message))
-        .map((message) => `多属性图片同步到 Shopify 失败：${message}`),
+      ...actionableAppendMediaErrors.map(
+        (message) => `多属性图片同步到 Shopify 失败：${message}`,
+      ),
     );
   } catch (e) {
     warnings.push(`多属性图片同步到 Shopify 失败：${formatUnknownError(e)}`);
@@ -4721,6 +4726,7 @@ async function buildShopifyCategoryMetaobjectFields(
 
   for (const key of requiredKeys) {
     if (key === displayFieldKey && fields.get(key)) continue;
+    if (shouldSkipShopifyCategoryMetaobjectField(type, key, value)) continue;
     const fieldDefinition = fieldDefinitions.find(
       (field) => cleanField(field.key) === key,
     );
@@ -4764,13 +4770,14 @@ async function buildShopifyCategoryMetaobjectFieldValue(
     fieldKey.startsWith("base_") || isShopifyTaxonomyValueReferenceType(fieldType);
   if (!mustUseTaxonomyValue) return value;
 
+  const taxonomyRawValue = fieldKey === "base_pattern" ? value : rawValue;
   const taxonomyValueId = await resolveShopifyTaxonomyValueId(
     shopDomain,
     accessToken,
     categoryId,
     type,
     fieldKey,
-    rawValue,
+    taxonomyRawValue,
     value,
     warnings,
   );
@@ -5261,6 +5268,29 @@ function getShopifyCategoryBaseFieldKeys(type: string): string[] {
   return [];
 }
 
+function shouldSkipShopifyCategoryMetaobjectField(
+  type: string,
+  fieldKey: string,
+  value: string,
+): boolean {
+  const normalizedType = normalizeMetafieldMatchText(type);
+  const normalizedFieldKey = normalizeMetafieldMatchText(fieldKey);
+  if (
+    !normalizedType.includes("colorpattern") ||
+    normalizedFieldKey !== "basepattern"
+  ) {
+    return false;
+  }
+  return !hasShopifyPatternHint(value);
+}
+
+function hasShopifyPatternHint(value: string): boolean {
+  const text = normalizeMetafieldMatchText(value);
+  return /floral|flower|stripe|striped|dot|polka|plaid|check|gingham|animal|leopard|zebra|chevron|paisley|print|pattern/.test(
+    text,
+  );
+}
+
 function inferShopifyCategoryBaseValue(
   type: string,
   fieldKey: string,
@@ -5405,6 +5435,14 @@ function inferShopifyBaseColor(value: string): string {
 
 function inferShopifyBaseSize(value: string): string {
   const text = normalizeMetafieldMatchText(value);
+  if (/^xxs$|extraextrasmall|2xs|特特小/.test(text)) return "Extra extra small (XXS)";
+  if (/^xs$|extrasmall|特小/.test(text)) return "Extra small (XS)";
+  if (/^s$|small|小码/.test(text)) return "Small (S)";
+  if (/^m$|medium|中码/.test(text)) return "Medium (M)";
+  if (/^l$|large|大码/.test(text)) return "Large (L)";
+  if (/^xl$|extralarge|1xl|加大/.test(text)) return "Extra large (XL)";
+  if (/^xxl$|extraextralarge|2xl|2x/.test(text)) return "Extra extra large (XXL)";
+  if (/^xxxl$|3xl|3x/.test(text)) return "Triple extra large (XXXL)";
   if (/plus|大码/.test(text)) return "Plus";
   if (/petite|小码/.test(text)) return "Petite";
   if (/maternity|孕/.test(text)) return "Maternity";
