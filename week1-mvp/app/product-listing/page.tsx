@@ -1528,11 +1528,28 @@ function saveCategoryMetafieldMemory(memory: CategoryMetafieldMemory) {
   }
 }
 
-function buildCategoryMetafieldCandidates(): CategoryMetafieldMemory {
-  const memory = loadCategoryMetafieldMemory();
+function buildCategoryMetafieldCandidates(
+  shopifyFields: ShopifyCategoryMetafieldFields = {},
+  memory: CategoryMetafieldMemory = loadCategoryMetafieldMemory(),
+  formValues?: ProductForm,
+): CategoryMetafieldMemory {
   const candidates: CategoryMetafieldMemory = {};
   for (const { key } of CATEGORY_METAFIELD_ROWS) {
-    const items = sanitizeCategoryMetafieldMemoryItems(memory[key]);
+    const shopifyItems = (shopifyFields[key]?.options || []).flatMap((option) => {
+      const values = [option.label];
+      if (option.value && !option.value.startsWith("gid://shopify/")) {
+        values.push(option.value);
+      }
+      return values;
+    });
+    const selectedItems = formValues
+      ? splitCategoryMetafieldInputValues(formValues[key])
+      : [];
+    const items = sanitizeCategoryMetafieldMemoryItems([
+      ...shopifyItems,
+      ...selectedItems,
+      ...(memory[key] || []),
+    ]);
     if (items.length) candidates[key] = items;
   }
   return candidates;
@@ -1846,6 +1863,8 @@ export default function ProductListingPage() {
   const [variantOptionGroups, setVariantOptionGroups] = useState<
     ProductVariantOptionGroup[]
   >([]);
+  const [categoryMetafieldCandidatesForAi, setCategoryMetafieldCandidatesForAi] =
+    useState<CategoryMetafieldMemory>({});
   const [syncState, setSyncState] = useState<SyncState>("idle");
   const [syncAction, setSyncAction] = useState<SyncAction>(null);
   const [lastAction, setLastAction] = useState("等待填写或应用 AI 解析结果");
@@ -2212,6 +2231,7 @@ export default function ProductListingPage() {
     setForm(EMPTY_FORM);
     setVariantRows([]);
     setVariantOptionGroups([]);
+    setCategoryMetafieldCandidatesForAi({});
     setSyncState("idle");
     setLastAction("已清空产品上架内容");
     setShopifyProductUrl(null);
@@ -2314,7 +2334,7 @@ export default function ProductListingPage() {
     setGeneratingAiOutput(true);
     setLastAction("正在根据提示词解析商品信息");
     try {
-      const categoryMetafieldCandidates = buildCategoryMetafieldCandidates();
+      const categoryMetafieldCandidates = categoryMetafieldCandidatesForAi;
       const res = await fetch("/api/product-listing/ai-output", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2325,6 +2345,10 @@ export default function ProductListingPage() {
             alt: item.alt,
             role: item.role,
           })),
+          shopifyCategory: {
+            id: form.shopifyCategoryId,
+            name: form.shopifyCategoryName,
+          },
           categoryMetafieldCandidates,
         }),
       });
@@ -2801,6 +2825,9 @@ export default function ProductListingPage() {
               onUpdateMediaRole={updateMediaRole}
               onUploadLocalMedia={uploadLocalMedia}
               uploadingMedia={uploadingMedia}
+              onCategoryMetafieldCandidatesChange={
+                setCategoryMetafieldCandidatesForAi
+              }
             />
             <SyncPanel
               form={form}
@@ -4308,6 +4335,7 @@ function ProductFormPanel({
   onUpdateMediaRole,
   onUploadLocalMedia,
   uploadingMedia,
+  onCategoryMetafieldCandidatesChange,
 }: {
   form: ProductForm;
   setForm: React.Dispatch<React.SetStateAction<ProductForm>>;
@@ -4325,6 +4353,9 @@ function ProductFormPanel({
   onUpdateMediaRole: (id: string, role: ProductMediaRole) => void;
   onUploadLocalMedia: (files: FileList | null) => void;
   uploadingMedia: boolean;
+  onCategoryMetafieldCandidatesChange: (
+    candidates: CategoryMetafieldMemory,
+  ) => void;
 }) {
   const mediaInputRef = useRef<HTMLInputElement | null>(null);
   const variantOptionMenuRef = useRef<HTMLDivElement | null>(null);
@@ -4424,6 +4455,26 @@ function ProductFormPanel({
   const categoryMetafieldContext = getShopifyCategoryMetafieldContext(
     form.shopifyCategoryId,
   );
+
+  useEffect(() => {
+    const shopifyFieldsForCurrentCategory =
+      categoryMetafieldsCategoryIdRef.current === form.shopifyCategoryId
+        ? shopifyCategoryMetafields
+        : {};
+    onCategoryMetafieldCandidatesChange(
+      buildCategoryMetafieldCandidates(
+        shopifyFieldsForCurrentCategory,
+        categoryMetafieldMemory,
+        form,
+      ),
+    );
+  }, [
+    categoryMetafieldMemory,
+    form,
+    onCategoryMetafieldCandidatesChange,
+    shopifyCategoryMetafields,
+  ]);
+
   const variantOptionName = form.variantOptionName.trim() || "Size";
   const hasVariantOptions =
     variantOptionGroups.length > 0 || variantRows.length > 0;

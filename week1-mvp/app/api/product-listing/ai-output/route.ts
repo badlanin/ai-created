@@ -124,6 +124,10 @@ export async function POST(req: NextRequest) {
     const body = (await req.json()) as {
       prompt?: string;
       media?: MediaInput[];
+      shopifyCategory?: {
+        id?: string;
+        name?: string;
+      };
       categoryMetafieldCandidates?: unknown;
     };
     const prompt = sanitizeText(body.prompt || "");
@@ -173,6 +177,14 @@ export async function POST(req: NextRequest) {
     const categoryMetafieldCandidates = normalizeCategoryMetafieldCandidates(
       body.categoryMetafieldCandidates,
     );
+    const shopifyCategoryName = sanitizeText(body.shopifyCategory?.name || "");
+    const shopifyCategoryId = sanitizeText(body.shopifyCategory?.id || "");
+    const shopifyCategorySummary =
+      shopifyCategoryName || shopifyCategoryId
+        ? `当前手动选择的 Shopify 类别：${shopifyCategoryName || "未命名"}${
+            shopifyCategoryId ? `（${shopifyCategoryId}）` : ""
+          }`
+        : "当前未提供手动选择的 Shopify 类别。";
     const wantsCategoryMetafields = shouldGenerateCategoryMetafields(prompt);
     const categoryMetafieldCandidateSummary =
       wantsCategoryMetafields
@@ -195,14 +207,17 @@ ${prompt}
 媒体 Media：
 ${mediaSummary}
 
+${shopifyCategorySummary}
+
 ${wantsCategoryMetafields ? `用户明确要求生成类别元字段。
 
-用户自定义类别元字段候选条目：
+当前手动选择类别下可用的 Shopify 类别元字段候选条目（包含 Shopify 官方/后台已读取条目和本地手动添加记忆）：
 ${categoryMetafieldCandidateSummary}
 
 类别元字段生成规则：
 - 只输出用户提示词要求的类别元字段；不要额外补充用户没有要求的类别元字段。
-- 上面有候选条目的字段：先根据图片判断真实特征，再从该字段候选条目里选择最相似的一项输出。
+- 上面有候选条目的字段：先根据图片判断真实特征，再从该字段候选条目里选择最相似的一项，并尽量按候选条目的原文输出。
+- 候选条目来自当前手动选择的 Shopify 类别，优先参考这些后台已有官方/自定义条目，不要自行更换商品类别。
 - 上面没有候选条目的字段：直接根据图片生成。
 - 候选条目明显都不适合图片时，可以输出图片判断值，但不要脱离图片。` : `用户没有要求生成类别元字段。
 不要输出任何“类别元字段...”字段；只按用户提示词生成商品上架内容。`}
@@ -592,7 +607,7 @@ function formatCategoryMetafieldCandidateSummary(
   });
   return lines.length
     ? lines.join("\n")
-    : "无。所有类别元字段都按商品图片自由判断。";
+    : "无。当前类别没有可用候选条目；类别元字段按商品图片自由判断。";
 }
 
 function shouldGenerateCategoryMetafields(prompt: string): boolean {
