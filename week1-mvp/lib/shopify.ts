@@ -1403,6 +1403,16 @@ function findShopifyCategoryMetafieldMappingByField(field?: string) {
   );
 }
 
+function findShopifyCategoryMetafieldMappingByShopifyKey(key?: string) {
+  const normalized = cleanField(key).toLowerCase();
+  if (!normalized) return null;
+  return (
+    SHOPIFY_CATEGORY_METAFIELD_MAPPINGS.find((mapping) =>
+      mapping.keyHints.some((hint) => cleanField(hint).toLowerCase() === normalized),
+    ) || null
+  );
+}
+
 function buildVariantOptionLinkedMetafieldInput(
   input: ShopifyProductDraftInput,
   variants: ShopifyVariantDraft[],
@@ -2337,6 +2347,12 @@ export async function syncShopifyProduct(
   if (price) variantInput.price = price;
   const sku = cleanField(firstVariantDraft?.sku || input.sku);
   variantInput.inventoryItem = sku ? { sku, tracked: true } : { tracked: true };
+  const firstVariantMediaId = resolveVariantMediaId(
+    firstVariantDraft,
+    mediaIdBySource,
+    fallbackMediaIds,
+  );
+  if (firstVariantMediaId) variantInput.mediaId = firstVariantMediaId;
   const firstVariantOptionValues = firstVariantDraft
     ? buildVariantOptionValueInputsForVariant(
         firstVariantDraft,
@@ -2400,6 +2416,12 @@ export async function syncShopifyProduct(
       inputVariant.inventoryItem = variantSku
         ? { sku: variantSku, tracked: true }
         : { tracked: true };
+      const variantMediaId = resolveVariantMediaId(
+        variant,
+        mediaIdBySource,
+        fallbackMediaIds,
+      );
+      if (variantMediaId) inputVariant.mediaId = variantMediaId;
       return inputVariant;
     });
     const variantsJson = await shopifyGraphql<ShopifyVariantsBulkCreateResponse>(
@@ -2466,6 +2488,7 @@ export async function syncShopifyProduct(
     stored.shopDomain,
     stored.accessToken,
     product.id,
+    categoryId,
     productOptionDrafts,
     warnings,
   );
@@ -2588,15 +2611,27 @@ function pushVariantMediaTarget(
   mediaIds: string[],
 ) {
   if (!variantId || !mediaIds.length) return;
-  if (draft && !cleanField(draft.imageUrl)) return;
-  const matchedMediaId = draft
-    ? mediaIdBySource.get(normalizeMediaSourceKey(draft.imageUrl))
-    : "";
+  const mediaId = resolveVariantMediaId(draft, mediaIdBySource, mediaIds);
+  if (!mediaId) return;
   targets.push({
     variantId,
-    mediaIds: [matchedMediaId || mediaIds[0]],
+    mediaIds: [mediaId],
     label: draft?.size || "默认变体",
   });
+}
+
+function resolveVariantMediaId(
+  draft:
+    | {
+        imageUrl: string;
+      }
+    | undefined,
+  mediaIdBySource: Map<string, string>,
+  mediaIds: string[],
+): string {
+  if (!draft || !cleanField(draft.imageUrl)) return "";
+  const matchedMediaId = mediaIdBySource.get(normalizeMediaSourceKey(draft.imageUrl));
+  return matchedMediaId || mediaIds[0] || "";
 }
 
 function buildMediaIdBySource(
@@ -2722,6 +2757,7 @@ async function syncShopifyLinkedProductOptions(
   shopDomain: string,
   accessToken: string,
   productId: string,
+  categoryId: string | null,
   productOptions: NormalizedProductOptionDraft[],
   warnings: string[],
 ) {
@@ -2759,19 +2795,31 @@ async function syncShopifyLinkedProductOptions(
         .map((value) => [cleanField(value.name).toLowerCase(), value] as const)
         .filter(([name, value]) => Boolean(name && value.id)),
     );
-    const optionValuesToUpdate = option.values
-      .map((value) => {
+    const optionValuesToUpdate = (
+      await Promise.all(
+        option.values.map(async (value) => {
         const name = cleanField(value);
         const shopifyValue = optionValueByName.get(name.toLowerCase());
-        const linkedMetafieldValue = cleanField(
+          const rawLinkedMetafieldValue = cleanField(
           option.linkedValueByValue.get(name.toLowerCase()),
         );
+          const linkedMetafieldValue = await resolveLinkedProductOptionMetafieldValue(
+            shopDomain,
+            accessToken,
+            categoryId,
+            linkedMetafield,
+            rawLinkedMetafieldValue,
+            name,
+            warnings,
+          );
         if (!shopifyValue?.id || !linkedMetafieldValue) return null;
         return {
           id: shopifyValue.id,
           linkedMetafieldValue,
         };
-      })
+        }),
+      )
+    )
       .filter(
         (
           value,
@@ -2846,6 +2894,71 @@ async function syncShopifyLinkedProductOptions(
       );
     }
   }
+}
+
+async function resolveLinkedProductOptionMetafieldValue(
+  shopDomain: string,
+  accessToken: string,
+  categoryId: string | null,
+  linkedMetafield: { namespace: string; key: string; values: string[] },
+  rawValue: string,
+  fallbackValue: string,
+  warnings: string[],
+): Promise<string | null> {
+  const sourceValue =
+    rawValue && !isShopifyTaxonomyValueId(rawValue) ? rawValue : fallbackValue;
+  if (!sourceValue) return null;
+  if (!categoryId || categoryId === SHOPIFY_UNCATEGORIZED_CATEGORY_ID) {
+    return cleanField(sourceValue);
+  }
+
+  const mapping = findShopifyCategoryMetafieldMappingByShopifyKey(
+    linkedMetafield.key,
+  );
+  if (!mapping) return cleanField(sourceValue);
+
+  const definitions = await ensureShopifyCategoryMetafieldDefinitions(
+    shopDomain,
+    accessToken,
+    categoryId,
+    [mapping],
+    warnings,
+  );
+  const definition = findShopifyCategoryMetafieldDefinition(definitions, mapping);
+  const type = cleanField(definition?.type?.name);
+  const fieldKey = cleanField(definition?.key) || "taxonomy_reference";
+
+  if (/metaobject_reference$/.test(type)) {
+    if (isShopifyMetaobjectId(sourceValue)) return sourceValue;
+    const metaobjectType = definition
+      ? getShopifyCategoryMetaobjectType(definition)
+      : "";
+    if (!metaobjectType) return null;
+    return findOrCreateShopifyCategoryMetaobject(
+      shopDomain,
+      accessToken,
+      categoryId,
+      metaobjectType,
+      sourceValue,
+      warnings,
+    );
+  }
+
+  if (isShopifyTaxonomyValueReferenceType(type)) {
+    if (isShopifyTaxonomyValueId(sourceValue)) return sourceValue;
+    return resolveShopifyTaxonomyValueId(
+      shopDomain,
+      accessToken,
+      categoryId,
+      type,
+      fieldKey,
+      sourceValue,
+      inferShopifyCategoryValueForField(type, fieldKey, sourceValue),
+      warnings,
+    );
+  }
+
+  return cleanField(sourceValue);
 }
 
 async function syncShopifyProductPublications(
@@ -4595,7 +4708,7 @@ async function buildShopifyCategoryMetaobjectFields(
   for (const field of fieldDefinitions) {
     const key = cleanField(field.key);
     if (!key) continue;
-    if (field.required || key.startsWith("base_")) requiredKeys.add(key);
+    if (field.required) requiredKeys.add(key);
   }
   for (const key of getShopifyCategoryBaseFieldKeys(type)) {
     if (
@@ -5131,7 +5244,7 @@ function getShopifyCategoryBaseFieldKeys(type: string): string[] {
   const normalizedType = normalizeMetafieldMatchText(type);
   if (normalizedType.includes("agegroup")) return ["base_age_group"];
   if (normalizedType.includes("colorpattern")) {
-    return ["base_color", "base_pattern"];
+    return ["base_color"];
   }
   if (normalizedType.includes("dressoccasion")) return ["base_dress_occasion"];
   if (normalizedType.includes("dressstyle")) return ["base_dress_style"];

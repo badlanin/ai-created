@@ -5059,9 +5059,7 @@ function ProductFormPanel({
   ) {
     const option = getLinkedMetafieldOptionForOption(value, optionMetafieldKey);
     if (!option) return "";
-    return option.id.startsWith("gid://shopify/")
-      ? option.id
-      : option.value || option.label;
+    return getCategoryMetafieldOptionStoredValue(option);
   }
 
   function buildVariantOptionSelection(
@@ -5736,9 +5734,7 @@ function ProductFormPanel({
       ? getLinkedMetafieldOptionForOption(primaryValue, linkedKey)
       : "";
     const linkedMetafieldValue = mappedOption
-      ? mappedOption.id.startsWith("gid://shopify/")
-        ? mappedOption.id
-        : mappedOption.value || mappedOption.label
+      ? getCategoryMetafieldOptionStoredValue(mappedOption)
       : "";
     const optionSelections: ProductVariantOptionSelection[] = optionEntries.map(
       (entry) => {
@@ -5747,9 +5743,7 @@ function ProductFormPanel({
           ? getLinkedMetafieldOptionForOption(entry.value, entryLinkedKey)
           : "";
         const entryLinkedValue = entryMappedOption
-          ? entryMappedOption.id.startsWith("gid://shopify/")
-            ? entryMappedOption.id
-            : entryMappedOption.value || entryMappedOption.label
+          ? getCategoryMetafieldOptionStoredValue(entryMappedOption)
           : "";
         return {
           optionName: entry.group.optionName,
