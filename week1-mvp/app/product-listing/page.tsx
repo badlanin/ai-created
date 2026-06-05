@@ -1885,7 +1885,7 @@ export default function ProductListingPage() {
   const [shopifyAccountDialogOpen, setShopifyAccountDialogOpen] = useState(false);
   const [addingShopifyAccount, setAddingShopifyAccount] = useState(false);
   const [authMode, setAuthMode] =
-    useState<ShopifyBinding["authMode"]>("oauth_app");
+    useState<ShopifyBinding["authMode"]>("access_token");
   const [shopDomain, setShopDomain] = useState("xxx.myshopify.com");
   const [accessToken, setAccessToken] = useState("");
   const [clientId, setClientId] = useState("");
@@ -2169,7 +2169,7 @@ export default function ProductListingPage() {
   function beginAddShopifyAccount() {
     setShopifyAccountDialogOpen(false);
     setAddingShopifyAccount(true);
-    setAuthMode("oauth_app");
+    setAuthMode("access_token");
     setShopDomain("xxx.myshopify.com");
     setAccessToken("");
     setClientId("");
@@ -3488,7 +3488,7 @@ function AiGeneratedImagesPanel({
   return (
     <div className="rounded-md border border-purple-100 bg-purple-50/30 p-3">
       <div className="flex items-center justify-between gap-2">
-        <div>
+        <div className="min-w-0">
           <div className="text-xs font-semibold text-gray-900">
             大模型图片建议
           </div>
@@ -3496,7 +3496,7 @@ function AiGeneratedImagesPanel({
             从完整输出里识别到的图片，可裁剪后加入媒体文件
           </div>
         </div>
-        <Chip tone={images.length ? "brand" : "gray"}>
+        <Chip tone={images.length ? "brand" : "gray"} className="shrink-0 whitespace-nowrap">
           {images.length ? `${images.length} 张` : "待识别"}
         </Chip>
       </div>
@@ -3570,10 +3570,10 @@ function AiGeneratedImagesPanel({
           })}
         </div>
       ) : (
-        <div className="mt-3 rounded-md border border-dashed border-purple-200 bg-white px-3 py-4 text-center text-xs text-gray-500">
-          完整大模型输出中出现 /assets/outputs/xxx.jpg、png 或 webp 后，
-          图片会在这里显示为可选择缩略图。
-        </div>
+        <div
+          className="mt-3 min-h-[72px] rounded-md border border-dashed border-purple-200 bg-white"
+          aria-hidden="true"
+        />
       )}
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
