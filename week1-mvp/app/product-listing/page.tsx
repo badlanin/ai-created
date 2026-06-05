@@ -1530,8 +1530,6 @@ function saveCategoryMetafieldMemory(memory: CategoryMetafieldMemory) {
 
 function buildCategoryMetafieldCandidates(
   shopifyFields: ShopifyCategoryMetafieldFields = {},
-  memory: CategoryMetafieldMemory = loadCategoryMetafieldMemory(),
-  formValues?: ProductForm,
 ): CategoryMetafieldMemory {
   const candidates: CategoryMetafieldMemory = {};
   for (const { key } of CATEGORY_METAFIELD_ROWS) {
@@ -1542,14 +1540,7 @@ function buildCategoryMetafieldCandidates(
       }
       return values;
     });
-    const selectedItems = formValues
-      ? splitCategoryMetafieldInputValues(formValues[key])
-      : [];
-    const items = sanitizeCategoryMetafieldMemoryItems([
-      ...shopifyItems,
-      ...selectedItems,
-      ...(memory[key] || []),
-    ]);
+    const items = sanitizeCategoryMetafieldMemoryItems(shopifyItems);
     if (items.length) candidates[key] = items;
   }
   return candidates;
@@ -4462,14 +4453,9 @@ function ProductFormPanel({
         ? shopifyCategoryMetafields
         : {};
     onCategoryMetafieldCandidatesChange(
-      buildCategoryMetafieldCandidates(
-        shopifyFieldsForCurrentCategory,
-        categoryMetafieldMemory,
-        form,
-      ),
+      buildCategoryMetafieldCandidates(shopifyFieldsForCurrentCategory),
     );
   }, [
-    categoryMetafieldMemory,
     form,
     onCategoryMetafieldCandidatesChange,
     shopifyCategoryMetafields,

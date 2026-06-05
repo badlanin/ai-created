@@ -211,7 +211,7 @@ ${shopifyCategorySummary}
 
 ${wantsCategoryMetafields ? `用户明确要求生成类别元字段。
 
-当前手动选择类别下可用的 Shopify 类别元字段候选条目（包含 Shopify 官方/后台已读取条目和本地手动添加记忆）：
+当前手动选择类别下可用的 Shopify 类别元字段候选条目（仅包含 Shopify 官方/后台已读取条目）：
 ${categoryMetafieldCandidateSummary}
 
 类别元字段生成规则：
