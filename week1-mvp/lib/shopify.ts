@@ -51,6 +51,7 @@ export type ShopifyConnectionSafe = {
   authMode: ShopifyAuthMode;
   tokenPreview: string;
   clientIdPreview: string | null;
+  tokenExpiresAt: number | null;
   shopName: string | null;
   myshopifyDomain: string | null;
   primaryDomain: string | null;
@@ -887,6 +888,7 @@ function toShopifyConnectionSafe(row: ShopifyConnectionRow): ShopifyConnectionSa
     tokenPreview: maskToken(secret),
     clientIdPreview:
       authMode !== "access_token" ? maskClientId(row.client_id || "") : null,
+    tokenExpiresAt: row.token_expires_at || null,
     shopName: row.shop_name,
     myshopifyDomain: row.myshopify_domain,
     primaryDomain: row.primary_domain,
@@ -905,6 +907,7 @@ export function saveShopifyConnection(opts: {
   accessToken?: string;
   clientId?: string;
   clientSecret?: string;
+  tokenExpiresAt?: number | null;
   testResult: ShopifyConnectionTestResult;
 }) {
   const db = getDb();
@@ -912,6 +915,10 @@ export function saveShopifyConnection(opts: {
   const authMode = normalizeAuthMode(opts.authMode);
   const clientId = cleanField(opts.clientId);
   const secret = cleanField(opts.accessToken);
+  const tokenExpiresAt =
+    typeof opts.tokenExpiresAt === "number" && opts.tokenExpiresAt > 0
+      ? Math.floor(opts.tokenExpiresAt)
+      : null;
   if (authMode === "client_credentials") {
     throw new Error("新版 Dev Dashboard 应用不能用客户端密钥直接绑定，请使用 OAuth 授权安装。");
   }
@@ -949,12 +956,12 @@ export function saveShopifyConnection(opts: {
          updated_at,
          last_tested_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, 1, unixepoch(), unixepoch(), unixepoch())
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, unixepoch(), unixepoch(), unixepoch())
        ON CONFLICT(user_id, device_id, shop_domain) DO UPDATE SET
          access_token_enc = excluded.access_token_enc,
          auth_mode = excluded.auth_mode,
          client_id = excluded.client_id,
-         token_expires_at = NULL,
+         token_expires_at = excluded.token_expires_at,
          shop_name = excluded.shop_name,
          myshopify_domain = excluded.myshopify_domain,
          primary_domain = excluded.primary_domain,
@@ -968,6 +975,7 @@ export function saveShopifyConnection(opts: {
       encrypted,
       authMode,
       authMode === "oauth_app" ? clientId : null,
+      tokenExpiresAt,
       opts.testResult.shopName,
       opts.testResult.myshopifyDomain,
       opts.testResult.primaryDomain,

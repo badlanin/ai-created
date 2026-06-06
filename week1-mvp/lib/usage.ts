@@ -57,10 +57,18 @@ export interface RecordUsageInput {
   costOverrideUsd?: number;
 }
 
+export interface RecordedUsageCost {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+  cost_cny: number;
+}
+
 /**
  * 记录一次使用 - 不阻塞主流程（try/catch 吞异常）
  */
-export function recordUsage(input: RecordUsageInput): void {
+export function recordUsage(input: RecordUsageInput): RecordedUsageCost | null {
   try {
     const tokens = extractTokens(input.usageMetadata);
     const tokenCost = calcCost(input.model, tokens.prompt, tokens.completion);
@@ -94,11 +102,20 @@ export function recordUsage(input: RecordUsageInput): void {
       input.error ?? null,
       input.notes ? JSON.stringify(input.notes) : null,
     );
+
+    return {
+      prompt_tokens: tokenCost.prompt_tokens,
+      completion_tokens: tokenCost.completion_tokens,
+      total_tokens: tokenCost.total_tokens,
+      cost_usd: costUsd,
+      cost_cny: costCny,
+    };
   } catch (e) {
     // 记账失败不应影响主流程
     console.error(
       "[usage.recordUsage] 写入失败（不影响主流程）:",
       e instanceof Error ? e.message : String(e),
     );
+    return null;
   }
 }

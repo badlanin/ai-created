@@ -206,6 +206,29 @@ function getJobRequired(jobId: string): JobRow {
   return j;
 }
 
+export function getJobUsageCostCny(jobId: string): number {
+  const db = getDb();
+  const row = db
+    .prepare(
+      `SELECT COALESCE(SUM(cost_cny), 0) AS total
+       FROM usage_records
+       WHERE success = 1
+         AND json_valid(notes)
+         AND json_extract(notes, '$.job_id') = ?`,
+    )
+    .get(jobId) as { total: number | null } | undefined;
+  return row?.total ?? 0;
+}
+
+export function applyJobCostFallback<T extends { id: string; total_cost_cny: number }>(
+  job: T,
+): T {
+  if (job.total_cost_cny > 0) return job;
+  const usageCost = getJobUsageCostCny(job.id);
+  if (usageCost <= 0) return job;
+  return { ...job, total_cost_cny: usageCost };
+}
+
 export function getJobItems(jobId: string): JobItemRow[] {
   const db = getDb();
   return db
@@ -221,7 +244,7 @@ export function getJobWithItems(
   const job = getJob(jobId);
   if (!job) return null;
   const items = getJobItems(jobId);
-  return { job, items };
+  return { job: applyJobCostFallback(job), items };
 }
 
 /** 某用户的活跃任务数（左栏徽标用） */

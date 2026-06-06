@@ -338,6 +338,7 @@ async function recolorItemHandler(
   correction_meta: string | null;
   input_tokens: number | undefined;
   output_tokens: number | undefined;
+  cost_cny: number | undefined;
 }> {
   const p = ctx.params as {
     aspect_ratio?: string | null;
@@ -531,7 +532,7 @@ async function recolorItemHandler(
         })
       : undefined;
 
-  recordUsage({
+  const usageRecord = recordUsage({
     userId: ctx.userId,
     model: actualModel,
     feature: "recolor",
@@ -562,6 +563,7 @@ async function recolorItemHandler(
     correction_meta: correctionMeta ? JSON.stringify(correctionMeta) : null,
     input_tokens: gen.usage?.inputTokens ?? undefined,
     output_tokens: gen.usage?.outputTokens ?? undefined,
+    cost_cny: usageRecord?.cost_cny ?? undefined,
   };
 }
 

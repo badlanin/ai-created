@@ -608,6 +608,7 @@ async function batchPhotoItemHandler(
   result_image_url: string;
   input_tokens: number | undefined;
   output_tokens: number | undefined;
+  cost_cny: number | undefined;
 }> {
   const p = ctx.params as {
     aspect_ratio?: string | null;
@@ -916,7 +917,7 @@ ${FRAMING_TIGHT_SINGLE}`;
         })
       : undefined;
 
-  recordUsage({
+  const usageRecord = recordUsage({
     userId: ctx.userId,
     model: ctx.job.model,
     feature: "batch_photo",
@@ -946,6 +947,7 @@ ${FRAMING_TIGHT_SINGLE}`;
     result_image_url: `/assets/outputs/${filename}`,
     input_tokens: gen.usage?.inputTokens ?? undefined,
     output_tokens: gen.usage?.outputTokens ?? undefined,
+    cost_cny: usageRecord?.cost_cny ?? undefined,
   };
 }
 

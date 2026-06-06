@@ -65,6 +65,7 @@ type ShopifyBinding = {
   authMode: "access_token" | "oauth_app" | "client_credentials";
   tokenPreview: string;
   clientIdPreview: string | null;
+  tokenExpiresAt: number | null;
   shopName: string | null;
   myshopifyDomain: string | null;
   primaryDomain: string | null;
@@ -1888,6 +1889,8 @@ export default function ProductListingPage() {
     useState<ShopifyBinding["authMode"]>("access_token");
   const [shopDomain, setShopDomain] = useState("xxx.myshopify.com");
   const [accessToken, setAccessToken] = useState("");
+  const [clientCredentialsTokenExpiresAt, setClientCredentialsTokenExpiresAt] =
+    useState<number | null>(null);
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [connectionMessage, setConnectionMessage] = useState<string | null>(null);
@@ -2051,6 +2054,11 @@ export default function ProductListingPage() {
 
   const hasActiveShopifyBinding = Boolean(binding) && !addingShopifyAccount;
 
+  function updateAccessToken(value: string) {
+    setAccessToken(value);
+    setClientCredentialsTokenExpiresAt(null);
+  }
+
   async function testConnection() {
     if ((!binding || addingShopifyAccount) && authMode === "oauth_app") {
       setConnectionMessage("新版 Dev Dashboard 应用需要先点击“开始 Shopify 授权”，授权成功后再测试连接。");
@@ -2123,13 +2131,15 @@ export default function ProductListingPage() {
       const res = await fetchWithShopifyDevice("/api/shopify/connection", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          authMode,
-          shopDomain,
-          accessToken,
-          clientId,
-          clientSecret,
-        }),
+          body: JSON.stringify({
+            authMode,
+            shopDomain,
+            accessToken,
+            clientId,
+            clientSecret,
+            tokenExpiresAt:
+              authMode === "access_token" ? clientCredentialsTokenExpiresAt : null,
+          }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
@@ -2145,6 +2155,7 @@ export default function ProductListingPage() {
       setAuthMode(data.connection.authMode || authMode);
       setAddingShopifyAccount(false);
       setAccessToken("");
+      setClientCredentialsTokenExpiresAt(null);
       setClientId("");
       setClientSecret("");
       setConnectionMessage("Shopify 连接验证通过，绑定信息已加密保存。");
@@ -2159,6 +2170,7 @@ export default function ProductListingPage() {
     setShopDomain(TEST_SHOP_DOMAIN);
     setAuthMode("access_token");
     setAccessToken(TEST_ACCESS_TOKEN);
+    setClientCredentialsTokenExpiresAt(null);
     setClientId("");
     setClientSecret("");
     setConnectionMessage(
@@ -2172,6 +2184,7 @@ export default function ProductListingPage() {
     setAuthMode("access_token");
     setShopDomain("xxx.myshopify.com");
     setAccessToken("");
+    setClientCredentialsTokenExpiresAt(null);
     setClientId("");
     setClientSecret("");
     setConnectionMessage("请填写新 Shopify 店铺信息后授权。");
@@ -2206,6 +2219,7 @@ export default function ProductListingPage() {
       if (active) {
         setShopDomain(active.shopDomain);
         setAuthMode(active.authMode || "access_token");
+        setClientCredentialsTokenExpiresAt(null);
         setConnectionMessage(`已切换到 Shopify 店铺：${active.shopDomain}`);
       }
       setAddingShopifyAccount(false);
@@ -2241,6 +2255,7 @@ export default function ProductListingPage() {
         setShopDomain(active.shopDomain);
         setAuthMode(active.authMode || "access_token");
         setAccessToken("");
+        setClientCredentialsTokenExpiresAt(null);
         setClientId("");
         setClientSecret("");
         setConnectionMessage(`已解除当前店铺绑定，已切换到：${active.shopDomain}`);
@@ -2251,6 +2266,7 @@ export default function ProductListingPage() {
       }
       setBinding(null);
       setAccessToken("");
+      setClientCredentialsTokenExpiresAt(null);
       setClientId("");
       setClientSecret("");
       setConnectionMessage("已解除 Shopify 绑定。");
@@ -2801,7 +2817,8 @@ export default function ProductListingPage() {
           savingBinding={savingBinding}
           onAuthModeChange={setAuthMode}
           onShopDomainChange={setShopDomain}
-          onAccessTokenChange={setAccessToken}
+          onAccessTokenChange={updateAccessToken}
+          onTokenExpiresAtChange={setClientCredentialsTokenExpiresAt}
           onClientIdChange={setClientId}
           onClientSecretChange={setClientSecret}
           onFillTestCredentials={fillTestCredentials}
@@ -3138,6 +3155,7 @@ function UnboundView({
   onAuthModeChange,
   onShopDomainChange,
   onAccessTokenChange,
+  onTokenExpiresAtChange,
   onClientIdChange,
   onClientSecretChange,
   onFillTestCredentials,
@@ -3156,6 +3174,7 @@ function UnboundView({
   onAuthModeChange: (value: ShopifyBinding["authMode"]) => void;
   onShopDomainChange: (value: string) => void;
   onAccessTokenChange: (value: string) => void;
+  onTokenExpiresAtChange: (value: number | null) => void;
   onClientIdChange: (value: string) => void;
   onClientSecretChange: (value: string) => void;
   onFillTestCredentials: () => void;
@@ -3167,17 +3186,6 @@ function UnboundView({
   const [credentialFileMessage, setCredentialFileMessage] = useState<string | null>(
     null,
   );
-  const [tokenExpiresAt, setTokenExpiresAt] = useState<number | null>(null);
-  const [tokenClock, setTokenClock] = useState(() => Date.now());
-  const tokenRemainingMs =
-    tokenExpiresAt === null ? null : Math.max(0, tokenExpiresAt - tokenClock);
-  const tokenExpired = tokenExpiresAt !== null && tokenRemainingMs === 0;
-
-  useEffect(() => {
-    if (tokenExpiresAt === null) return;
-    const timer = window.setInterval(() => setTokenClock(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [tokenExpiresAt]);
 
   async function loadCredentialFileToken() {
     if (!credentialFile) {
@@ -3214,8 +3222,7 @@ function UnboundView({
       onClientSecretChange(credentials.clientSecret);
       onAuthModeChange("access_token");
       onAccessTokenChange(String(data.accessToken || ""));
-      setTokenExpiresAt(Date.now() + Math.max(1, expiresIn) * 1000);
-      setTokenClock(Date.now());
+      onTokenExpiresAtChange(Math.floor(Date.now() / 1000) + Math.max(1, expiresIn));
       setCredentialFileMessage("已获得 Token，右侧可以测试连接或保存。");
     } catch (e) {
       setCredentialFileMessage(
@@ -3247,7 +3254,7 @@ function UnboundView({
                 onChange={(e) => {
                   setCredentialFile(e.target.files?.[0] || null);
                   setCredentialFileMessage(null);
-                  setTokenExpiresAt(null);
+                  onTokenExpiresAtChange(null);
                 }}
               />
               <Button
@@ -3273,17 +3280,6 @@ function UnboundView({
               >
                 获得 Token
               </Button>
-              {tokenRemainingMs !== null ? (
-                <p
-                  className={`text-[11px] leading-relaxed ${
-                    tokenExpired ? "text-amber-600" : "text-fg-tertiary"
-                  }`}
-                >
-                  {tokenExpired
-                    ? "请重新获得 Token"
-                    : `Token 失效倒计时：${formatTokenCountdown(tokenRemainingMs)}`}
-                </p>
-              ) : null}
               {credentialFileMessage ? (
                 <p className="text-[11px] leading-relaxed text-fg-tertiary">
                   {credentialFileMessage}
@@ -3415,6 +3411,20 @@ function BoundStatusCard({
   onConfirmUnbind: () => void;
   onSwitchAccount: () => void;
 }) {
+  const [tokenClock, setTokenClock] = useState(() => Date.now());
+  const tokenExpiresAtMs = binding.tokenExpiresAt
+    ? binding.tokenExpiresAt * 1000
+    : null;
+  const tokenRemainingMs =
+    tokenExpiresAtMs === null ? null : Math.max(0, tokenExpiresAtMs - tokenClock);
+  const tokenExpired = tokenExpiresAtMs !== null && tokenRemainingMs === 0;
+
+  useEffect(() => {
+    if (tokenExpiresAtMs === null) return;
+    const timer = window.setInterval(() => setTokenClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [tokenExpiresAtMs]);
+
   return (
     <Card padding="md">
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
@@ -3444,6 +3454,13 @@ function BoundStatusCard({
               ) : null}
               <span>密钥预览：{binding.tokenPreview}</span>
               <span>绑定时间：{formatUnixTime(binding.createdAt)}</span>
+              {tokenRemainingMs !== null ? (
+                <span className={tokenExpired ? "text-amber-600" : ""}>
+                  {tokenExpired
+                    ? "请重新获得 Token"
+                    : `Token 失效倒计时：${formatTokenCountdown(tokenRemainingMs)}`}
+                </span>
+              ) : null}
               {binding.shopName ? <span>店铺名称：{binding.shopName}</span> : null}
               {binding.primaryDomain ? <span>主域名：{binding.primaryDomain}</span> : null}
             </div>

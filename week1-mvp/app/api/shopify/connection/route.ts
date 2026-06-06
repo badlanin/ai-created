@@ -42,6 +42,7 @@ export async function POST(req: NextRequest) {
       accessToken?: string;
       clientId?: string;
       clientSecret?: string;
+      tokenExpiresAt?: number;
     };
     const authMode =
       body.authMode === "oauth_app"
@@ -53,6 +54,10 @@ export async function POST(req: NextRequest) {
     const accessToken = String(body.accessToken || "").trim();
     const clientId = String(body.clientId || "").trim();
     const clientSecret = String(body.clientSecret || "").trim();
+    const tokenExpiresAt =
+      typeof body.tokenExpiresAt === "number" && body.tokenExpiresAt > 0
+        ? Math.floor(body.tokenExpiresAt)
+        : null;
     const testResult = await testShopifyConnection({
       authMode,
       shopDomain,
@@ -68,6 +73,7 @@ export async function POST(req: NextRequest) {
       accessToken,
       clientId,
       clientSecret,
+      tokenExpiresAt,
       testResult,
     });
     return NextResponse.json({

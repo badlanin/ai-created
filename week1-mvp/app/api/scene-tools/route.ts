@@ -553,6 +553,7 @@ async function sceneToolsItemHandler(
   result_image_url: string;
   input_tokens: number | undefined;
   output_tokens: number | undefined;
+  cost_cny: number | undefined;
 }> {
   const p = ctx.params as {
     aspect_ratio?: string;
@@ -759,7 +760,7 @@ async function sceneToolsItemHandler(
         })
       : undefined;
 
-  recordUsage({
+  const usageRecord = recordUsage({
     userId: ctx.userId,
     model: ctx.job.model,
     feature: "other",
@@ -794,5 +795,6 @@ async function sceneToolsItemHandler(
     result_image_url: `/assets/outputs/${filename}`,
     input_tokens: gen.usage?.inputTokens ?? undefined,
     output_tokens: gen.usage?.outputTokens ?? undefined,
+    cost_cny: usageRecord?.cost_cny ?? undefined,
   };
 }

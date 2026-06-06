@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { getDb } from "@/lib/db";
+import { applyJobCostFallback } from "@/lib/jobs-db";
 
 export const runtime = "nodejs";
 
@@ -113,7 +114,7 @@ export async function GET(req: NextRequest) {
       | { result_image_url: string | null }
       | undefined;
     return {
-      ...r,
+      ...applyJobCostFallback(r),
       cover_image_url: cover?.result_image_url || null,
     };
   });
