@@ -614,19 +614,27 @@ Output should look like a clean e-commerce product-on-model photograph
 shot in a studio with this exact backdrop color.`;
 }
 
-function buildSelectedPoseSceneInstruction(): string {
+function buildSelectedPoseSceneInstruction(poseName: string, poseText: string): string {
   return `══════════════════════════════════════════════════════════
 🔒 SELECTED POSE LOCK — no random pose
 ══════════════════════════════════════════════════════════
 
-The pose specified in the 【任务】 section is the highest-priority instruction.
+The selected pose below is the highest-priority instruction and overrides any
+generic template / scene / framing instruction that may imply a different pose.
+
+Selected pose name: ${poseName}
+Selected pose body description: ${poseText}
+
 - Do NOT replace it with a random editorial pose.
 - Do NOT switch to sitting / leaning / walking / touching props unless the selected pose explicitly says so.
-- The scene image is the background/location reference only.
-- Keep the selected body pose, limb placement, body orientation, and full-body framing as faithfully as possible.
+- Do NOT let both arms hang down naturally if the selected pose says a hand is on the hip / waist / dress.
+- If the selected pose says one hand on hip / waist, at least one hand MUST visibly rest on the hip or waist with the arm angle described.
+- The scene reference image is the background/location reference only.
+- Keep the selected body pose, limb placement, hand placement, body orientation, and full-body framing as faithfully as possible.
+- If the pose is not visibly recognizable, the result is invalid.
 
 Scene consistency:
-- Background must match IMAGE 4 in architecture, furniture, lighting direction, color temperature, and atmosphere.
+- Background must match the scene reference image in architecture, furniture, lighting direction, color temperature, and atmosphere.
 - Model scale must be physically plausible relative to doors / chairs / tables / windows.
 - The model, dress, fabric, color, hair, and face must remain consistent with the reference images.
 - Keep the full garment visible unless the selected pose itself requires a closer crop.`;
@@ -734,7 +742,7 @@ async function batchPhotoItemHandler(
         pose = {
           id: it.pose_id,
           name: it.pose_name,
-          text: `在场景图（IMAGE 4）中保持该姿势：${it.pose_text}`,
+          text: `在场景参考图（最后一张输入图）中严格保持该姿势：${it.pose_text}`,
           type: it.pose_type,
         };
       } else {
@@ -769,7 +777,7 @@ async function batchPhotoItemHandler(
       throw new Error(`extra item[${extraIdx}] 丢失`);
     }
     framingBlock = hasSelectedPose
-      ? buildSelectedPoseSceneInstruction()
+      ? buildSelectedPoseSceneInstruction(pose.name, pose.text)
       : FRAMING_TIGHT_SINGLE;
   } else {
     // 文字场景：可选附带 scene image；没有图时只按文字生成。
