@@ -640,6 +640,66 @@ Scene consistency:
 - Keep the full garment visible unless the selected pose itself requires a closer crop.`;
 }
 
+function buildSelectedPoseScenePrompt(args: {
+  garmentAttrs: string;
+  materialDetails: string;
+  realismConstraints: string;
+  poseName: string;
+  poseText: string;
+  expression: string;
+  photographyParams: string;
+  shoeSpec: string;
+  sceneName: string;
+  userSeed: string;
+}): string {
+  return `你是一位专业的服装电商摄影师。请根据输入清单生成 1 张真人模特场景图。
+
+本次任务有一个最高优先级：严格执行用户选中的姿势，不能随机换姿势。
+
+${args.realismConstraints}
+
+【输入图使用规则】
+- 产品图：只提取服装颜色、面料、版型、长度、领口、袖型、装饰细节。
+- 模特肖像图：只提取脸型、肤色、发型、眼睛、体型；忽略原图姿势。
+- 场景背景图：只作为最终背景、地面、墙面、光线氛围来源；不要改变场景。
+
+【场景】
+${args.sceneName}
+
+【款式信息】
+${args.garmentAttrs}
+
+【面料质感】
+${args.materialDetails}
+
+【必须执行的选中姿势】
+姿势名称：${args.poseName}
+姿势描述：${args.poseText}
+
+强制要求：
+- 最终图里的模特必须明显呈现上面的姿势。
+- 如果姿势描述包含 hand on hip / hand on waist / 叉腰 / 扶腰，则至少一只手必须清楚地放在髋部或腰部，手臂角度要可见。
+- 不要把姿势改成自然垂手、侧身站立、走动、倚靠、坐下，除非选中姿势本身这样写。
+- 场景只决定背景和光线，不决定身体动作。
+
+【面部表情】
+${args.expression}
+
+${args.photographyParams}
+
+【鞋履要求】
+模特必须穿着以下精确规格的高跟鞋，不能自由发挥：
+${args.shoeSpec}
+
+【一致性约束】
+- 服装与产品图完全一致。
+- 模特脸、肤色、发型、体型与模特肖像图一致。
+- 背景与场景背景图一致。
+- 只有构图和光线融合可以适配场景；姿势不能被替换。
+
+${args.userSeed}`;
+}
+
 async function batchPhotoItemHandler(
   ctx: HandlerContext,
   outputsDir: string,
@@ -717,6 +777,7 @@ async function batchPhotoItemHandler(
   let sceneNameForPrompt: string;
   let sceneImagePath: string | null;
   let framingBlock: string;
+  let selectedPoseSceneLocked = false;
 
   if (isSolid) {
     const po = p.poses[idx];
@@ -739,10 +800,11 @@ async function batchPhotoItemHandler(
       sceneImagePath = it.scene_image_path;
       if (it.pose_id && it.pose_name && it.pose_text && it.pose_type) {
         hasSelectedPose = true;
+        selectedPoseSceneLocked = true;
         pose = {
           id: it.pose_id,
           name: it.pose_name,
-          text: `在场景参考图（最后一张输入图）中严格保持该姿势：${it.pose_text}`,
+          text: it.pose_text,
           type: it.pose_type,
         };
       } else {
@@ -765,6 +827,7 @@ async function batchPhotoItemHandler(
       // 老 job 兜底：保留原 pose
       const pair = extraPairs[extraIdx];
       hasSelectedPose = true;
+      selectedPoseSceneLocked = true;
       pose = {
         id: pair.pose_id,
         name: pair.pose_name,
@@ -918,6 +981,20 @@ ${FRAMING_TIGHT_SINGLE}`;
     /\{\{(\w+)\}\}/g,
     (_m, key: string) => promptVars[key] ?? "",
   );
+  const promptBody = selectedPoseSceneLocked
+    ? buildSelectedPoseScenePrompt({
+        garmentAttrs: promptVars.garment_attrs,
+        materialDetails: promptVars.material_details,
+        realismConstraints: promptVars.realism_constraints,
+        poseName: pose.name,
+        poseText: pose.text,
+        expression: promptVars.expression,
+        photographyParams: promptVars.photography_params,
+        shoeSpec: promptVars.shoe_spec,
+        sceneName: sceneNameForPrompt,
+        userSeed: promptVars.user_seed,
+      })
+    : filledTemplate;
 
   // 输入清单：按实际 input 顺序（产品 N → identity → 可选场景）动态生成 manifest
   // 修复了模板里硬写"参考图 1-2"在产品数不为 2 时索引错位的问题
@@ -927,7 +1004,7 @@ ${FRAMING_TIGHT_SINGLE}`;
     hasScene: sceneInput !== null,
     sceneName: sceneInput ? sceneNameForPrompt : undefined,
   });
-  const finalPrompt = `${manifest}\n${filledTemplate}\n\n${qualityHintText}\n\n${framingBlock}`;
+  const finalPrompt = `${manifest}\n${promptBody}\n\n${qualityHintText}\n\n${framingBlock}`;
 
   // 注意：纯色 item 不传 scene image
   const parts: ImgInput[] = sceneInput
