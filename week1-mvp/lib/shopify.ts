@@ -1152,9 +1152,60 @@ async function createClientCredentialsAccessToken(opts: {
   shopDomain: string;
   clientId: string;
   clientSecret: string;
-}): Promise<string> {
-  void opts;
-  throw new Error("新版 Dev Dashboard 应用不能用客户端密钥直接换 Admin API token，请使用 Shopify OAuth 授权安装。");
+}): Promise<{ accessToken: string; expiresIn: number | null }> {
+  const domain = normalizeShopDomain(opts.shopDomain);
+  const clientId = cleanField(opts.clientId);
+  const clientSecret = cleanField(opts.clientSecret);
+  if (!clientId) throw new Error("客户端 ID 不能为空");
+  if (!clientSecret) throw new Error("客户端密钥不能为空");
+
+  const body = new URLSearchParams();
+  body.set("grant_type", "client_credentials");
+  body.set("client_id", clientId);
+  body.set("client_secret", clientSecret);
+
+  const response = await fetch(`https://${domain}/admin/oauth/access_token`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body,
+    signal: AbortSignal.timeout(20_000),
+  });
+  const text = await response.text();
+  let json: ShopifyClientCredentialsResponse | null = null;
+  try {
+    json = text ? (JSON.parse(text) as ShopifyClientCredentialsResponse) : null;
+  } catch {
+    json = null;
+  }
+
+  if (!response.ok || !json?.access_token) {
+    let message =
+      json?.error_description ||
+      json?.error ||
+      text.slice(0, 300) ||
+      response.statusText;
+    if (looksLikeHtml(text)) {
+      message =
+        "Shopify 返回了网页而不是 token。请确认店铺域名是 Shopify 后台“设置 > 域名”里的原始 *.myshopify.com 域名，不是 www 自定义域名。";
+    }
+    throw new Error(`Shopify client_credentials 换取 token 失败：HTTP ${response.status} ${message}`);
+  }
+
+  return {
+    accessToken: json.access_token,
+    expiresIn: typeof json.expires_in === "number" ? json.expires_in : null,
+  };
+}
+
+export async function exchangeShopifyClientCredentialsToken(opts: {
+  shopDomain: string;
+  clientId: string;
+  clientSecret: string;
+}): Promise<{ accessToken: string; expiresIn: number | null }> {
+  return createClientCredentialsAccessToken(opts);
 }
 
 export function buildShopifyOAuthAuthorizeUrl(opts: {

@@ -3046,6 +3046,85 @@ export default function ProductListingPage() {
   );
 }
 
+type ShopifyCredentialFile = {
+  shopDomain?: string;
+  clientId?: string;
+  clientSecret?: string;
+};
+
+function parseShopifyCredentialFile(raw: string): ShopifyCredentialFile {
+  const text = raw.trim();
+  const values: Record<string, string> = {};
+
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      for (const [key, value] of Object.entries(parsed)) {
+        if (typeof value === "string" || typeof value === "number") {
+          values[key] = String(value).trim();
+        }
+      }
+    }
+  } catch {
+    for (const line of text.split(/\r?\n/)) {
+      const match = line.match(/^\s*([A-Za-z0-9_.-]+)\s*[:=]\s*(.*?)\s*$/);
+      if (!match) continue;
+      values[match[1]] = match[2].replace(/^['"]|['"]$/g, "").trim();
+    }
+  }
+
+  const directShopDomain = text.match(/[A-Za-z0-9][A-Za-z0-9-]*\.myshopify\.com/)?.[0];
+
+  return {
+    shopDomain:
+      firstCredentialValue(values, [
+        "shopDomain",
+        "shop_domain",
+        "SHOPIFY_SHOP_DOMAIN",
+        "SHOPIFY_STORE_DOMAIN",
+        "domain",
+        "shop",
+      ]) || directShopDomain,
+    clientId: firstCredentialValue(values, [
+      "clientId",
+      "client_id",
+      "SHOPIFY_CLIENT_ID",
+      "apiKey",
+      "api_key",
+    ]),
+    clientSecret: firstCredentialValue(values, [
+      "clientSecret",
+      "client_secret",
+      "SHOPIFY_CLIENT_SECRET",
+      "apiSecret",
+      "api_secret",
+    ]),
+  };
+}
+
+function firstCredentialValue(
+  values: Record<string, string>,
+  keys: string[],
+): string {
+  const entries = new Map(
+    Object.entries(values).map(([key, value]) => [key.toLowerCase(), value]),
+  );
+  for (const key of keys) {
+    const value = entries.get(key.toLowerCase());
+    if (value) return value;
+  }
+  return "";
+}
+
+function formatTokenCountdown(ms: number): string {
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}小时 ${minutes}分 ${seconds}秒`;
+  return `${minutes}分 ${seconds}秒`;
+}
+
 function UnboundView({
   authMode,
   shopDomain,
@@ -3083,6 +3162,68 @@ function UnboundView({
   onTestConnection: () => void;
   onSaveBinding: () => void;
 }) {
+  const credentialFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [credentialFile, setCredentialFile] = useState<File | null>(null);
+  const [credentialFileMessage, setCredentialFileMessage] = useState<string | null>(
+    null,
+  );
+  const [tokenExpiresAt, setTokenExpiresAt] = useState<number | null>(null);
+  const [tokenClock, setTokenClock] = useState(() => Date.now());
+  const tokenRemainingMs =
+    tokenExpiresAt === null ? null : Math.max(0, tokenExpiresAt - tokenClock);
+  const tokenExpired = tokenExpiresAt !== null && tokenRemainingMs === 0;
+
+  useEffect(() => {
+    if (tokenExpiresAt === null) return;
+    const timer = window.setInterval(() => setTokenClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [tokenExpiresAt]);
+
+  async function loadCredentialFileToken() {
+    if (!credentialFile) {
+      setCredentialFileMessage("请选择包含店铺域名、客户端 ID 和客户端密钥的本地文件。");
+      return;
+    }
+    try {
+      const text = await credentialFile.text();
+      const credentials = parseShopifyCredentialFile(text);
+      if (
+        !credentials.shopDomain ||
+        !credentials.clientId ||
+        !credentials.clientSecret
+      ) {
+        setCredentialFileMessage(
+          "文件里需要包含 shopDomain、clientId、clientSecret。",
+        );
+        return;
+      }
+      setCredentialFileMessage("正在向 Shopify 换取 Token...");
+      const res = await fetchWithShopifyDevice(
+        "/api/shopify/client-credentials-token",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(credentials),
+        },
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      const expiresIn = Number(data.expiresIn || 24 * 60 * 60);
+      onShopDomainChange(credentials.shopDomain);
+      onClientIdChange(credentials.clientId);
+      onClientSecretChange(credentials.clientSecret);
+      onAuthModeChange("access_token");
+      onAccessTokenChange(String(data.accessToken || ""));
+      setTokenExpiresAt(Date.now() + Math.max(1, expiresIn) * 1000);
+      setTokenClock(Date.now());
+      setCredentialFileMessage("已获得 Token，右侧可以测试连接或保存。");
+    } catch (e) {
+      setCredentialFileMessage(
+        e instanceof Error ? e.message : "换取 Token 失败。",
+      );
+    }
+  }
+
   return (
     <div className="min-h-[520px] flex items-center justify-center">
       <Card elevated padding="lg" className="w-full max-w-3xl">
@@ -3094,9 +3235,61 @@ function UnboundView({
             <h2 className="text-lg font-semibold text-fg-primary">
               请绑定 Shopify 凭据
             </h2>
-            <p className="mt-2 text-sm text-fg-tertiary leading-relaxed">
-              新版 Dev Dashboard 应用请使用 OAuth 授权安装；旧版自定义应用也可以继续使用 shpat Token。
-            </p>
+            <div className="mt-3 rounded-md border border-border-subtle bg-bg-tertiary p-3 space-y-2">
+              <div className="text-xs font-semibold text-fg-primary">
+                本地文件换 Token
+              </div>
+              <input
+                ref={credentialFileInputRef}
+                type="file"
+                accept=".json,.env,.txt,application/json,text/plain"
+                className="hidden"
+                onChange={(e) => {
+                  setCredentialFile(e.target.files?.[0] || null);
+                  setCredentialFileMessage(null);
+                  setTokenExpiresAt(null);
+                }}
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                fullWidth
+                leftIcon={<FileText size={13} />}
+                onClick={() => credentialFileInputRef.current?.click()}
+              >
+                选择凭据文件
+              </Button>
+              {credentialFile ? (
+                <p className="truncate text-[11px] text-fg-tertiary">
+                  {credentialFile.name}
+                </p>
+              ) : null}
+              <Button
+                size="sm"
+                variant="primary"
+                fullWidth
+                leftIcon={<KeyRound size={13} />}
+                onClick={loadCredentialFileToken}
+              >
+                获得 Token
+              </Button>
+              {tokenRemainingMs !== null ? (
+                <p
+                  className={`text-[11px] leading-relaxed ${
+                    tokenExpired ? "text-amber-600" : "text-fg-tertiary"
+                  }`}
+                >
+                  {tokenExpired
+                    ? "请重新获得 Token"
+                    : `Token 失效倒计时：${formatTokenCountdown(tokenRemainingMs)}`}
+                </p>
+              ) : null}
+              {credentialFileMessage ? (
+                <p className="text-[11px] leading-relaxed text-fg-tertiary">
+                  {credentialFileMessage}
+                </p>
+              ) : null}
+            </div>
             <button
               type="button"
               onClick={onFillTestCredentials}
@@ -4727,21 +4920,32 @@ function ProductFormPanel({
       });
     };
 
+    const toDisplayValue = (value: string) => {
+      const matchedOption = getCategoryMetafieldOptionForValue(
+        value,
+        variantLinkedOptions,
+      );
+      return matchedOption ? getVariantOptionDisplayValue(matchedOption) : value;
+    };
+
     const sourceLabel = getCategoryMetafieldSourceLabel(variantLinkedField);
     for (const item of variantLinkedOptions) {
+      const displayValue = getVariantOptionDisplayValue(item);
       addCandidate(
-        item.value || item.label,
-        getVariantOptionDisplayValue(item),
+        displayValue,
+        displayValue,
         item.attributeName || sourceLabel,
         `official-${item.id}`,
       );
     }
     for (const item of variantLinkedMetafieldValues) {
-      addCandidate(item, item, "已填写", "current");
+      const displayValue = toDisplayValue(item);
+      addCandidate(displayValue, displayValue, "已填写", "current");
     }
     for (const item of variantLinkedMemoryValues) {
       for (const value of splitCategoryMetafieldInputValues(item)) {
-        addCandidate(value, value, "自定义", "custom");
+        const displayValue = toDisplayValue(value);
+        addCandidate(displayValue, displayValue, "自定义", "custom");
       }
     }
     return candidates;
@@ -5022,6 +5226,27 @@ function ProductFormPanel({
 
   function getVariantOptionDisplayValue(item: ShopifyCategoryMetafieldOption) {
     return item.label || item.value;
+  }
+
+  function getVariantOptionValueDisplayValue(
+    value: string,
+    optionMetafieldKey: string,
+  ) {
+    const linkedRow = getCategoryMetafieldRowByKey(optionMetafieldKey);
+    const linkedOptions = linkedRow
+      ? shopifyCategoryMetafields[linkedRow.key]?.options || []
+      : [];
+    const matchedOption = getCategoryMetafieldOptionForValue(value, linkedOptions);
+    return matchedOption ? getVariantOptionDisplayValue(matchedOption) : value;
+  }
+
+  function getVariantOptionValuesDisplayText(
+    value: string,
+    optionMetafieldKey: string,
+  ) {
+    return splitCategoryMetafieldInputValues(value)
+      .map((item) => getVariantOptionValueDisplayValue(item, optionMetafieldKey))
+      .join("\n");
   }
 
   function makeVariantOptionGroupId() {
@@ -5502,10 +5727,14 @@ function ProductFormPanel({
         : "";
     setVariantSizeText(
       existingGroup
-        ? existingGroup.values.join("\n")
+        ? existingGroup.values
+            .map((value) =>
+              getVariantOptionValueDisplayValue(value, nextLinkedKey),
+            )
+            .join("\n")
         : nextOptionName === "Size"
           ? DEFAULT_SIZE_VARIANT_OPTIONS.join("\n")
-          : linkedFieldValue,
+          : getVariantOptionValuesDisplayText(linkedFieldValue, nextLinkedKey),
     );
     setVariantValueDraft("");
     setVariantDialogOpen(true);
@@ -6406,14 +6635,20 @@ function ProductFormPanel({
                           ) : null}
                         </div>
                         <div className="mt-2 flex flex-wrap gap-1.5">
-                          {group.values.map((value) => (
-                            <span
-                              key={value}
-                              className="rounded bg-gray-100 px-2 py-1 text-[11px] font-medium text-gray-800"
-                            >
-                              {value}
-                            </span>
-                          ))}
+                          {group.values.map((value) => {
+                            const displayValue = getVariantOptionValueDisplayValue(
+                              value,
+                              group.optionMetafieldKey,
+                            );
+                            return (
+                              <span
+                                key={value}
+                                className="rounded bg-gray-100 px-2 py-1 text-[11px] font-medium text-gray-800"
+                              >
+                                {displayValue}
+                              </span>
+                            );
+                          })}
                         </div>
                       </button>
                     );
@@ -6434,7 +6669,10 @@ function ProductFormPanel({
                           key={row.id}
                           className="rounded bg-gray-100 px-2 py-1 text-[11px] font-medium text-gray-800"
                         >
-                          {row.size}
+                          {getVariantOptionValueDisplayValue(
+                            row.size,
+                            form.variantOptionMetafieldKey,
+                          )}
                         </span>
                       ))}
                     </div>
@@ -6997,6 +7235,12 @@ function ProductFormPanel({
                     };
                     const selectedValue =
                       backendVariantOptionValues[group.id] || group.optionName;
+                    const selectedDisplayValue = backendVariantOptionValues[group.id]
+                      ? getVariantOptionValueDisplayValue(
+                          backendVariantOptionValues[group.id],
+                          group.optionMetafieldKey,
+                        )
+                      : selectedValue;
                     return (
                       <div key={group.id} className="relative">
                         <button
@@ -7004,13 +7248,17 @@ function ProductFormPanel({
                           className="inline-flex h-7 max-w-[130px] items-center gap-1 rounded-md border border-gray-200 bg-white px-2 text-xs text-gray-800 hover:border-gray-300"
                           onClick={() => toggleBackendDropdown(dropdownKey)}
                         >
-                          <span className="truncate">{selectedValue}</span>
+                          <span className="truncate">{selectedDisplayValue}</span>
                           <ChevronDown size={12} className="shrink-0 text-gray-500" />
                         </button>
                         {isBackendDropdownOpen(dropdownKey) ? (
                           <div className="absolute left-0 top-[calc(100%+6px)] z-50 max-h-60 min-w-[180px] overflow-y-auto rounded-xl border border-gray-200 bg-white p-1 text-sm shadow-xl">
                             {group.values.length ? (
                               group.values.map((value) => {
+                                const displayValue = getVariantOptionValueDisplayValue(
+                                  value,
+                                  group.optionMetafieldKey,
+                                );
                                 const active =
                                   normalizeCategoryMetafieldMemoryValue(
                                     backendVariantOptionValues[group.id] || "",
@@ -7031,7 +7279,9 @@ function ProductFormPanel({
                                       setBackendDropdownKey(null);
                                     }}
                                   >
-                                    <span className="min-w-0 truncate">{value}</span>
+                                    <span className="min-w-0 truncate">
+                                      {displayValue}
+                                    </span>
                                     {active ? <Check size={14} /> : null}
                                   </button>
                                 );
@@ -7173,6 +7423,11 @@ function ProductFormPanel({
                 {variantRows.length ? (
                   variantRows.map((row) => {
                     const rowImageUrl = row.imageUrl || selectedMainMedia?.url;
+                    const rowDisplayLabel = getVariantOptionValueDisplayValue(
+                      row.size,
+                      activeOptionGroup?.optionMetafieldKey ||
+                        form.variantOptionMetafieldKey,
+                    );
                     return (
                       <button
                         key={row.id}
@@ -7191,7 +7446,7 @@ function ProductFormPanel({
                             <ImageIcon size={14} className="text-gray-400" />
                           )}
                         </span>
-                        <span className="min-w-0 truncate">{row.size}</span>
+                        <span className="min-w-0 truncate">{rowDisplayLabel}</span>
                       </button>
                     );
                   })
