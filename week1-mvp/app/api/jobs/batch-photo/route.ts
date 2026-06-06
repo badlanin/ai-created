@@ -357,7 +357,7 @@ export async function POST(req: NextRequest) {
     })();
 
     let poses: PoseRow[] = [];
-    if (shouldGenerateSolidPoses) {
+    if (poseIds.length > 0) {
       const placeholders = poseIds.map(() => "?").join(",");
       poses = db
         .prepare(
@@ -381,26 +381,38 @@ export async function POST(req: NextRequest) {
     // 款式 / 跟高 / 材质固定。每张图 prompt 里注入同一份 → 大幅提升鞋的一致性
     const shoeSpec = pickShoeSpec(garmentAttrs);
 
-    // ─── 解析 extra_pairs → 按 count 展开成多个 item，姿势字段由 prompt 自由填 ───
-    // 每个 scene_id 出 count 张图。姿势是按场景物件自由互动（不绑定 poses 表里的固定姿势）。
+    // ─── 解析 extra_pairs → 按 count 展开成多个 item ───
+    // 有选中姿势时，额外场景按姿势列表轮流绑定；没选姿势时保持自由互动。
     type ExtraItemResolved = {
       scene_id: number;
       scene_name: string;
       scene_image_path: string;
       variant_idx: number; // 这张场景的第几张变体（1..count）
       variant_total: number; // 这张场景总共 count 张
+      pose_id?: number;
+      pose_name?: string;
+      pose_text?: string;
+      pose_type?: string;
     };
     const resolvedExtraItems: ExtraItemResolved[] = [];
     for (const pair of extraPairs) {
       const s = extraScenes.get(pair.scene_id);
       if (!s) continue;
       for (let v = 1; v <= pair.count; v++) {
+        const scenePose =
+          poses.length > 0
+            ? poses[resolvedExtraItems.length % poses.length]
+            : null;
         resolvedExtraItems.push({
           scene_id: s.id,
           scene_name: s.name,
           scene_image_path: s.image_path,
           variant_idx: v,
           variant_total: pair.count,
+          pose_id: scenePose?.id,
+          pose_name: scenePose?.name,
+          pose_text: scenePose?.text,
+          pose_type: scenePose?.type,
         });
       }
     }
@@ -438,8 +450,10 @@ export async function POST(req: NextRequest) {
     const extraItems = resolvedExtraItems.map((it) => ({
       label:
         it.variant_total > 1
-          ? `${it.scene_name} · 变体 ${it.variant_idx}/${it.variant_total}`
-          : it.scene_name,
+          ? `${it.scene_name} · ${it.pose_name ? `${it.pose_name} · ` : ""}变体 ${it.variant_idx}/${it.variant_total}`
+          : it.pose_name
+            ? `${it.scene_name} · ${it.pose_name}`
+            : it.scene_name,
     }));
     const extraTextItemsForJob = resolvedExtraTextItems.map((it) => {
       const shortText =
@@ -621,13 +635,17 @@ async function batchPhotoItemHandler(
     image_scene_count?: number; // 新增：图片场景变体数量（用于分段 idx）
     solid_color_hex?: string | null;
     solid_color_name?: string | null;
-    // 新版：每个 extra item 是"场景 + 变体 idx"，没有绑定 pose
+    // 新版：每个 extra item 是"场景 + 变体 idx"，可选绑定用户选中的 pose
     extra_items?: Array<{
       scene_id: number;
       scene_name: string;
       scene_image_path: string;
       variant_idx: number;
       variant_total: number;
+      pose_id?: number;
+      pose_name?: string;
+      pose_text?: string;
+      pose_type?: string;
     }>;
     // 文字场景 items（与 extra_items 平行，走 buildSceneShootText 路径）
     extra_text_items?: Array<{
@@ -692,19 +710,29 @@ async function batchPhotoItemHandler(
       const it = extraItems[extraIdx];
       sceneNameForPrompt = it.scene_name;
       sceneImagePath = it.scene_image_path;
-      // 新版自由互动姿势：不绑定 poses 表，让模型按场景物件互动
-      // 多张变体用 getVariantCameraHint 给每张钉死镜头预设（角度 / 朝向 / 距离 /
-      // 构图），让模型在该预设下变姿势，不能偷懒回退到默认正面全身
-      const cameraHint = getVariantCameraHint(
-        it.variant_idx,
-        it.variant_total,
-      );
-      pose = {
-        id: 0,
-        name: it.variant_total > 1 ? `变体 ${it.variant_idx}/${it.variant_total}` : "自由互动",
-        text: `按场景图（IMAGE 4）里的家具 / 门 / 桌子 / 道具自然互动，挑 1-2 个物件发生动作（坐 / 倚 / 撑 / 拿 / 触摸 / 走过）。姿势从场景里"长出来"，不要站正中央 + 双手垂直。${cameraHint}`,
-        type: "full",
-      };
+      if (it.pose_id && it.pose_name && it.pose_text && it.pose_type) {
+        pose = {
+          id: it.pose_id,
+          name: it.pose_name,
+          text: `在场景图（IMAGE 4）中保持该姿势：${it.pose_text}`,
+          type: it.pose_type,
+        };
+      } else {
+        // 未选姿势时保持原自由互动逻辑，让模型按场景物件互动。
+        const cameraHint = getVariantCameraHint(
+          it.variant_idx,
+          it.variant_total,
+        );
+        pose = {
+          id: 0,
+          name:
+            it.variant_total > 1
+              ? `变体 ${it.variant_idx}/${it.variant_total}`
+              : "自由互动",
+          text: `按场景图（IMAGE 4）里的家具 / 门 / 桌子 / 道具自然互动，挑 1-2 个物件发生动作（坐 / 倚 / 撑 / 拿 / 触摸 / 走过）。姿势从场景里"长出来"，不要站正中央 + 双手垂直。${cameraHint}`,
+          type: "full",
+        };
+      }
     } else if (extraPairs && extraPairs[extraIdx]) {
       // 老 job 兜底：保留原 pose
       const pair = extraPairs[extraIdx];
