@@ -614,6 +614,24 @@ Output should look like a clean e-commerce product-on-model photograph
 shot in a studio with this exact backdrop color.`;
 }
 
+function buildSelectedPoseSceneInstruction(): string {
+  return `══════════════════════════════════════════════════════════
+🔒 SELECTED POSE LOCK — no random pose
+══════════════════════════════════════════════════════════
+
+The pose specified in the 【任务】 section is the highest-priority instruction.
+- Do NOT replace it with a random editorial pose.
+- Do NOT switch to sitting / leaning / walking / touching props unless the selected pose explicitly says so.
+- The scene image is the background/location reference only.
+- Keep the selected body pose, limb placement, body orientation, and full-body framing as faithfully as possible.
+
+Scene consistency:
+- Background must match IMAGE 4 in architecture, furniture, lighting direction, color temperature, and atmosphere.
+- Model scale must be physically plausible relative to doors / chairs / tables / windows.
+- The model, dress, fabric, color, hair, and face must remain consistent with the reference images.
+- Keep the full garment visible unless the selected pose itself requires a closer crop.`;
+}
+
 async function batchPhotoItemHandler(
   ctx: HandlerContext,
   outputsDir: string,
@@ -706,11 +724,13 @@ async function batchPhotoItemHandler(
     // 优先用新版 extra_items；老 job 的 params 走 extra_pairs 兜底
     const extraItems = p.extra_items;
     const extraPairs = p.extra_pairs;
+    let hasSelectedPose = false;
     if (extraItems && extraItems[extraIdx]) {
       const it = extraItems[extraIdx];
       sceneNameForPrompt = it.scene_name;
       sceneImagePath = it.scene_image_path;
       if (it.pose_id && it.pose_name && it.pose_text && it.pose_type) {
+        hasSelectedPose = true;
         pose = {
           id: it.pose_id,
           name: it.pose_name,
@@ -736,6 +756,7 @@ async function batchPhotoItemHandler(
     } else if (extraPairs && extraPairs[extraIdx]) {
       // 老 job 兜底：保留原 pose
       const pair = extraPairs[extraIdx];
+      hasSelectedPose = true;
       pose = {
         id: pair.pose_id,
         name: pair.pose_name,
@@ -747,7 +768,9 @@ async function batchPhotoItemHandler(
     } else {
       throw new Error(`extra item[${extraIdx}] 丢失`);
     }
-    framingBlock = FRAMING_TIGHT_SINGLE;
+    framingBlock = hasSelectedPose
+      ? buildSelectedPoseSceneInstruction()
+      : FRAMING_TIGHT_SINGLE;
   } else {
     // 文字场景：可选附带 scene image；没有图时只按文字生成。
     const textIdx = idx - solidCount - imageSceneCount;
