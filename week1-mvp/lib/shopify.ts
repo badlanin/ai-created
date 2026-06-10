@@ -96,6 +96,7 @@ export type ShopifyProductDraftInput = {
   compareAtPrice?: string;
   price?: string;
   inventory?: string;
+  taxable?: boolean;
   requiresShipping?: boolean;
   weight?: string;
   weightUnit?: "GRAMS" | "KILOGRAMS" | "OUNCES" | "POUNDS";
@@ -2639,7 +2640,9 @@ export async function syncShopifyProduct(
     mediaIdBySource,
     fallbackMediaIds,
   );
-  const variantInput: Record<string, unknown> = {};
+  const variantInput: Record<string, unknown> = {
+    taxable: input.taxable === true,
+  };
   if (firstVariant?.id) variantInput.id = firstVariant.id;
   const compareAtPrice = normalizePrice(input.compareAtPrice);
   const price = normalizeVariantPrice(firstVariantDraft?.price, input.price);
@@ -2709,6 +2712,7 @@ export async function syncShopifyProduct(
           variant,
           productOptionDrafts,
         ),
+        taxable: input.taxable === true,
       };
       const variantPrice = normalizeVariantPrice(variant.price, input.price);
       if (variantPrice) inputVariant.price = variantPrice;

@@ -163,6 +163,7 @@ type ProductForm = {
   compareAtPrice: string;
   price: string;
   inventory: string;
+  taxable: boolean;
   requiresShipping: boolean;
   weight: string;
   weightUnit: ProductWeightUnit;
@@ -502,6 +503,7 @@ const EMPTY_FORM: ProductForm = {
   compareAtPrice: "",
   price: "",
   inventory: "",
+  taxable: false,
   requiresShipping: true,
   weight: "0.0",
   weightUnit: "GRAMS",
@@ -520,11 +522,49 @@ const EMPTY_FORM: ProductForm = {
   categoryTargetGender: "",
   seoTitle: "",
   seoDescription: "",
-  variantOptionName: "Size",
-  variantOptionMetafieldKey: "",
-  variantGroupByOptionName: "",
+  variantOptionName: "size",
+  variantOptionMetafieldKey: "categorySize",
+  variantGroupByOptionName: "size",
   publicationIds: [],
 };
+
+function buildDefaultSizeVariantRows(
+  form: Pick<ProductForm, "sku" | "price" | "inventory"> = EMPTY_FORM,
+): ProductVariantRow[] {
+  return DEFAULT_SIZE_VARIANT_OPTIONS.map((size, index) => ({
+    id: `variant-default-size-${index}`,
+    size,
+    sku: variantSkuFromProductSku(form.sku, size, index),
+    price: form.price || "0.00",
+    inventory: form.inventory || "",
+    selected: true,
+    isMainImage: true,
+    imageUrl: "",
+    imageAlt: size,
+    linkedMetafieldValue: "",
+    optionValues: [
+      {
+        optionName: "size",
+        optionMetafieldKey: "categorySize",
+        value: size,
+        linkedMetafieldValue: "",
+      },
+    ],
+  }));
+}
+
+function buildDefaultSizeVariantOptionGroup(
+  form: Pick<ProductForm, "sku" | "price" | "inventory"> = EMPTY_FORM,
+): ProductVariantOptionGroup {
+  const rows = buildDefaultSizeVariantRows(form);
+  return {
+    id: "variant-option-default-size",
+    optionName: "size",
+    optionMetafieldKey: "categorySize",
+    values: DEFAULT_SIZE_VARIANT_OPTIONS,
+    rows,
+  };
+}
 
 const SHOPIFY_CATEGORY_OPTIONS = [
   {
@@ -1155,6 +1195,7 @@ function mapKeyValueTextToProductForm(value: string): Partial<ProductForm> {
     compareAtPrice: ["原价", "划线价", "吊牌价", "Compare at price", "Original price"],
     price: ["售价", "销售价", "价格", "Price", "Sale price"],
     inventory: ["库存", "Inventory"],
+    taxable: ["征税", "收取税款", "Taxable", "Charge tax"],
     requiresShipping: ["实体产品", "需要发货", "Requires shipping", "Physical product"],
     weight: ["产品重量", "重量", "Weight", "Product weight"],
     weightUnit: ["重量单位", "Weight unit", "WeightUnit"],
@@ -1218,6 +1259,11 @@ function mapKeyValueTextToProductForm(value: string): Partial<ProductForm> {
     if (field === "requiresShipping") {
       const parsed = parseBooleanLike(extracted);
       if (parsed !== null) result.requiresShipping = parsed;
+      continue;
+    }
+    if (field === "taxable") {
+      const parsed = parseBooleanLike(extracted);
+      if (parsed !== null) result.taxable = parsed;
       continue;
     }
     if (field === "weight") {
@@ -2049,6 +2095,15 @@ function variantSku(baseSku: string, size: string, index: number): string {
   return `${base}-${suffix}`;
 }
 
+function variantSkuFromProductSku(
+  baseSku: string,
+  size: string,
+  index: number,
+): string {
+  const cleanedBaseSku = baseSku.trim();
+  return cleanedBaseSku || variantSku(baseSku, size, index);
+}
+
 function normalizePriceForCompare(value?: string): string {
   const cleaned = String(value || "").replace(/[^\d.]/g, "");
   if (!cleaned) return "";
@@ -2068,6 +2123,31 @@ function variantPriceForSync(variantPrice: string, productPrice: string): string
   return isDefaultVariantPrice(variantPrice, productPrice)
     ? productPrice
     : variantPrice;
+}
+
+function optionLabelsForAi(
+  options: ShopifyProductOrganizationOption[],
+  limit: number,
+): string[] {
+  const seen = new Set<string>();
+  const values: string[] = [];
+  for (const option of options) {
+    const value = (option.label || option.value || "").trim();
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    values.push(value);
+    if (values.length >= limit) break;
+  }
+  return values;
+}
+
+function countryLabelsForAi(options: ShopifyCustomsOption[]): string[] {
+  return options
+    .map((option) => (option.label || option.value || "").trim())
+    .filter(Boolean)
+    .slice(0, 260);
 }
 
 export default function ProductListingPage() {
@@ -2100,10 +2180,12 @@ export default function ProductListingPage() {
   const [aiRawText, setAiRawText] = useState("");
   const [cleanedAiText, setCleanedAiText] = useState("");
   const [form, setForm] = useState<ProductForm>(EMPTY_FORM);
-  const [variantRows, setVariantRows] = useState<ProductVariantRow[]>([]);
+  const [variantRows, setVariantRows] = useState<ProductVariantRow[]>(
+    buildDefaultSizeVariantRows,
+  );
   const [variantOptionGroups, setVariantOptionGroups] = useState<
     ProductVariantOptionGroup[]
-  >([]);
+  >(() => [buildDefaultSizeVariantOptionGroup()]);
   const [categoryMetafieldCandidatesForAi, setCategoryMetafieldCandidatesForAi] =
     useState<CategoryMetafieldMemory>({});
   const [syncState, setSyncState] = useState<SyncState>("idle");
@@ -2483,8 +2565,8 @@ export default function ProductListingPage() {
     setAiRawText("");
     setCleanedAiText("");
     setForm(EMPTY_FORM);
-    setVariantRows([]);
-    setVariantOptionGroups([]);
+    setVariantRows(buildDefaultSizeVariantRows());
+    setVariantOptionGroups([buildDefaultSizeVariantOptionGroup()]);
     setCategoryMetafieldCandidatesForAi({});
     setSyncState("idle");
     setLastAction("已清空产品上架内容");
@@ -2578,6 +2660,104 @@ export default function ProductListingPage() {
     setLastAction(`已删除预设提示词：${target.name}`);
   }
 
+  async function loadAiShopifyReferenceOptions() {
+    const warnings: string[] = [];
+    let productOrganizationCandidates:
+      | {
+          productTypes: string[];
+          vendors: string[];
+          collections: string[];
+          commonTags: string[];
+          tags: string[];
+        }
+      | undefined;
+    let customsCandidates:
+      | {
+          countries: string[];
+          currentCountryCode: string;
+          harmonizedSystemCode: string;
+        }
+      | undefined = {
+        countries: [],
+        currentCountryCode: normalizeCountryCodeOfOrigin(
+          form.countryCodeOfOrigin,
+        ),
+        harmonizedSystemCode: sanitizeHsCode(form.harmonizedSystemCode),
+      };
+
+    if (!hasActiveShopifyBinding) {
+      return { productOrganizationCandidates, customsCandidates, warnings };
+    }
+
+    const requests: Promise<void>[] = [];
+    if (
+      form.shopifyCategoryId &&
+      form.shopifyCategoryId !== SHOPIFY_UNCATEGORIZED_CATEGORY_ID
+    ) {
+      requests.push(
+        fetchWithShopifyDevice(
+          `/api/shopify/product-organization-options?${new URLSearchParams({
+            categoryId: form.shopifyCategoryId,
+          }).toString()}`,
+        )
+          .then(async (res) => {
+            const data = (await res.json()) as Partial<
+              ShopifyProductOrganizationOptionsState
+            > & {
+              warnings?: string[];
+              error?: string;
+            };
+            if (!res.ok) throw new Error(data.error || res.statusText);
+            productOrganizationCandidates = {
+              productTypes: optionLabelsForAi(data.productTypes || [], 60),
+              vendors: optionLabelsForAi(data.vendors || [], 60),
+              collections: optionLabelsForAi(data.collections || [], 120),
+              commonTags: optionLabelsForAi(data.commonTags || [], 60),
+              tags: optionLabelsForAi(data.tags || [], 160),
+            };
+            warnings.push(...(data.warnings || []).filter(Boolean));
+          })
+          .catch((e) => {
+            warnings.push(
+              `Shopify 产品组织候选读取失败：${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            );
+          }),
+      );
+    }
+
+    requests.push(
+      fetchWithShopifyDevice("/api/shopify/customs-options")
+        .then(async (res) => {
+          const data = (await res.json()) as {
+            countries?: ShopifyCustomsOption[];
+            warnings?: string[];
+            error?: string;
+          };
+          if (!res.ok) throw new Error(data.error || res.statusText);
+          customsCandidates = {
+            countries: countryLabelsForAi(data.countries || []),
+            currentCountryCode: normalizeCountryCodeOfOrigin(
+              form.countryCodeOfOrigin,
+            ),
+            harmonizedSystemCode: sanitizeHsCode(form.harmonizedSystemCode),
+          };
+          warnings.push(...(data.warnings || []).filter(Boolean));
+        })
+        .catch((e) => {
+          warnings.push(
+            `Shopify 海关国家候选读取失败：${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          );
+        }),
+    );
+
+    await Promise.all(requests);
+    return { productOrganizationCandidates, customsCandidates, warnings };
+  }
+
   async function generateAiOutput() {
     const prompt = sanitizeAiOutput(aiPromptText);
     if (!prompt) {
@@ -2589,6 +2769,7 @@ export default function ProductListingPage() {
     setLastAction("正在根据提示词解析商品信息");
     try {
       const categoryMetafieldCandidates = categoryMetafieldCandidatesForAi;
+      const shopifyReferences = await loadAiShopifyReferenceOptions();
       const res = await fetch("/api/product-listing/ai-output", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2604,6 +2785,9 @@ export default function ProductListingPage() {
             name: form.shopifyCategoryName,
           },
           categoryMetafieldCandidates,
+          productOrganizationCandidates:
+            shopifyReferences.productOrganizationCandidates,
+          customsCandidates: shopifyReferences.customsCandidates,
         }),
       });
       const data = (await res.json()) as {
@@ -2646,45 +2830,24 @@ export default function ProductListingPage() {
   function applyAiToForm() {
     const cleaned = sanitizeAiOutput(aiRawText);
     const parsed = parseAiOutputToForm(cleaned);
-    const previousPrice = form.price;
-    setForm((prev) => {
-      const next = {
-        ...prev,
-        ...parsed,
-        status: prev.status,
-      };
-      if (
-        !parsed.shopifyCategoryId &&
-        (!prev.shopifyCategoryId ||
-          prev.shopifyCategoryId === SHOPIFY_UNCATEGORIZED_CATEGORY_ID)
-      ) {
-        const category = inferShopifyCategoryFromForm(next);
-        if (category) {
-          next.shopifyCategoryId = category.id;
-          next.shopifyCategoryName = category.zh;
-        }
+    const nextForm: ProductForm = {
+      ...EMPTY_FORM,
+      ...parsed,
+    };
+    if (
+      !parsed.shopifyCategoryId &&
+      (!nextForm.shopifyCategoryId ||
+        nextForm.shopifyCategoryId === SHOPIFY_UNCATEGORIZED_CATEGORY_ID)
+    ) {
+      const category = inferShopifyCategoryFromForm(nextForm);
+      if (category) {
+        nextForm.shopifyCategoryId = category.id;
+        nextForm.shopifyCategoryName = category.zh;
       }
-      return next;
-    });
-    if (parsed.price) {
-      setVariantRows((rows) =>
-        rows.map((row) =>
-          isDefaultVariantPrice(row.price, previousPrice)
-            ? { ...row, price: parsed.price || "" }
-            : row,
-        ),
-      );
-      setVariantOptionGroups((groups) =>
-        groups.map((group) => ({
-          ...group,
-          rows: group.rows.map((row) =>
-            isDefaultVariantPrice(row.price, previousPrice)
-              ? { ...row, price: parsed.price || "" }
-              : row,
-          ),
-        })),
-      );
     }
+    setForm(nextForm);
+    setVariantRows(buildDefaultSizeVariantRows(nextForm));
+    setVariantOptionGroups([buildDefaultSizeVariantOptionGroup(nextForm)]);
     setAiRawText(cleaned);
     setCleanedAiText(cleaned);
     setSyncState("idle");
@@ -2729,7 +2892,7 @@ export default function ProductListingPage() {
               size: row.size,
               linkedMetafieldValue: row.linkedMetafieldValue,
               optionValues: row.optionValues,
-              sku: row.sku || variantSku(form.sku, row.size, index),
+              sku: row.sku || variantSkuFromProductSku(form.sku, row.size, index),
               price: variantPriceForSync(row.price, form.price),
               inventory: row.inventory,
               imageUrl:
@@ -4858,6 +5021,8 @@ function ProductFormPanel({
     useState("");
   const [backendImagePickerSelectionAlt, setBackendImagePickerSelectionAlt] =
     useState("");
+  const [backendImagePickerTargetRowId, setBackendImagePickerTargetRowId] =
+    useState<string | null>(null);
   const [backendVariantOptionValues, setBackendVariantOptionValues] = useState<
     Record<string, string>
   >({});
@@ -5377,6 +5542,20 @@ function ProductFormPanel({
   }, [shopifyBindingKey]);
 
   function update<K extends keyof ProductForm>(key: K, value: ProductForm[K]) {
+    if (key === "sku") {
+      const nextSku = String(value || "");
+      setForm((prev) => ({ ...prev, sku: nextSku }));
+      setVariantRows((rows) =>
+        rows.map((row) => ({ ...row, sku: nextSku })),
+      );
+      setVariantOptionGroups((groups) =>
+        groups.map((group) => ({
+          ...group,
+          rows: group.rows.map((row) => ({ ...row, sku: nextSku })),
+        })),
+      );
+      return;
+    }
     if (key === "inventory") {
       setForm((prev) => {
         const nextInventory = String(value || "");
@@ -5713,7 +5892,7 @@ function ProductFormPanel({
             existing?.linkedMetafieldValue ||
             "",
           optionValues: selections,
-          sku: existing?.sku || variantSku(form.sku, label, rows.length),
+          sku: existing?.sku || variantSkuFromProductSku(form.sku, label, rows.length),
           price: existing?.price || form.price || "0.00",
           inventory: existing ? existing.inventory : form.inventory || "",
           selected: existing?.selected ?? true,
@@ -5760,7 +5939,7 @@ function ProductFormPanel({
             linkedMetafieldValue,
           },
         ],
-        sku: existing?.sku || variantSku(form.sku, size, index),
+        sku: existing?.sku || variantSkuFromProductSku(form.sku, size, index),
         price: existing?.price || form.price || "0.00",
         inventory: existing ? existing.inventory : form.inventory || "",
         selected: existing?.selected ?? true,
@@ -6094,6 +6273,7 @@ function ProductFormPanel({
     setBackendImageSearch("");
     setBackendImagePickerSelectionUrl("");
     setBackendImagePickerSelectionAlt("");
+    setBackendImagePickerTargetRowId(null);
     setBackendImagePickerOpen(false);
     setBackendSellingContextPanel(null);
     setBackendSellingContextError("");
@@ -6115,6 +6295,7 @@ function ProductFormPanel({
     setBackendImageSearch("");
     setBackendImagePickerSelectionUrl("");
     setBackendImagePickerSelectionAlt("");
+    setBackendImagePickerTargetRowId(null);
     setBackendImagePickerOpen(false);
     setBackendSellingContextPanel(null);
     setBackendSelectedSalesChannelIds([]);
@@ -6126,18 +6307,48 @@ function ProductFormPanel({
     setBackendImageSearch("");
     setBackendImagePickerSelectionUrl(backendVariantImageUrl);
     setBackendImagePickerSelectionAlt(backendVariantImageAlt);
+    setBackendImagePickerTargetRowId(null);
+    setBackendImagePickerOpen(true);
+  }
+
+  function openVariantRowImagePicker(row: ProductVariantRow) {
+    const currentUrl = row.imageUrl || selectedMainMedia?.url || "";
+    const currentAlt = row.imageAlt || selectedMainMedia?.alt || row.size;
+    setBackendImageSearch("");
+    setBackendImagePickerSelectionUrl(currentUrl);
+    setBackendImagePickerSelectionAlt(currentAlt);
+    setBackendImagePickerTargetRowId(row.id);
     setBackendImagePickerOpen(true);
   }
 
   function closeBackendImagePicker() {
     setBackendImagePickerOpen(false);
     setBackendImageSearch("");
+    setBackendImagePickerTargetRowId(null);
     setBackendImagePickerSelectionUrl(backendVariantImageUrl);
     setBackendImagePickerSelectionAlt(backendVariantImageAlt);
   }
 
   function confirmBackendImagePicker() {
     if (!backendImagePickerSelectionUrl) return;
+    if (backendImagePickerTargetRowId) {
+      const targetRowId = backendImagePickerTargetRowId;
+      setCurrentVariantRows((prev) =>
+        prev.map((row) =>
+          row.id === targetRowId
+            ? {
+                ...row,
+                imageUrl: backendImagePickerSelectionUrl,
+                imageAlt: backendImagePickerSelectionAlt || row.imageAlt,
+              }
+            : row,
+        ),
+      );
+      setBackendImagePickerTargetRowId(null);
+      setBackendImagePickerOpen(false);
+      setBackendImageSearch("");
+      return;
+    }
     setBackendVariantImageUrl(backendImagePickerSelectionUrl);
     setBackendVariantImageAlt(backendImagePickerSelectionAlt);
     setBackendImagePickerOpen(false);
@@ -6192,6 +6403,29 @@ function ProductFormPanel({
     );
   }
 
+  function getSelectableBackendSalesChannelIds() {
+    return backendSalesChannels
+      .filter((channel) => !channel.disabled)
+      .map((channel) => channel.id);
+  }
+
+  function areAllBackendSalesChannelsSelected() {
+    const ids = getSelectableBackendSalesChannelIds();
+    return (
+      ids.length > 0 &&
+      ids.every((id) => backendSelectedSalesChannelIds.includes(id))
+    );
+  }
+
+  function setAllBackendSalesChannels(selected: boolean) {
+    const ids = getSelectableBackendSalesChannelIds();
+    setBackendSelectedSalesChannelIds((prev) => {
+      if (selected) return Array.from(new Set([...prev, ...ids]));
+      const idSet = new Set(ids);
+      return prev.filter((id) => !idSet.has(id));
+    });
+  }
+
   function toggleBackendCatalog(id: string) {
     setBackendSelectedCatalogIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
@@ -6199,7 +6433,14 @@ function ProductFormPanel({
   }
 
   function getBackendSalesChannelLabel() {
-    if (!backendSelectedSalesChannelIds.length) return "所有渠道";
+    const selectableIds = getSelectableBackendSalesChannelIds();
+    if (
+      selectableIds.length > 0 &&
+      selectableIds.every((id) => backendSelectedSalesChannelIds.includes(id))
+    ) {
+      return "所有渠道";
+    }
+    if (!backendSelectedSalesChannelIds.length) return "未选择渠道";
     if (backendSelectedSalesChannelIds.length === 1) {
       return (
         backendSalesChannels.find(
@@ -6237,6 +6478,70 @@ function ProductFormPanel({
     return Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean)));
   }
 
+  function renderSwitchControl(active: boolean, disabled = false) {
+    return (
+      <span
+        className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
+          disabled
+            ? "bg-gray-200"
+            : active
+              ? "bg-gray-900"
+              : "bg-gray-300"
+        }`}
+        aria-hidden="true"
+      >
+        <span
+          className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+            active ? "translate-x-4" : "translate-x-0.5"
+          }`}
+        />
+      </span>
+    );
+  }
+
+  function renderBackendSalesChannelRow(
+    channel: ShopifySalesChannelOption,
+    mode: "menu" | "panel" = "panel",
+  ) {
+    const active = backendSelectedSalesChannelIds.includes(channel.id);
+    const disabled = Boolean(channel.disabled);
+    return (
+      <button
+        key={`${channel.publicationId}-${channel.id}`}
+        type="button"
+        role="switch"
+        aria-checked={active}
+        disabled={disabled}
+        className={`flex w-full items-center justify-between gap-3 text-left transition ${
+          mode === "menu"
+            ? "rounded-md px-3 py-2 text-sm"
+            : "border-b border-gray-200 px-3 py-3 text-sm last:border-b-0"
+        } ${
+          disabled
+            ? "cursor-not-allowed bg-gray-50 text-gray-400"
+            : "bg-white text-gray-800 hover:bg-gray-50"
+        }`}
+        onClick={() => toggleBackendSalesChannel(channel.id)}
+      >
+        <span className="min-w-0">
+          <span
+            className={`block font-medium ${
+              disabled ? "text-gray-400" : "text-gray-900"
+            } ${mode === "menu" ? "truncate" : ""}`}
+          >
+            {channel.name}
+          </span>
+          {channel.disabledReason ? (
+            <span className="mt-0.5 block text-[11px] text-gray-500">
+              {channel.disabledReason}
+            </span>
+          ) : null}
+        </span>
+        {renderSwitchControl(active, disabled)}
+      </button>
+    );
+  }
+
   async function loadBackendSellingContexts(panel: ShopifySellingContextPanel) {
     setBackendSellingContextPanel(panel);
     if (backendSellingContextsLoaded) return;
@@ -6249,6 +6554,12 @@ function ProductFormPanel({
       if (!res.ok) throw new Error(data.error || res.statusText);
       setBackendSalesChannels(data.channels || []);
       setBackendCatalogs(data.catalogs || []);
+      setBackendSelectedSalesChannelIds((prev) => {
+        if (prev.length) return prev;
+        return (data.channels || [])
+          .filter((channel) => !channel.disabled)
+          .map((channel) => channel.id);
+      });
       setBackendSellingContextError((data.warnings || []).join("；"));
       setBackendSellingContextsLoaded(true);
     } catch (e) {
@@ -6312,7 +6623,9 @@ function ProductFormPanel({
       size: optionValue,
       linkedMetafieldValue,
       optionValues: optionSelections,
-      sku: backendVariantSku || variantSku(form.sku, optionValue, sourceRows.length),
+      sku:
+        backendVariantSku ||
+        variantSkuFromProductSku(form.sku, optionValue, sourceRows.length),
       price: backendVariantPrice || form.price || "0.00",
       inventory: backendVariantInventory || form.inventory || "",
       selected: true,
@@ -6938,32 +7251,72 @@ function ProductFormPanel({
             </div>
           </div>
           <div className="max-w-[490px] rounded-md border border-gray-200 bg-white">
-            <button
-              type="button"
-              className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs font-medium text-gray-700 hover:bg-gray-50"
-              onClick={() => setSkuExpanded((value) => !value)}
-            >
-              <span className="flex min-w-0 flex-wrap items-center gap-1.5">
-                <span className="rounded bg-gray-100 px-2 py-1 text-[11px] font-medium text-gray-700">
+            <div className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50">
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  className="rounded bg-gray-100 px-2 py-1 text-[11px] font-medium text-gray-700 hover:bg-gray-200"
+                  onClick={() => setSkuExpanded((value) => !value)}
+                >
                   SKU
-                </span>
-                <span className="rounded bg-gray-100 px-2 py-1 text-[11px] font-medium text-gray-700">
+                </button>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={form.taxable}
+                  className="flex shrink-0 items-center gap-2 rounded bg-gray-100 px-2 py-1 text-[11px] font-medium text-gray-700 hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  onClick={() => update("taxable", !form.taxable)}
+                >
+                  <span>征税</span>
+                  <span
+                    className={`relative h-5 w-9 overflow-hidden rounded-full transition-colors ${
+                      form.taxable ? "bg-gray-900" : "bg-gray-300"
+                    }`}
+                    aria-hidden="true"
+                  >
+                    <span
+                      className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                        form.taxable ? "translate-x-4" : "translate-x-0"
+                      }`}
+                    />
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="rounded bg-gray-100 px-2 py-1 text-[11px] font-medium text-gray-700 hover:bg-gray-200"
+                  onClick={() => setSkuExpanded((value) => !value)}
+                >
                   条码
-                </span>
-                <span className="rounded bg-gray-100 px-2 py-1 text-[11px] font-medium text-gray-700">
+                </button>
+                <button
+                  type="button"
+                  className="rounded bg-gray-100 px-2 py-1 text-[11px] font-medium text-gray-700 hover:bg-gray-200"
+                  onClick={() => setSkuExpanded((value) => !value)}
+                >
                   缺货时继续销售
-                </span>
-                <span className="rounded bg-gray-100 px-2 py-1 text-[11px] font-medium text-gray-700">
+                </button>
+                <button
+                  type="button"
+                  className="rounded bg-gray-100 px-2 py-1 text-[11px] font-medium text-gray-700 hover:bg-gray-200"
+                  onClick={() => setSkuExpanded((value) => !value)}
+                >
                   关闭
-                </span>
-              </span>
-              <ChevronDown
-                size={14}
-                className={`text-gray-400 transition-transform ${
-                  skuExpanded ? "rotate-180" : ""
-                }`}
-              />
-            </button>
+                </button>
+              </div>
+              <button
+                type="button"
+                className="shrink-0 text-gray-400 transition-colors hover:text-gray-700"
+                aria-label={skuExpanded ? "收起 SKU" : "展开 SKU"}
+                onClick={() => setSkuExpanded((value) => !value)}
+              >
+                <ChevronDown
+                  size={14}
+                  className={`transition-transform ${
+                    skuExpanded ? "rotate-180" : ""
+                  }`}
+                />
+              </button>
+            </div>
             {skuExpanded ? (
               <div className="border-t border-gray-100 p-3">
                 <Input
@@ -7520,7 +7873,13 @@ function ProductFormPanel({
                           />
                         </div>
                         <div className="flex items-center justify-center">
-                          <div className="flex h-14 w-12 items-center justify-center overflow-hidden rounded-md border border-gray-200 bg-gray-50">
+                          <button
+                            type="button"
+                            className="flex h-14 w-12 items-center justify-center overflow-hidden rounded-md border border-gray-200 bg-gray-50 transition hover:border-blue-300 hover:ring-2 hover:ring-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            aria-label={`选择 ${displayRow.label} 图片`}
+                            title="选择图片"
+                            onClick={() => openVariantRowImagePicker(row)}
+                          >
                             {variantImageUrl ? (
                               // eslint-disable-next-line @next/next/no-img-element
                               <img
@@ -7531,7 +7890,7 @@ function ProductFormPanel({
                             ) : (
                               <ImageIcon size={16} className="text-gray-400" />
                             )}
-                          </div>
+                          </button>
                         </div>
                         <div className="min-w-0 pr-3">
                           <div className="whitespace-normal break-words text-xs font-semibold leading-4 text-gray-900">
@@ -7697,7 +8056,6 @@ function ProductFormPanel({
             <Button
               size="sm"
               variant="primary"
-              disabled={!backendVariantNormalizedValue || backendVariantValueExists}
               onClick={confirmBackendVariantEditor}
             >
               保存
@@ -7845,37 +8203,29 @@ function ProductFormPanel({
                             正在读取 Shopify...
                           </div>
                         ) : backendSalesChannels.length ? (
-                          backendSalesChannels.map((channel) => {
-                            const active = backendSelectedSalesChannelIds.includes(
-                              channel.id,
-                            );
-                            const disabled = Boolean(channel.disabled);
-                            return (
-                              <button
-                                key={`${channel.publicationId}-${channel.id}`}
-                                type="button"
-                                disabled={disabled}
-                                className={`flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left text-sm ${
-                                  disabled
-                                    ? "cursor-not-allowed text-gray-400"
-                                    : active
-                                    ? "bg-gray-100 font-semibold text-gray-950"
-                                    : "text-gray-800 hover:bg-gray-50"
-                                }`}
-                                onClick={() => toggleBackendSalesChannel(channel.id)}
-                              >
-                                <span className="min-w-0">
-                                  <span className="block truncate">{channel.name}</span>
-                                  {channel.disabledReason ? (
-                                    <span className="mt-0.5 block truncate text-[11px] text-gray-400">
-                                      {channel.disabledReason}
-                                    </span>
-                                  ) : null}
-                                </span>
-                                {active ? <Check size={14} /> : null}
-                              </button>
-                            );
-                          })
+                          <>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={areAllBackendSalesChannelsSelected()}
+                              disabled={!getSelectableBackendSalesChannelIds().length}
+                              className="flex w-full items-center justify-between gap-3 border-b border-gray-100 px-3 py-2 text-left text-sm font-medium text-gray-900 disabled:cursor-not-allowed disabled:text-gray-400"
+                              onClick={() =>
+                                setAllBackendSalesChannels(
+                                  !areAllBackendSalesChannelsSelected(),
+                                )
+                              }
+                            >
+                              <span>销售渠道</span>
+                              {renderSwitchControl(
+                                areAllBackendSalesChannelsSelected(),
+                                !getSelectableBackendSalesChannelIds().length,
+                              )}
+                            </button>
+                            {backendSalesChannels.map((channel) =>
+                              renderBackendSalesChannelRow(channel, "menu"),
+                            )}
+                          </>
                         ) : (
                           <div className="px-3 py-2 text-xs text-gray-500">
                             暂无销售渠道
@@ -8052,6 +8402,26 @@ function ProductFormPanel({
                           ? "Shopify 销售渠道"
                           : "Shopify 目录"}
                       </div>
+                      {backendSellingContextPanel === "channels" ? (
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={areAllBackendSalesChannelsSelected()}
+                          disabled={!getSelectableBackendSalesChannelIds().length}
+                          className="ml-auto inline-flex items-center gap-2 text-xs font-medium text-gray-700 disabled:cursor-not-allowed disabled:text-gray-400"
+                          onClick={() =>
+                            setAllBackendSalesChannels(
+                              !areAllBackendSalesChannelsSelected(),
+                            )
+                          }
+                        >
+                          <span>销售渠道</span>
+                          {renderSwitchControl(
+                            areAllBackendSalesChannelsSelected(),
+                            !getSelectableBackendSalesChannelIds().length,
+                          )}
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         className="text-xs font-medium text-gray-500 hover:text-gray-900"
@@ -8287,7 +8657,7 @@ function ProductFormPanel({
                     </span>
                     <span className="rounded-md bg-gray-200 px-2 py-1">单价</span>
                     <span className="rounded-md bg-gray-200 px-2 py-1">
-                      收取税款 是
+                      收取税款 {form.taxable ? "是" : "否"}
                     </span>
                   </div>
                 </div>
@@ -8341,13 +8711,27 @@ function ProductFormPanel({
                     </label>
                     <div className="flex h-9 items-center rounded-md border border-gray-300 bg-white">
                       <input
-                        readOnly
-                        value="1500.0"
-                        className="min-w-0 flex-1 bg-transparent px-3 text-sm text-gray-700 outline-none"
+                        inputMode="decimal"
+                        value={form.weight}
+                        onChange={(e) =>
+                          update("weight", sanitizeWeightInput(e.target.value))
+                        }
+                        placeholder="0.0"
+                        className="min-w-0 flex-1 bg-transparent px-3 text-sm text-gray-900 outline-none"
                       />
-                      <span className="border-l border-gray-200 px-3 text-sm text-gray-600">
-                        g
-                      </span>
+                      <select
+                        value={form.weightUnit}
+                        onChange={(e) =>
+                          update("weightUnit", e.target.value as ProductWeightUnit)
+                        }
+                        className="h-full border-l border-gray-200 bg-transparent px-2 text-sm text-gray-600 outline-none"
+                      >
+                        {PRODUCT_WEIGHT_UNITS.map((unit) => (
+                          <option key={unit.value} value={unit.value}>
+                            {unit.label}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </div>
                 </div>
@@ -8381,7 +8765,7 @@ function ProductFormPanel({
               disabled={!backendImagePickerSelectionUrl}
               onClick={confirmBackendImagePicker}
             >
-              完成
+              {backendImagePickerTargetRowId ? "保存" : "完成"}
             </Button>
           </>
         }

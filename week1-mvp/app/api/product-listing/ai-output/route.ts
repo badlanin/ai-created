@@ -43,6 +43,23 @@ type CategoryMetafieldCandidates = Partial<
   Record<CategoryMetafieldCandidateKey, string[]>
 >;
 
+type ProductOrganizationCandidateKey =
+  | "productTypes"
+  | "vendors"
+  | "collections"
+  | "commonTags"
+  | "tags";
+
+type ProductOrganizationCandidates = Partial<
+  Record<ProductOrganizationCandidateKey, string[]>
+>;
+
+type CustomsCandidates = {
+  countries: string[];
+  currentCountryCode: string;
+  harmonizedSystemCode: string;
+};
+
 const CATEGORY_METAFIELD_CANDIDATE_LABELS: Array<{
   key: CategoryMetafieldCandidateKey;
   outputLabel: string;
@@ -100,6 +117,62 @@ const CATEGORY_METAFIELD_CANDIDATE_LABELS: Array<{
   },
 ];
 
+const PRODUCT_ORGANIZATION_CANDIDATE_LABELS: Array<{
+  key: ProductOrganizationCandidateKey;
+  outputLabel: string;
+  displayLabel: string;
+}> = [
+  { key: "productTypes", outputLabel: "产品类型", displayLabel: "产品类型" },
+  { key: "vendors", outputLabel: "厂商/供应商", displayLabel: "厂商" },
+  { key: "collections", outputLabel: "产品系列", displayLabel: "产品系列" },
+  { key: "commonTags", outputLabel: "常用标记", displayLabel: "常用标记" },
+  { key: "tags", outputLabel: "标记", displayLabel: "标记" },
+];
+
+const REQUIRED_OUTPUT_FIELD_ALIASES: Array<{
+  label: string;
+  aliases: string[];
+}> = [
+  { label: "商品标题", aliases: ["商品标题", "标题", "title"] },
+  { label: "商品描述", aliases: ["商品描述", "描述", "description"] },
+  { label: "产品类型", aliases: ["产品类型", "商品类型", "product type", "product_type"] },
+  { label: "厂商", aliases: ["厂商", "供应商", "vendor"] },
+  { label: "产品系列", aliases: ["产品系列", "商品系列", "系列", "collection", "collections"] },
+  { label: "标记", aliases: ["标记", "标签", "tags", "tag"] },
+  { label: "主色调", aliases: ["主色调", "颜色", "color"] },
+  { label: "面料材质", aliases: ["面料材质", "材质", "material", "fabric"] },
+  { label: "领口设计", aliases: ["领口设计", "领口", "neckline"] },
+  { label: "整体版型", aliases: ["整体版型", "版型", "silhouette"] },
+  { label: "SKU", aliases: ["sku"] },
+  { label: "原价", aliases: ["原价", "划线价", "compare at price", "compare_at_price"] },
+  { label: "售价", aliases: ["售价", "销售价", "价格", "price", "sale price"] },
+  { label: "库存", aliases: ["库存", "inventory"] },
+  { label: "产品重量", aliases: ["产品重量", "重量", "weight", "product weight"] },
+  { label: "原产国家/地区", aliases: ["原产国家/地区", "原产国家", "原产地", "country of origin"] },
+  { label: "HS 编码", aliases: ["HS 编码", "HS编码", "协调制度", "harmonized system", "harmonizedSystemCode"] },
+  { label: "SEO标题", aliases: ["SEO标题", "SEO 标题", "seo title", "seoTitle"] },
+  { label: "SEO描述", aliases: ["SEO描述", "SEO 描述", "seo description", "seoDescription"] },
+];
+
+const FULL_PRODUCT_OUTPUT_FIELDS = [
+  "商品标题",
+  "商品描述",
+  "产品类型",
+  "厂商",
+  "产品系列",
+  "标记",
+  "主色调",
+  "面料材质",
+  "领口设计",
+  "整体版型",
+  "SKU",
+  "原价",
+  "售价",
+  "库存",
+  "SEO标题",
+  "SEO描述",
+];
+
 const PRODUCT_LISTING_SYSTEM_PROMPT = `你是专业的 Shopify 礼服商品上架助手。
 请根据用户提示词和商品图片，生成可直接用于 Shopify 商品页的信息。
 
@@ -108,6 +181,7 @@ const PRODUCT_LISTING_SYSTEM_PROMPT = `你是专业的 Shopify 礼服商品上�
 - 只输出字段内容，不要 Markdown、代码块、解释、寒暄。
 - 使用 key: value 格式，每个字段单独一行。
 - 字段建议包含：商品标题、商品描述、产品类型、供应商、产品系列、标签、主色调、面料材质、领口设计、整体版型、SKU、原价、售价、库存、SEO标题、SEO描述。
+- 用户提示词明确点名要求输出的字段必须逐项输出，不得省略；即使无法确定，也要保留字段名，值可以留空或使用保守值。
 - 不要主动输出 Shopify 类别元字段；只有用户提示词明确要求输出类别元字段、元字段，或明确写出“类别元字段颜色/类别元字段尺寸”等完整类别元字段名时，才输出对应字段。
 - 如果用户提示词要求生成图片，不要在文字输出中编造图片 URL、/assets/outputs 路径、文件名或占位图；图片生成由系统另行处理。
 - 字段名使用中文，字段值可按用户要求使用英文或中文；如果用户没有指定，商品标题、描述、标签和 SEO 信息优先使用英文。
@@ -129,6 +203,8 @@ export async function POST(req: NextRequest) {
         name?: string;
       };
       categoryMetafieldCandidates?: unknown;
+      productOrganizationCandidates?: unknown;
+      customsCandidates?: unknown;
     };
     const prompt = sanitizeText(body.prompt || "");
     if (!prompt) {
@@ -177,6 +253,13 @@ export async function POST(req: NextRequest) {
     const categoryMetafieldCandidates = normalizeCategoryMetafieldCandidates(
       body.categoryMetafieldCandidates,
     );
+    const productOrganizationCandidates =
+      normalizeProductOrganizationCandidates(
+        body.productOrganizationCandidates,
+      );
+    const customsCandidates = normalizeCustomsCandidates(
+      body.customsCandidates,
+    );
     const shopifyCategoryName = sanitizeText(body.shopifyCategory?.name || "");
     const shopifyCategoryId = sanitizeText(body.shopifyCategory?.id || "");
     const shopifyCategorySummary =
@@ -190,6 +273,13 @@ export async function POST(req: NextRequest) {
       wantsCategoryMetafields
         ? formatCategoryMetafieldCandidateSummary(categoryMetafieldCandidates)
         : "";
+    const productOrganizationCandidateSummary =
+      formatProductOrganizationCandidateSummary(productOrganizationCandidates);
+    const customsCandidateSummary = formatCustomsCandidateSummary(
+      customsCandidates,
+    );
+    const requiredOutputFieldInstruction =
+      formatRequiredOutputFieldInstruction(prompt);
     const shouldGenerateImages = shouldGenerateProductListingImages(prompt);
 
     const client = buildGenaiClient();
@@ -208,6 +298,22 @@ ${prompt}
 ${mediaSummary}
 
 ${shopifyCategorySummary}
+
+Shopify 后台已有产品组织候选条目（按当前类别读取）：
+${productOrganizationCandidateSummary}
+
+Shopify 海关信息候选与当前值：
+${customsCandidateSummary}
+
+必填字段要求：
+${requiredOutputFieldInstruction}
+
+产品组织与海关信息生成规则：
+- 产品类型、厂商/供应商、产品系列、标记：优先从上面的 Shopify 后台已有候选条目中选择最匹配的原文；明显不适合商品图片时，再根据商品内容保守生成。
+- 标记可以输出多个，用逗号分隔；不要输出与商品无关的热门标记。
+- 原产国家/地区：优先输出 Shopify CountryCode 两位代码，例如 CN、US；如果当前已有值且图片/提示词没有冲突，优先保留当前值。
+- HS 编码：不要读取后台候选；根据商品类别、材质和用途生成纯数字 harmonizedSystemCode，至少 6 位；不确定时保持为空，不要编造解释文本。
+- 如果输出这些字段，请使用字段名：产品类型、厂商、产品系列、标记、原产国家/地区、HS 编码。
 
 ${wantsCategoryMetafields ? `用户明确要求生成类别元字段。
 
@@ -569,6 +675,110 @@ function appendGeneratedImageUrls(text: string, urls: string[]): string {
   return `${text.trim()}\n\n大模型生成图片：\n${urls.join("\n")}`;
 }
 
+function normalizeCandidateList(value: unknown, limit: number): string[] {
+  if (!Array.isArray(value)) return [];
+
+  const seen = new Set<string>();
+  const items: string[] = [];
+  for (const rawItem of value) {
+    const rawValue =
+      typeof rawItem === "string"
+        ? rawItem
+        : rawItem && typeof rawItem === "object"
+          ? String(
+              (rawItem as { label?: unknown; value?: unknown }).label ||
+                (rawItem as { label?: unknown; value?: unknown }).value ||
+                "",
+            )
+          : "";
+    const item = sanitizeCategoryCandidateValue(rawValue);
+    if (!item) continue;
+    const normalized = item.toLowerCase();
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    items.push(item);
+    if (items.length >= limit) break;
+  }
+  return items;
+}
+
+function normalizeProductOrganizationCandidates(
+  value: unknown,
+): ProductOrganizationCandidates {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  const source = value as Partial<Record<ProductOrganizationCandidateKey, unknown>>;
+  const limits: Record<ProductOrganizationCandidateKey, number> = {
+    productTypes: 60,
+    vendors: 60,
+    collections: 120,
+    commonTags: 60,
+    tags: 160,
+  };
+  const result: ProductOrganizationCandidates = {};
+  for (const { key } of PRODUCT_ORGANIZATION_CANDIDATE_LABELS) {
+    const items = normalizeCandidateList(source[key], limits[key]);
+    if (items.length) result[key] = items;
+  }
+  return result;
+}
+
+function normalizeCustomsCandidates(value: unknown): CustomsCandidates {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { countries: [], currentCountryCode: "", harmonizedSystemCode: "" };
+  }
+  const source = value as Partial<{
+    countries: unknown;
+    currentCountryCode: unknown;
+    harmonizedSystemCode: unknown;
+  }>;
+  return {
+    countries: normalizeCandidateList(source.countries, 260),
+    currentCountryCode: sanitizeCategoryCandidateValue(
+      typeof source.currentCountryCode === "string"
+        ? source.currentCountryCode
+        : "",
+    )
+      .toUpperCase()
+      .slice(0, 2),
+    harmonizedSystemCode: sanitizeCategoryCandidateValue(
+      typeof source.harmonizedSystemCode === "string"
+        ? source.harmonizedSystemCode
+        : "",
+    )
+      .replace(/\D/g, "")
+      .slice(0, 13),
+  };
+}
+
+function formatProductOrganizationCandidateSummary(
+  candidates: ProductOrganizationCandidates,
+): string {
+  const lines = PRODUCT_ORGANIZATION_CANDIDATE_LABELS.flatMap((field) => {
+    const items = candidates[field.key] || [];
+    if (!items.length) return [];
+    return [`${field.outputLabel}（${field.displayLabel}）：${items.join("、")}`];
+  });
+  return lines.length
+    ? lines.join("\n")
+    : "无。当前未读取到 Shopify 后台产品组织候选条目。";
+}
+
+function formatCustomsCandidateSummary(candidates: CustomsCandidates): string {
+  const lines = [
+    candidates.currentCountryCode
+      ? `当前原产国家/地区：${candidates.currentCountryCode}`
+      : "",
+    candidates.countries.length
+      ? `Shopify 官方国家/地区候选：${candidates.countries.join("、")}`
+      : "Shopify 官方国家/地区候选：无",
+    candidates.harmonizedSystemCode
+      ? `当前 HS 编码：${candidates.harmonizedSystemCode}`
+      : "当前 HS 编码：空",
+  ].filter(Boolean);
+  return lines.join("\n");
+}
+
 function normalizeCategoryMetafieldCandidates(
   value: unknown,
 ): CategoryMetafieldCandidates {
@@ -622,6 +832,52 @@ function shouldGenerateCategoryMetafields(prompt: string): boolean {
       return text.includes(outputLabel) || text.includes(key);
     })
   );
+}
+
+function getRequiredOutputFields(prompt: string): string[] {
+  const normalizedPrompt = prompt.toLowerCase();
+  const required = new Set<string>();
+  if (
+    /完整|全部|所有字段|全字段|完整内容|完整信息|全套|complete|full|all fields/i.test(
+      prompt,
+    )
+  ) {
+    FULL_PRODUCT_OUTPUT_FIELDS.forEach((field) => required.add(field));
+  }
+  for (const field of REQUIRED_OUTPUT_FIELD_ALIASES) {
+    if (
+      field.aliases.some((alias) =>
+        normalizedPrompt.includes(alias.toLowerCase()),
+      )
+    ) {
+      required.add(field.label);
+    }
+  }
+  for (const field of CATEGORY_METAFIELD_CANDIDATE_LABELS) {
+    const outputLabel = field.outputLabel;
+    const displayLabel = field.displayLabel;
+    const key = field.key;
+    if (
+      normalizedPrompt.includes(outputLabel.toLowerCase()) ||
+      normalizedPrompt.includes(displayLabel.toLowerCase()) ||
+      normalizedPrompt.includes(key.toLowerCase()) ||
+      normalizedPrompt.includes(`类别元字段${displayLabel}`.toLowerCase())
+    ) {
+      required.add(outputLabel);
+    }
+  }
+  return Array.from(required);
+}
+
+function formatRequiredOutputFieldInstruction(prompt: string): string {
+  const fields = getRequiredOutputFields(prompt);
+  if (!fields.length) {
+    return "本次用户提示词没有点名固定必填字段；按系统建议字段生成即可。";
+  }
+  return [
+    `本次用户提示词明确要求输出的字段（必须逐项输出，不得省略）：${fields.join("、")}`,
+    "强制规则：上面每个字段都必须以 key: value 单独一行出现在最终输出里；无法确定时也保留字段名，值可以为空或保守值。",
+  ].join("\n");
 }
 
 function sanitizeCategoryCandidateValue(value: string): string {
