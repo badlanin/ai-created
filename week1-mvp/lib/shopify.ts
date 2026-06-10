@@ -96,6 +96,11 @@ export type ShopifyProductDraftInput = {
   compareAtPrice?: string;
   price?: string;
   inventory?: string;
+  requiresShipping?: boolean;
+  weight?: string;
+  weightUnit?: "GRAMS" | "KILOGRAMS" | "OUNCES" | "POUNDS";
+  countryCodeOfOrigin?: string;
+  harmonizedSystemCode?: string;
   status?: "DRAFT" | "ACTIVE" | "ARCHIVED";
   seoTitle?: string;
   seoDescription?: string;
@@ -129,6 +134,10 @@ export type ShopifyProductDraftInput = {
     }>;
   }>;
 };
+
+type ShopifyProductWeightUnit = NonNullable<
+  ShopifyProductDraftInput["weightUnit"]
+>;
 
 export type ShopifyCategoryMetafieldOption = {
   id: string;
@@ -180,6 +189,34 @@ export type ShopifySellingContextsResult = {
   warnings: string[];
 };
 
+export type ShopifyCustomsOption = {
+  value: string;
+  label: string;
+  count: number;
+};
+
+export type ShopifyCustomsOptionsResult = {
+  countries: ShopifyCustomsOption[];
+  hsCodes: [];
+  warnings: string[];
+};
+
+export type ShopifyProductOrganizationOption = {
+  id?: string;
+  value: string;
+  label: string;
+  handle?: string | null;
+};
+
+export type ShopifyProductOrganizationOptionsResult = {
+  productTypes: ShopifyProductOrganizationOption[];
+  vendors: ShopifyProductOrganizationOption[];
+  collections: ShopifyProductOrganizationOption[];
+  commonTags: ShopifyProductOrganizationOption[];
+  tags: ShopifyProductOrganizationOption[];
+  warnings: string[];
+};
+
 export type ShopifyProductSyncResult = {
   productId: string;
   title: string;
@@ -199,6 +236,19 @@ type ShopifyGraphqlResponse = {
         url?: string;
       } | null;
     };
+  };
+  errors?: Array<{ message?: string }>;
+};
+
+type ShopifyCountryCodeEnumResponse = {
+  data?: {
+    __type?: {
+      enumValues?: Array<{
+        name?: string | null;
+        description?: string | null;
+        isDeprecated?: boolean | null;
+      }> | null;
+    } | null;
   };
   errors?: Array<{ message?: string }>;
 };
@@ -656,6 +706,54 @@ type ShopifyCollectionSearchResponse = {
     collections?: {
       nodes?: ShopifyCollectionNode[];
     };
+  };
+  errors?: Array<{ message?: string }>;
+};
+
+type ShopifyStringConnectionNode = {
+  pageInfo?: {
+    hasNextPage?: boolean | null;
+    endCursor?: string | null;
+  } | null;
+  edges?: Array<{ node?: string | null }> | null;
+  nodes?: Array<string | null> | null;
+};
+
+type ShopifyStringConnectionResponse = {
+  data?: Record<string, ShopifyStringConnectionNode | null | undefined>;
+  errors?: Array<{ message?: string }>;
+};
+
+type ShopifyCollectionsResponse = {
+  data?: {
+    collections?: {
+      pageInfo?: {
+        hasNextPage?: boolean | null;
+        endCursor?: string | null;
+      } | null;
+      nodes?: ShopifyCollectionNode[];
+    } | null;
+  };
+  errors?: Array<{ message?: string }>;
+};
+
+type ShopifyProductsOrganizationResponse = {
+  data?: {
+    products?: {
+      pageInfo?: {
+        hasNextPage?: boolean | null;
+        endCursor?: string | null;
+      } | null;
+      nodes?: Array<{
+        id?: string | null;
+        productType?: string | null;
+        vendor?: string | null;
+        tags?: string[] | null;
+        collections?: {
+          nodes?: ShopifyCollectionNode[];
+        } | null;
+      }>;
+    } | null;
   };
   errors?: Array<{ message?: string }>;
 };
@@ -2105,6 +2203,149 @@ export async function getShopifySellingContexts(
   return { channels, catalogs, warnings };
 }
 
+export async function getShopifyCustomsOptions(
+  userId: number,
+  deviceId: string,
+): Promise<ShopifyCustomsOptionsResult> {
+  const stored = await getStoredShopifyAccessToken(userId, deviceId);
+  if (!stored) throw new Error("尚未绑定 Shopify");
+
+  const warnings: string[] = [];
+  const countries = isTestShopifyCredentials(stored.shopDomain, stored.accessToken)
+    ? buildFallbackShopifyCountryCodeOptions()
+    : await readShopifyCountryCodeOptions(
+        stored.shopDomain,
+        stored.accessToken,
+        warnings,
+      );
+
+  return {
+    countries,
+    hsCodes: [],
+    warnings,
+  };
+}
+
+export async function getShopifyProductOrganizationOptions(
+  userId: number,
+  deviceId: string,
+  opts: { categoryId?: string } = {},
+): Promise<ShopifyProductOrganizationOptionsResult> {
+  const stored = await getStoredShopifyAccessToken(userId, deviceId);
+  if (!stored) throw new Error("尚未绑定 Shopify");
+  const categorySearchId = normalizeShopifyCategorySearchId(opts.categoryId);
+  if (!categorySearchId) {
+    return {
+      productTypes: [],
+      vendors: [],
+      collections: [],
+      commonTags: [],
+      tags: [],
+      warnings: ["请先选择 Shopify 类别，再读取该类别下的产品组织条目。"],
+    };
+  }
+
+  if (isTestShopifyCredentials(stored.shopDomain, stored.accessToken)) {
+    return {
+      productTypes: [],
+      vendors: [],
+      collections: [],
+      commonTags: [],
+      tags: [],
+      warnings: [
+        "当前使用测试密钥，产品组织条目需要真实店铺读取。",
+      ],
+    };
+  }
+
+  const warnings: string[] = [];
+  const productTypes: string[] = [];
+  const vendors: string[] = [];
+  const categoryTagCounts = new Map<string, number>();
+  const collectionsPromise = readShopifyCollectionOptions(
+    stored.shopDomain,
+    stored.accessToken,
+    warnings,
+  );
+  const tagsPromise = readShopifyStringConnectionOptions(
+    stored.shopDomain,
+    stored.accessToken,
+    "productTags",
+    "标记",
+    warnings,
+  );
+  let after: string | null = null;
+  let page = 0;
+  const maxPages = 5;
+
+  do {
+    const json: ShopifyProductsOrganizationResponse =
+      await shopifyGraphql<ShopifyProductsOrganizationResponse>(
+        stored.shopDomain,
+        stored.accessToken,
+        `query BuqiqiShopifyProductOrganizationByCategory($query: String!, $first: Int!, $after: String) {
+          products(first: $first, after: $after, query: $query) {
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+            nodes {
+              id
+              productType
+              vendor
+              tags
+            }
+          }
+        }`,
+        {
+          query: `category_id:${categorySearchId}`,
+          first: 100,
+          after,
+        },
+      );
+    const topLevelErrors = formatGraphqlMessages(json.errors);
+    if (topLevelErrors) {
+      warnings.push(`读取 Shopify 当前类别产品组织失败：${topLevelErrors}`);
+      break;
+    }
+
+    for (const product of json.data?.products?.nodes || []) {
+      const productType = cleanField(product.productType);
+      if (productType) productTypes.push(productType);
+      const vendor = cleanField(product.vendor);
+      if (vendor) vendors.push(vendor);
+      for (const tag of product.tags || []) {
+        const cleanedTag = cleanField(tag);
+        if (!cleanedTag) continue;
+        const key = cleanedTag.toLowerCase();
+        categoryTagCounts.set(key, (categoryTagCounts.get(key) || 0) + 1);
+      }
+    }
+
+    page += 1;
+    after = cleanField(json.data?.products?.pageInfo?.endCursor) || null;
+    if (!json.data?.products?.pageInfo?.hasNextPage) break;
+  } while (after && page < maxPages);
+
+  if (after && page >= maxPages) {
+    warnings.push("当前类别商品较多，本次只读取前 500 个商品来生成组织条目。");
+  }
+
+  const [collections, tags] = await Promise.all([
+    collectionsPromise,
+    tagsPromise,
+  ]);
+
+  return {
+    productTypes: buildShopifyProductOrganizationStringOptions(productTypes),
+    vendors: buildShopifyProductOrganizationStringOptions(vendors),
+    collections,
+    commonTags: buildShopifyCommonTagOptions(categoryTagCounts, tags),
+    tags,
+    warnings,
+  };
+}
+
 export async function getShopifyTaxonomyCategoryOptions(
   userId: number,
   deviceId: string,
@@ -2405,7 +2646,7 @@ export async function syncShopifyProduct(
   if (compareAtPrice) variantInput.compareAtPrice = compareAtPrice;
   if (price) variantInput.price = price;
   const sku = cleanField(firstVariantDraft?.sku || input.sku);
-  variantInput.inventoryItem = sku ? { sku, tracked: true } : { tracked: true };
+  variantInput.inventoryItem = buildInventoryItemInput(input, sku);
   const firstVariantMediaId = resolveVariantMediaId(
     firstVariantDraft,
     mediaIdBySource,
@@ -2428,7 +2669,8 @@ export async function syncShopifyProduct(
       price ||
       sku ||
       firstInventoryQuantity !== null ||
-      firstVariantOptionValues.length)
+      firstVariantOptionValues.length ||
+      variantInput.inventoryItem)
   ) {
     const updateJson = await shopifyGraphql<ShopifyVariantUpdateResponse>(
       stored.shopDomain,
@@ -2472,9 +2714,7 @@ export async function syncShopifyProduct(
       if (variantPrice) inputVariant.price = variantPrice;
       if (compareAtPrice) inputVariant.compareAtPrice = compareAtPrice;
       const variantSku = cleanField(variant.sku);
-      inputVariant.inventoryItem = variantSku
-        ? { sku: variantSku, tracked: true }
-        : { tracked: true };
+      inputVariant.inventoryItem = buildInventoryItemInput(input, variantSku);
       const variantMediaId = resolveVariantMediaId(
         variant,
         mediaIdBySource,
@@ -5783,6 +6023,581 @@ function normalizeInventoryQuantity(value?: string): number | null {
   const quantity = Number(cleaned);
   if (!Number.isFinite(quantity) || quantity < 0) return null;
   return Math.floor(quantity);
+}
+
+function normalizeProductWeight(value?: string): number | null {
+  const cleaned = cleanField(value).replace(/[^\d.]/g, "");
+  if (!cleaned) return null;
+  const weight = Number(cleaned);
+  if (!Number.isFinite(weight) || weight < 0) return null;
+  return weight;
+}
+
+function normalizeWeightUnitForShopify(
+  value?: string,
+): ShopifyProductWeightUnit {
+  const normalized = cleanField(value).toUpperCase();
+  if (normalized === "KILOGRAMS" || normalized === "KG") return "KILOGRAMS";
+  if (normalized === "OUNCES" || normalized === "OZ") return "OUNCES";
+  if (normalized === "POUNDS" || normalized === "LB" || normalized === "LBS") {
+    return "POUNDS";
+  }
+  return "GRAMS";
+}
+
+function normalizeCountryCodeOfOriginForShopify(value?: string): string {
+  const code = cleanField(value).toUpperCase();
+  return /^[A-Z]{2}$/.test(code) ? code : "";
+}
+
+function normalizeHarmonizedSystemCodeForShopify(value?: string): string {
+  const code = cleanField(value).replace(/\D/g, "").slice(0, 13);
+  return code.length >= 6 ? code : "";
+}
+
+function buildInventoryItemInput(
+  input: ShopifyProductDraftInput,
+  sku?: string,
+): Record<string, unknown> {
+  const inventoryItem: Record<string, unknown> = {
+    tracked: true,
+    requiresShipping: input.requiresShipping !== false,
+  };
+  const cleanedSku = cleanField(sku);
+  if (cleanedSku) inventoryItem.sku = cleanedSku;
+
+  const countryCodeOfOrigin = normalizeCountryCodeOfOriginForShopify(
+    input.countryCodeOfOrigin,
+  );
+  if (countryCodeOfOrigin) {
+    inventoryItem.countryCodeOfOrigin = countryCodeOfOrigin;
+  }
+
+  const harmonizedSystemCode = normalizeHarmonizedSystemCodeForShopify(
+    input.harmonizedSystemCode,
+  );
+  if (harmonizedSystemCode) {
+    inventoryItem.harmonizedSystemCode = harmonizedSystemCode;
+  }
+
+  const weight = normalizeProductWeight(input.weight);
+  if (weight !== null) {
+    inventoryItem.measurement = {
+      weight: {
+        unit: normalizeWeightUnitForShopify(input.weightUnit),
+        value: weight,
+      },
+    };
+  }
+
+  return inventoryItem;
+}
+
+const shopifyCountryDisplayNames =
+  typeof Intl !== "undefined" && "DisplayNames" in Intl
+    ? new Intl.DisplayNames(["zh-CN"], { type: "region" })
+    : null;
+
+function formatCountryCodeOfOriginLabel(value: string): string {
+  const code = normalizeCountryCodeOfOriginForShopify(value);
+  if (!code) return "";
+  const countryName = shopifyCountryDisplayNames?.of(code);
+  return countryName && countryName !== code ? countryName : code;
+}
+
+function buildShopifyCountryCodeOptions(
+  values: Array<string | null | undefined>,
+): ShopifyCustomsOption[] {
+  const seen = new Set<string>();
+  const options: ShopifyCustomsOption[] = [];
+  for (const value of values) {
+    const code = normalizeCountryCodeOfOriginForShopify(value || undefined);
+    if (!code || seen.has(code)) continue;
+    seen.add(code);
+    options.push({
+      value: code,
+      label: formatCountryCodeOfOriginLabel(code),
+      count: 0,
+    });
+  }
+  return options.sort(
+    (a, b) =>
+      a.label.localeCompare(b.label, "zh-CN") ||
+      a.value.localeCompare(b.value),
+  );
+}
+
+const SHOPIFY_COUNTRY_CODE_FALLBACKS = [
+  "AD",
+  "AE",
+  "AF",
+  "AG",
+  "AI",
+  "AL",
+  "AM",
+  "AO",
+  "AR",
+  "AT",
+  "AU",
+  "AW",
+  "AX",
+  "AZ",
+  "BA",
+  "BB",
+  "BD",
+  "BE",
+  "BF",
+  "BG",
+  "BH",
+  "BI",
+  "BJ",
+  "BM",
+  "BN",
+  "BO",
+  "BQ",
+  "BR",
+  "BS",
+  "BT",
+  "BW",
+  "BY",
+  "BZ",
+  "CA",
+  "CD",
+  "CF",
+  "CG",
+  "CH",
+  "CI",
+  "CK",
+  "CL",
+  "CM",
+  "CN",
+  "CO",
+  "CR",
+  "CV",
+  "CW",
+  "CY",
+  "CZ",
+  "DE",
+  "DJ",
+  "DK",
+  "DM",
+  "DO",
+  "DZ",
+  "EC",
+  "EE",
+  "EG",
+  "ER",
+  "ES",
+  "ET",
+  "FI",
+  "FJ",
+  "FK",
+  "FO",
+  "FR",
+  "GA",
+  "GB",
+  "GD",
+  "GE",
+  "GF",
+  "GG",
+  "GH",
+  "GI",
+  "GL",
+  "GM",
+  "GN",
+  "GP",
+  "GQ",
+  "GR",
+  "GT",
+  "GW",
+  "GY",
+  "HK",
+  "HN",
+  "HR",
+  "HT",
+  "HU",
+  "ID",
+  "IE",
+  "IL",
+  "IM",
+  "IN",
+  "IQ",
+  "IS",
+  "IT",
+  "JE",
+  "JM",
+  "JO",
+  "JP",
+  "KE",
+  "KG",
+  "KH",
+  "KI",
+  "KM",
+  "KN",
+  "KR",
+  "KW",
+  "KY",
+  "KZ",
+  "LA",
+  "LB",
+  "LC",
+  "LI",
+  "LK",
+  "LR",
+  "LS",
+  "LT",
+  "LU",
+  "LV",
+  "MA",
+  "MC",
+  "MD",
+  "ME",
+  "MF",
+  "MG",
+  "MK",
+  "ML",
+  "MM",
+  "MN",
+  "MO",
+  "MQ",
+  "MR",
+  "MS",
+  "MT",
+  "MU",
+  "MV",
+  "MW",
+  "MX",
+  "MY",
+  "MZ",
+  "NA",
+  "NC",
+  "NE",
+  "NG",
+  "NI",
+  "NL",
+  "NO",
+  "NP",
+  "NR",
+  "NU",
+  "NZ",
+  "OM",
+  "PA",
+  "PE",
+  "PF",
+  "PG",
+  "PH",
+  "PK",
+  "PL",
+  "PM",
+  "PN",
+  "PR",
+  "PS",
+  "PT",
+  "PY",
+  "QA",
+  "RE",
+  "RO",
+  "RS",
+  "RW",
+  "SA",
+  "SB",
+  "SC",
+  "SE",
+  "SG",
+  "SH",
+  "SI",
+  "SK",
+  "SL",
+  "SM",
+  "SN",
+  "SR",
+  "ST",
+  "SV",
+  "SX",
+  "SZ",
+  "TC",
+  "TD",
+  "TG",
+  "TH",
+  "TJ",
+  "TK",
+  "TL",
+  "TN",
+  "TO",
+  "TR",
+  "TT",
+  "TV",
+  "TW",
+  "TZ",
+  "UA",
+  "UG",
+  "US",
+  "UY",
+  "UZ",
+  "VA",
+  "VC",
+  "VE",
+  "VG",
+  "VN",
+  "VU",
+  "WS",
+  "XK",
+  "YE",
+  "YT",
+  "ZA",
+  "ZM",
+  "ZW",
+];
+
+function buildFallbackShopifyCountryCodeOptions(): ShopifyCustomsOption[] {
+  return buildShopifyCountryCodeOptions(SHOPIFY_COUNTRY_CODE_FALLBACKS);
+}
+
+async function readShopifyCountryCodeOptions(
+  shopDomain: string,
+  accessToken: string,
+  warnings: string[],
+): Promise<ShopifyCustomsOption[]> {
+  const json = await shopifyGraphql<ShopifyCountryCodeEnumResponse>(
+    shopDomain,
+    accessToken,
+    `query BuqiqiShopifyCountryCodes {
+      __type(name: "CountryCode") {
+        enumValues(includeDeprecated: false) {
+          name
+          isDeprecated
+        }
+      }
+    }`,
+  );
+  const topLevelErrors = formatGraphqlMessages(json.errors);
+  if (topLevelErrors) {
+    warnings.push(`读取 Shopify 官方国家/地区失败：${topLevelErrors}`);
+    return buildFallbackShopifyCountryCodeOptions();
+  }
+
+  const countryCodes = (json.data?.__type?.enumValues || [])
+    .filter((item) => !item.isDeprecated)
+    .map((item) => item.name);
+  const options = buildShopifyCountryCodeOptions(countryCodes);
+  if (!options.length) {
+    warnings.push("Shopify 官方国家/地区枚举为空，已使用本地兜底国家/地区列表。");
+    return buildFallbackShopifyCountryCodeOptions();
+  }
+  return options;
+}
+
+async function readShopifyStringConnectionOptions(
+  shopDomain: string,
+  accessToken: string,
+  fieldName: "productTypes" | "productVendors" | "productTags",
+  label: string,
+  warnings: string[],
+): Promise<ShopifyProductOrganizationOption[]> {
+  const values: string[] = [];
+  let after: string | null = null;
+  let page = 0;
+  const maxPages = 8;
+
+  do {
+    const json: ShopifyStringConnectionResponse =
+      await shopifyGraphql<ShopifyStringConnectionResponse>(
+      shopDomain,
+      accessToken,
+      `query BuqiqiShopifyProductOrganizationStrings($first: Int!, $after: String) {
+        ${fieldName}(first: $first, after: $after) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          edges {
+            node
+          }
+        }
+      }`,
+      { first: 250, after },
+    );
+    const topLevelErrors = formatGraphqlMessages(json.errors);
+    if (topLevelErrors) {
+      warnings.push(`读取 Shopify ${label}失败：${topLevelErrors}`);
+      break;
+    }
+
+    const connection: ShopifyStringConnectionNode | null | undefined =
+      json.data?.[fieldName];
+    for (const edge of connection?.edges || []) {
+      const value = cleanField(edge.node);
+      if (value) values.push(value);
+    }
+    for (const node of connection?.nodes || []) {
+      const value = cleanField(node);
+      if (value) values.push(value);
+    }
+
+    page += 1;
+    after = cleanField(connection?.pageInfo?.endCursor) || null;
+    if (!connection?.pageInfo?.hasNextPage) break;
+  } while (after && page < maxPages);
+
+  if (after && page >= maxPages) {
+    warnings.push(`Shopify ${label}较多，本次只读取前 2000 个条目。`);
+  }
+
+  return buildShopifyProductOrganizationStringOptions(values);
+}
+
+async function readShopifyCollectionOptions(
+  shopDomain: string,
+  accessToken: string,
+  warnings: string[],
+): Promise<ShopifyProductOrganizationOption[]> {
+  const options: ShopifyProductOrganizationOption[] = [];
+  let after: string | null = null;
+  let page = 0;
+  const maxPages = 8;
+
+  do {
+    const json: ShopifyCollectionsResponse =
+      await shopifyGraphql<ShopifyCollectionsResponse>(
+      shopDomain,
+      accessToken,
+      `query BuqiqiShopifyCollections($first: Int!, $after: String) {
+        collections(first: $first, after: $after) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          nodes {
+            id
+            title
+            handle
+          }
+        }
+      }`,
+      { first: 250, after },
+    );
+    const topLevelErrors = formatGraphqlMessages(json.errors);
+    if (topLevelErrors) {
+      warnings.push(`读取 Shopify 产品系列失败：${topLevelErrors}`);
+      break;
+    }
+
+    for (const collection of json.data?.collections?.nodes || []) {
+      const title = cleanField(collection.title);
+      if (!collection.id || !title) continue;
+      options.push({
+        id: collection.id,
+        value: title,
+        label: title,
+        handle: cleanField(collection.handle) || null,
+      });
+    }
+
+    page += 1;
+    after = cleanField(json.data?.collections?.pageInfo?.endCursor) || null;
+    if (!json.data?.collections?.pageInfo?.hasNextPage) break;
+  } while (after && page < maxPages);
+
+  if (after && page >= maxPages) {
+    warnings.push("Shopify 产品系列较多，本次只读取前 2000 个条目。");
+  }
+
+  return sortShopifyProductOrganizationOptions(options);
+}
+
+function buildShopifyProductOrganizationStringOptions(
+  values: string[],
+): ShopifyProductOrganizationOption[] {
+  const seen = new Set<string>();
+  const options: ShopifyProductOrganizationOption[] = [];
+  for (const value of values) {
+    const cleaned = cleanField(value);
+    const key = cleaned.toLowerCase();
+    if (!cleaned || seen.has(key)) continue;
+    seen.add(key);
+    options.push({ value: cleaned, label: cleaned });
+  }
+  return sortShopifyProductOrganizationOptions(options);
+}
+
+const SHOPIFY_COMMON_TAG_PRIORITY = [
+  "ONLY",
+  "MANYCOLOR",
+];
+
+function buildShopifyCommonTagOptions(
+  categoryTagCounts: Map<string, number>,
+  allTags: ShopifyProductOrganizationOption[],
+): ShopifyProductOrganizationOption[] {
+  const tagByKey = new Map(
+    allTags.map((tag) => [tag.value.toLowerCase(), tag] as const),
+  );
+  const commonTags: ShopifyProductOrganizationOption[] = [];
+  const seen = new Set<string>();
+  for (const value of SHOPIFY_COMMON_TAG_PRIORITY) {
+    const key = value.toLowerCase();
+    const tag = tagByKey.get(key);
+    if (!tag || seen.has(key)) continue;
+    seen.add(key);
+    commonTags.push(tag);
+  }
+
+  const categoryTags = Array.from(categoryTagCounts.entries())
+    .map(([key, count]) => {
+      const tag = tagByKey.get(key);
+      return tag ? { tag, count } : null;
+    })
+    .filter((item): item is { tag: ShopifyProductOrganizationOption; count: number } =>
+      Boolean(item),
+    )
+    .filter(({ tag, count }) => {
+      if (seen.has(tag.value.toLowerCase())) return false;
+      if (count < 2) return false;
+      if (tag.value.length > 32) return false;
+      return tag.value.trim().split(/\s+/).length <= 3;
+    })
+    .sort(
+      (a, b) =>
+        b.count - a.count ||
+        a.tag.label.localeCompare(b.tag.label, "zh-CN") ||
+        a.tag.value.localeCompare(b.tag.value),
+    )
+    .slice(0, Math.max(0, 8 - commonTags.length))
+    .map((item) => item.tag);
+  return [...commonTags, ...categoryTags];
+}
+
+function sortShopifyProductOrganizationOptions(
+  options: ShopifyProductOrganizationOption[],
+): ShopifyProductOrganizationOption[] {
+  const deduped: ShopifyProductOrganizationOption[] = [];
+  const seen = new Set<string>();
+  for (const option of options) {
+    const key = (option.id || option.value || option.label).toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(option);
+  }
+  return deduped.sort(
+    (a, b) => {
+      const aNumeric = /^[0-9]/.test(a.label.trim()) ? 1 : 0;
+      const bNumeric = /^[0-9]/.test(b.label.trim()) ? 1 : 0;
+      return (
+        aNumeric - bNumeric ||
+        a.label.localeCompare(b.label, "zh-CN") ||
+        a.value.localeCompare(b.value)
+      );
+    },
+  );
+}
+
+function normalizeShopifyCategorySearchId(value?: string): string {
+  const categoryId = cleanField(value);
+  if (!categoryId || categoryId === SHOPIFY_UNCATEGORIZED_CATEGORY_ID) {
+    return "";
+  }
+  const match = categoryId.match(/\/TaxonomyCategory\/([^/?#]+)/);
+  return match?.[1] || categoryId;
 }
 
 function formatGraphqlMessages(errors?: Array<{ message?: string }>): string {

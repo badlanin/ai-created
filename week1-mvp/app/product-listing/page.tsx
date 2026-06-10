@@ -18,8 +18,11 @@ import {
   FileText,
   GripVertical,
   Image as ImageIcon,
+  Info,
   KeyRound,
   Link,
+  MoreHorizontal,
+  Package,
   Plus,
   RefreshCw,
   Save,
@@ -110,9 +113,37 @@ type ShopifySellingContextsResponse = {
   error?: string;
 };
 
+type ShopifyCustomsOption = {
+  value: string;
+  label: string;
+  count: number;
+};
+
+type ShopifyProductOrganizationOption = {
+  id?: string;
+  value: string;
+  label: string;
+  handle?: string | null;
+};
+
+type ShopifyProductOrganizationOptionsState = {
+  productTypes: ShopifyProductOrganizationOption[];
+  vendors: ShopifyProductOrganizationOption[];
+  collections: ShopifyProductOrganizationOption[];
+  commonTags: ShopifyProductOrganizationOption[];
+  tags: ShopifyProductOrganizationOption[];
+};
+
+type ProductOrganizationPickerKey =
+  | "productType"
+  | "vendor"
+  | "collections"
+  | "tags";
+
 type SyncState = "idle" | "draft" | "syncing" | "synced";
 type SyncAction = "draft" | "publish" | null;
 type ProductStatus = "DRAFT" | "ACTIVE" | "ARCHIVED";
+type ProductWeightUnit = "GRAMS" | "KILOGRAMS" | "OUNCES" | "POUNDS";
 
 type ProductForm = {
   title: string;
@@ -132,6 +163,11 @@ type ProductForm = {
   compareAtPrice: string;
   price: string;
   inventory: string;
+  requiresShipping: boolean;
+  weight: string;
+  weightUnit: ProductWeightUnit;
+  countryCodeOfOrigin: string;
+  harmonizedSystemCode: string;
   status: ProductStatus;
   categoryColor: string;
   categorySize: string;
@@ -268,7 +304,11 @@ const DEFAULT_SIZE_VARIANT_OPTIONS = [
   "US 24Plus / UK 28 / EU 54",
   "US 26Plus / UK 30 / EU 56",
 ];
-const PRODUCT_TAG_QUICK_OPTIONS = ["ONLY", "MANYCOLOR"];
+const SIZE_TXT_IMPORT_ACCEPT = ".txt,text/plain";
+const PRODUCT_TAG_QUICK_OPTIONS = [
+  "ONLY",
+  "MANYCOLOR",
+];
 const CATEGORY_METAFIELD_MEMORY_STORAGE_KEY =
   "buqiqi_product_listing_category_metafield_memory_v1";
 const CATEGORY_METAFIELD_MEMORY_LIMIT = 20;
@@ -386,6 +426,64 @@ const CATEGORY_COLOR_OPTIONS = [
 const TEST_SHOP_DOMAIN = "test.myshopify.com";
 const TEST_ACCESS_TOKEN = "shpat_test_buqiqi";
 
+const PRODUCT_WEIGHT_UNITS: Array<{
+  value: ProductWeightUnit;
+  label: string;
+}> = [
+  { value: "GRAMS", label: "g" },
+  { value: "KILOGRAMS", label: "kg" },
+  { value: "OUNCES", label: "oz" },
+  { value: "POUNDS", label: "lb" },
+];
+
+const EMPTY_PRODUCT_ORGANIZATION_OPTIONS: ShopifyProductOrganizationOptionsState = {
+  productTypes: [],
+  vendors: [],
+  collections: [],
+  commonTags: [],
+  tags: [],
+};
+
+function normalizeCountryCodeOfOrigin(value: string): string {
+  const cleaned = value.trim();
+  if (!cleaned) return "";
+  const upper = cleaned.toUpperCase();
+  if (/^[A-Z]{2}$/.test(upper)) return upper;
+  const codeInLabel = cleaned.match(/\(([A-Za-z]{2})\)\s*$/);
+  return codeInLabel ? codeInLabel[1].toUpperCase() : "";
+}
+
+function sanitizeHsCode(value: string): string {
+  return value.replace(/\D/g, "").slice(0, 13);
+}
+
+function sanitizeWeightInput(value: string): string {
+  const cleaned = value.replace(/[^\d.]/g, "");
+  const parts = cleaned.split(".");
+  if (parts.length <= 1) return cleaned;
+  return `${parts[0]}.${parts.slice(1).join("")}`;
+}
+
+function normalizeWeightUnit(value: string): ProductWeightUnit | "" {
+  const normalized = value.trim().toLowerCase();
+  const byValue = PRODUCT_WEIGHT_UNITS.find(
+    (item) => item.value.toLowerCase() === normalized || item.label === normalized,
+  );
+  return byValue?.value || "";
+}
+
+function parseBooleanLike(value: string): boolean | null {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return null;
+  if (["true", "yes", "y", "1", "是", "实体产品"].includes(normalized)) {
+    return true;
+  }
+  if (["false", "no", "n", "0", "否", "非实体产品"].includes(normalized)) {
+    return false;
+  }
+  return null;
+}
+
 const EMPTY_FORM: ProductForm = {
   title: "",
   description: "",
@@ -404,6 +502,11 @@ const EMPTY_FORM: ProductForm = {
   compareAtPrice: "",
   price: "",
   inventory: "",
+  requiresShipping: true,
+  weight: "0.0",
+  weightUnit: "GRAMS",
+  countryCodeOfOrigin: "",
+  harmonizedSystemCode: "",
   status: "DRAFT",
   categoryColor: "",
   categorySize: "",
@@ -894,6 +997,34 @@ function mapObjectToProductForm(source: Record<string, unknown>): Partial<Produc
     ),
     price: read("售价", "销售价", "价格", "price", "Price", "Sale price"),
     inventory: read("库存", "inventory", "Inventory"),
+    weight: sanitizeWeightInput(read("产品重量", "重量", "Weight", "Product weight")),
+    ...(normalizeWeightUnit(read("重量单位", "Weight unit", "WeightUnit"))
+      ? {
+          weightUnit: normalizeWeightUnit(
+            read("重量单位", "Weight unit", "WeightUnit"),
+          ) as ProductWeightUnit,
+        }
+      : {}),
+    countryCodeOfOrigin: normalizeCountryCodeOfOrigin(
+      read(
+        "原产国家/地区",
+        "原产国家",
+        "原产地",
+        "Country/Region of origin",
+        "Country of origin",
+        "countryCodeOfOrigin",
+      ),
+    ),
+    harmonizedSystemCode: sanitizeHsCode(
+      read(
+        "HS 编码",
+        "HS编码",
+        "协调制度 (HS) 编码",
+        "协调制度编码",
+        "Harmonized System Code",
+        "harmonizedSystemCode",
+      ),
+    ),
     categoryColor: readCategoryMetafield(
       "类别元字段颜色",
       "类别颜色",
@@ -1024,6 +1155,25 @@ function mapKeyValueTextToProductForm(value: string): Partial<ProductForm> {
     compareAtPrice: ["原价", "划线价", "吊牌价", "Compare at price", "Original price"],
     price: ["售价", "销售价", "价格", "Price", "Sale price"],
     inventory: ["库存", "Inventory"],
+    requiresShipping: ["实体产品", "需要发货", "Requires shipping", "Physical product"],
+    weight: ["产品重量", "重量", "Weight", "Product weight"],
+    weightUnit: ["重量单位", "Weight unit", "WeightUnit"],
+    countryCodeOfOrigin: [
+      "原产国家/地区",
+      "原产国家",
+      "原产地",
+      "Country/Region of origin",
+      "Country of origin",
+      "countryCodeOfOrigin",
+    ],
+    harmonizedSystemCode: [
+      "HS 编码",
+      "HS编码",
+      "协调制度 (HS) 编码",
+      "协调制度编码",
+      "Harmonized System Code",
+      "harmonizedSystemCode",
+    ],
     status: ["状态", "Status"],
     categoryColor: ["类别元字段颜色", "类别颜色", "颜色", "Color"],
     categorySize: ["类别元字段尺寸", "尺寸", "Size"],
@@ -1064,7 +1214,30 @@ function mapKeyValueTextToProductForm(value: string): Partial<ProductForm> {
   >) {
     if (field === "status") continue;
     const extracted = extractByLabels(value, labels);
-    if (extracted) result[field] = extracted as never;
+    if (!extracted) continue;
+    if (field === "requiresShipping") {
+      const parsed = parseBooleanLike(extracted);
+      if (parsed !== null) result.requiresShipping = parsed;
+      continue;
+    }
+    if (field === "weight") {
+      result.weight = sanitizeWeightInput(extracted);
+      continue;
+    }
+    if (field === "weightUnit") {
+      const unit = normalizeWeightUnit(extracted);
+      if (unit) result.weightUnit = unit;
+      continue;
+    }
+    if (field === "countryCodeOfOrigin") {
+      result.countryCodeOfOrigin = normalizeCountryCodeOfOrigin(extracted);
+      continue;
+    }
+    if (field === "harmonizedSystemCode") {
+      result.harmonizedSystemCode = sanitizeHsCode(extracted);
+      continue;
+    }
+    result[field] = extracted as never;
   }
   const category = findShopifyCategoryByName(result.shopifyCategoryName || "");
   if (category) {
@@ -1844,6 +2017,24 @@ function parseVariantSizes(value: string): string[] {
         .map((item) => item.trim())
         .filter(Boolean),
     ),
+  );
+}
+
+function normalizeImportedSizeText(value: string): string {
+  const lines = value
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) =>
+      line
+        .replace(/\s*\/\s*/g, " / ")
+        .replace(/[ \t]+/g, " ")
+        .trim(),
+    )
+    .filter(Boolean);
+  const uniqueLines = Array.from(new Set(lines));
+  return (uniqueLines.length ? uniqueLines : DEFAULT_SIZE_VARIANT_OPTIONS).join(
+    "\n",
   );
 }
 
@@ -2895,6 +3086,11 @@ export default function ProductListingPage() {
             />
             <SyncPanel
               form={form}
+              shopifyBindingKey={
+                hasActiveShopifyBinding && binding
+                  ? `${binding.shopDomain}:${binding.updatedAt || 0}`
+                  : ""
+              }
               syncState={syncState}
               syncAction={syncAction}
               lastAction={lastAction}
@@ -2918,6 +3114,12 @@ export default function ProductListingPage() {
               }
               onTemplateStyleChange={(value) =>
                 setForm((prev) => ({ ...prev, templateStyle: value }))
+              }
+              onAddCollection={(collection) =>
+                setForm((prev) => ({
+                  ...prev,
+                  collections: appendProductTag(prev.collections, collection),
+                }))
               }
               onAddTag={(tag) =>
                 setForm((prev) => ({
@@ -4624,6 +4826,7 @@ function ProductFormPanel({
   ) => void;
 }) {
   const mediaInputRef = useRef<HTMLInputElement | null>(null);
+  const sizeImportInputRef = useRef<HTMLInputElement | null>(null);
   const variantOptionMenuRef = useRef<HTMLDivElement | null>(null);
   const variantGroupByMenuRef = useRef<HTMLDivElement | null>(null);
   const categoryMetafieldsCategoryIdRef = useRef("");
@@ -4637,6 +4840,7 @@ function ProductFormPanel({
   );
   const [variantDialogOpen, setVariantDialogOpen] = useState(false);
   const [variantSizeText, setVariantSizeText] = useState("");
+  const [importingSizeText, setImportingSizeText] = useState(false);
   const [variantValueDraft, setVariantValueDraft] = useState("");
   const [variantValueInputFocused, setVariantValueInputFocused] =
     useState(false);
@@ -4692,6 +4896,9 @@ function ProductFormPanel({
     groups: ProductVariantOptionGroup[];
   } | null>(null);
   const [skuExpanded, setSkuExpanded] = useState(false);
+  const [customsExpanded, setCustomsExpanded] = useState(false);
+  const countryOfOriginRef = useRef<HTMLSelectElement | null>(null);
+  const hsCodeRef = useRef<HTMLInputElement | null>(null);
   const [variantSectionCollapsed, setVariantSectionCollapsed] = useState(false);
   const [variantOptionMenuOpen, setVariantOptionMenuOpen] = useState(false);
   const [variantOptionSearch, setVariantOptionSearch] = useState("");
@@ -4704,6 +4911,13 @@ function ProductFormPanel({
   const [loadingCategoryMetafields, setLoadingCategoryMetafields] =
     useState(false);
   const [categoryMetafieldLoadError, setCategoryMetafieldLoadError] =
+    useState("");
+  const [countryOfOriginOptions, setCountryOfOriginOptions] = useState<
+    ShopifyCustomsOption[]
+  >([]);
+  const [loadingCountryOfOriginOptions, setLoadingCountryOfOriginOptions] =
+    useState(false);
+  const [countryOfOriginOptionsError, setCountryOfOriginOptionsError] =
     useState("");
   const parsedVariantSizes = parseVariantSizes(variantSizeText);
   const pendingVariantSizes = parseVariantSizes(
@@ -4721,6 +4935,14 @@ function ProductFormPanel({
   const categoryMetafieldContext = getShopifyCategoryMetafieldContext(
     form.shopifyCategoryId,
   );
+  const displayedCountryOfOriginOptions = useMemo(() => {
+    const options = [...countryOfOriginOptions];
+    const current = normalizeCountryCodeOfOrigin(form.countryCodeOfOrigin);
+    if (current && !options.some((option) => option.value === current)) {
+      options.unshift({ value: current, label: current, count: 0 });
+    }
+    return options;
+  }, [countryOfOriginOptions, form.countryCodeOfOrigin]);
 
   useEffect(() => {
     const shopifyFieldsForCurrentCategory =
@@ -5112,6 +5334,48 @@ function ProductFormPanel({
     return () => controller.abort();
   }, [form.shopifyCategoryId, shopifyBindingKey]);
 
+  useEffect(() => {
+    if (!shopifyBindingKey) {
+      setCountryOfOriginOptions([]);
+      setCountryOfOriginOptionsError("");
+      setLoadingCountryOfOriginOptions(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    setLoadingCountryOfOriginOptions(true);
+    setCountryOfOriginOptionsError("");
+    fetchWithShopifyDevice("/api/shopify/customs-options", {
+      signal: controller.signal,
+    })
+      .then(async (res) => {
+        const contentType = res.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) {
+          throw new Error("Shopify 国家/地区接口暂不可用，请刷新页面后重试。");
+        }
+        const data = (await res.json()) as {
+          countries?: ShopifyCustomsOption[];
+          warnings?: string[];
+          error?: string;
+        };
+        if (!res.ok) throw new Error(data.error || res.statusText);
+        setCountryOfOriginOptions(data.countries || []);
+        setCountryOfOriginOptionsError(
+          (data.warnings || []).filter(Boolean).join("；"),
+        );
+      })
+      .catch((e) => {
+        if (controller.signal.aborted) return;
+        setCountryOfOriginOptions([]);
+        setCountryOfOriginOptionsError(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingCountryOfOriginOptions(false);
+      });
+
+    return () => controller.abort();
+  }, [shopifyBindingKey]);
+
   function update<K extends keyof ProductForm>(key: K, value: ProductForm[K]) {
     if (key === "inventory") {
       setForm((prev) => {
@@ -5160,6 +5424,17 @@ function ProductFormPanel({
       return;
     }
     setForm((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function openCustomsField(field: "country" | "hs") {
+    setCustomsExpanded(true);
+    window.setTimeout(() => {
+      if (field === "country") {
+        countryOfOriginRef.current?.focus();
+      } else {
+        hsCodeRef.current?.focus();
+      }
+    }, 0);
   }
 
   function rememberCategoryMetafieldValue(
@@ -5755,6 +6030,39 @@ function ProductFormPanel({
     );
     setVariantValueDraft("");
     setVariantDialogOpen(true);
+  }
+
+  async function importSizeTxtFile(file: File | null) {
+    if (!file) return;
+    const fileName = file.name.toLowerCase();
+    const isTxtFile = fileName.endsWith(".txt") || file.type === "text/plain";
+    if (!isTxtFile) {
+      window.alert("请导入 .txt 文本文件。");
+      return;
+    }
+
+    setImportingSizeText(true);
+    try {
+      const text = await file.text();
+      const importedText = normalizeImportedSizeText(text);
+      const sizeField = getCategoryMetafieldRowByKey("categorySize");
+      const sizeLabel = sizeField?.label || "Size";
+      const existingSizeGroup =
+        findVariantOptionGroup("Size") || findVariantOptionGroup(sizeLabel);
+      const optionName = existingSizeGroup?.optionName || sizeLabel;
+      openVariantDialog(
+        optionName,
+        sizeField?.key || getVariantOptionMetafieldKey(optionName),
+        existingSizeGroup?.id,
+      );
+      setVariantSizeText(importedText);
+      setVariantValueDraft("");
+      setVariantOptionMenuOpen(false);
+    } catch {
+      window.alert("尺码 TXT 读取失败，请确认文件内容为文本格式后重试。");
+    } finally {
+      setImportingSizeText(false);
+    }
   }
 
   function openVariantOptionPicker() {
@@ -6422,6 +6730,185 @@ function ProductFormPanel({
       </ShopifySection>
 
       <ShopifySection>
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <ShopifySectionHeader title="发货" />
+            <label className="flex items-center gap-2 text-xs font-medium text-gray-700">
+              <span>实体产品</span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={form.requiresShipping}
+                className={`relative h-5 w-9 rounded-full transition-colors ${
+                  form.requiresShipping ? "bg-gray-900" : "bg-gray-300"
+                }`}
+                onClick={() =>
+                  update("requiresShipping", !form.requiresShipping)
+                }
+              >
+                <span
+                  className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                    form.requiresShipping ? "translate-x-4" : "translate-x-0.5"
+                  }`}
+                />
+              </button>
+            </label>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_174px]">
+            <div>
+              <div className="mb-1 flex items-center gap-1 text-xs font-medium text-gray-600">
+                包装
+                <Info size={13} className="text-gray-400" />
+              </div>
+              <div className="relative">
+                <Package
+                  size={14}
+                  className="pointer-events-none absolute left-3 top-1/2 z-10 -translate-y-1/2 text-gray-500"
+                />
+                <Select
+                  value="default"
+                  onChange={() => undefined}
+                  className="w-full [&_select]:pl-8"
+                >
+                  <option value="default">
+                    商店默认 · 样品箱 - 22 × 13.7 × 4.2 厘米，0 kg
+                  </option>
+                </Select>
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-1 text-xs font-medium text-gray-600">
+                产品重量
+              </div>
+              <div className="grid grid-cols-[minmax(0,1fr)_68px] gap-1.5">
+                <Input
+                  label=""
+                  inputMode="decimal"
+                  value={form.weight}
+                  onChange={(e) =>
+                    update("weight", sanitizeWeightInput(e.target.value))
+                  }
+                  placeholder="0.0"
+                />
+                <Select
+                  value={form.weightUnit}
+                  onChange={(e) =>
+                    update("weightUnit", e.target.value as ProductWeightUnit)
+                  }
+                >
+                  {PRODUCT_WEIGHT_UNITS.map((unit) => (
+                    <option key={unit.value} value={unit.value}>
+                      {unit.label}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+          </div>
+
+          {customsExpanded ? (
+            <div className="border-t border-gray-100 pt-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h3 className="text-sm font-semibold text-gray-900">海关信息</h3>
+                <IconButton
+                  size="sm"
+                  variant="ghost"
+                  icon={<ChevronDown size={14} className="rotate-180" />}
+                  aria-label="收起海关信息"
+                  title="收起海关信息"
+                  onClick={() => setCustomsExpanded(false)}
+                />
+              </div>
+              <div className="space-y-4">
+                <div>
+                  <div className="mb-1 flex items-center gap-1 text-xs font-medium text-gray-600">
+                    原产国家/地区
+                    <Info size={13} className="text-gray-400" />
+                  </div>
+                  <Select
+                    ref={countryOfOriginRef}
+                    value={form.countryCodeOfOrigin}
+                    onChange={(e) =>
+                      update(
+                        "countryCodeOfOrigin",
+                        normalizeCountryCodeOfOrigin(e.target.value),
+                      )
+                    }
+                  >
+                    <option value="">
+                      {loadingCountryOfOriginOptions
+                        ? "正在读取 Shopify 官方国家/地区..."
+                        : displayedCountryOfOriginOptions.length
+                          ? "选择"
+                          : "绑定 Shopify 后读取官方国家/地区"}
+                    </option>
+                    {displayedCountryOfOriginOptions.map((country) => (
+                      <option key={country.value} value={country.value}>
+                        {country.label}
+                      </option>
+                    ))}
+                  </Select>
+                  {countryOfOriginOptionsError ? (
+                    <p className="mt-1 text-[11px] text-amber-600">
+                      {countryOfOriginOptionsError}
+                    </p>
+                  ) : null}
+                </div>
+
+                <div>
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1 text-xs font-medium text-gray-600">
+                      协调制度 (HS) 编码
+                      <Info size={13} className="text-gray-400" />
+                    </div>
+                    <MoreHorizontal size={16} className="text-gray-500" />
+                  </div>
+                  <Input
+                    ref={hsCodeRef}
+                    value={form.harmonizedSystemCode}
+                    inputMode="numeric"
+                    onChange={(e) =>
+                      update("harmonizedSystemCode", sanitizeHsCode(e.target.value))
+                    }
+                    placeholder="手动输入 HS 编码，至少 6 位数字"
+                  />
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between gap-3 border-t border-gray-100 pt-3">
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="rounded-md bg-gray-100 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-200"
+                  onClick={() => openCustomsField("country")}
+                >
+                  原产国家/地区
+                </button>
+                <button
+                  type="button"
+                  className="rounded-md bg-gray-100 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-200"
+                  onClick={() => openCustomsField("hs")}
+                >
+                  HS 编码
+                </button>
+              </div>
+              <IconButton
+                size="sm"
+                variant="ghost"
+                icon={<ChevronDown size={14} />}
+                aria-label="展开海关信息"
+                title="展开海关信息"
+                onClick={() => setCustomsExpanded(true)}
+              />
+            </div>
+          )}
+        </div>
+      </ShopifySection>
+
+      <ShopifySection>
         <div className="space-y-3">
           <div className="flex items-center justify-between gap-3">
             <ShopifySectionHeader title="库存" />
@@ -6497,6 +6984,26 @@ function ProductFormPanel({
             title="多属性"
             action={
               <div className="flex items-center gap-2">
+                <input
+                  ref={sizeImportInputRef}
+                  type="file"
+                  accept={SIZE_TXT_IMPORT_ACCEPT}
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.currentTarget.files?.[0] || null;
+                    e.currentTarget.value = "";
+                    void importSizeTxtFile(file);
+                  }}
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  leftIcon={<Upload size={13} />}
+                  loading={importingSizeText}
+                  onClick={() => sizeImportInputRef.current?.click()}
+                >
+                  导入尺码
+                </Button>
                 {hasVariantOptions ? (
                   <Button size="sm" variant="ghost" onClick={removeVariantRows}>
                     清空
@@ -8076,18 +8583,25 @@ function TagBox({
   label,
   tags = [],
   onRemoveTag,
+  onAddClick,
 }: {
   label: string;
   tags?: string[];
   onRemoveTag?: (tag: string) => void;
+  onAddClick?: () => void;
 }) {
   return (
     <div>
       <div className="mb-1 flex items-center justify-between gap-2 text-xs font-medium text-gray-700">
         <span>{label}</span>
-        <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-400 text-[11px] text-gray-600">
+        <button
+          type="button"
+          className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-400 text-[11px] text-gray-600 hover:border-gray-600 hover:bg-gray-100 hover:text-gray-900"
+          aria-label={`添加${label}`}
+          onClick={onAddClick}
+        >
           +
-        </span>
+        </button>
       </div>
       <div className="min-h-[54px] rounded-md border border-gray-300 bg-white p-2">
         <div className="flex flex-wrap gap-1">
@@ -8221,8 +8735,227 @@ function ProductStatusDropdown({
   );
 }
 
+function filterProductOrganizationOptions(
+  options: ShopifyProductOrganizationOption[],
+  search: string,
+): ShopifyProductOrganizationOption[] {
+  const keyword = search.trim().toLowerCase();
+  return options
+    .filter((option) => {
+      if (!keyword) return true;
+      return [option.label, option.value, option.handle || ""].some((value) =>
+        value.toLowerCase().includes(keyword),
+      );
+    })
+    .slice(0, 80);
+}
+
+function ProductOrganizationOptionMenu({
+  search,
+  onSearchChange,
+  options,
+  featuredOptions = [],
+  selectedValues,
+  loading,
+  error,
+  searchPlaceholder,
+  emptyLabel,
+  allowAdd,
+  multiSelect,
+  wrapLabels,
+  featuredLabel,
+  optionsLabel,
+  onSelect,
+  onAddSearch,
+}: {
+  search: string;
+  onSearchChange: (value: string) => void;
+  options: ShopifyProductOrganizationOption[];
+  featuredOptions?: ShopifyProductOrganizationOption[];
+  selectedValues: string[];
+  loading: boolean;
+  error: string;
+  searchPlaceholder: string;
+  emptyLabel: string;
+  allowAdd?: boolean;
+  multiSelect?: boolean;
+  wrapLabels?: boolean;
+  featuredLabel?: string;
+  optionsLabel?: string;
+  onSelect: (value: string) => void;
+  onAddSearch?: (value: string) => void;
+}) {
+  const filteredOptions = filterProductOrganizationOptions(options, search);
+  const filteredFeaturedOptions = filterProductOrganizationOptions(
+    featuredOptions,
+    search,
+  );
+  const featuredKeys = new Set(
+    featuredOptions.map((option) => option.value.toLowerCase()),
+  );
+  const regularOptions = filteredOptions.filter(
+    (option) => !featuredKeys.has(option.value.toLowerCase()),
+  );
+  const visibleOptions = [...filteredFeaturedOptions, ...regularOptions];
+  const regularOptionsLabel =
+    optionsLabel || (filteredFeaturedOptions.length ? "其他标记" : "");
+  const normalizedSelected = selectedValues.map((value) => value.toLowerCase());
+  const searchValue = search.trim();
+  const hasSearchValue =
+    Boolean(searchValue) &&
+    !visibleOptions.some(
+      (option) => option.value.toLowerCase() === searchValue.toLowerCase(),
+    ) &&
+    !normalizedSelected.includes(searchValue.toLowerCase());
+  const renderOption = (option: ShopifyProductOrganizationOption) => {
+    const active = normalizedSelected.includes(option.value.toLowerCase());
+    return (
+      <button
+        key={option.id || option.value}
+        type="button"
+        className={`flex w-full items-start gap-3 px-3 py-2 text-left text-sm transition-colors ${
+          active ? "bg-gray-50 text-gray-500" : "text-gray-800 hover:bg-gray-50"
+        }`}
+        onClick={() => onSelect(option.value)}
+      >
+        {multiSelect ? (
+          <span
+            className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+              active
+                ? "border-gray-900 bg-gray-900 text-white"
+                : "border-gray-300 bg-white"
+            }`}
+            aria-hidden="true"
+          >
+            {active ? <Check size={11} /> : null}
+          </span>
+        ) : null}
+        <span
+          className={`min-w-0 flex-1 ${
+            wrapLabels
+              ? "whitespace-normal break-words leading-5"
+              : "truncate"
+          }`}
+        >
+          {option.label}
+        </span>
+        {!multiSelect && active ? (
+          <Check size={14} className="mt-0.5 shrink-0" />
+        ) : null}
+      </button>
+    );
+  };
+
+  return (
+    <div className="absolute left-0 right-0 top-[calc(100%+4px)] z-50 overflow-hidden rounded-md border border-gray-200 bg-white shadow-lg">
+      <div className="relative border-b border-gray-100">
+        <Search
+          size={14}
+          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+        />
+        <input
+          value={search}
+          onChange={(event) => onSearchChange(event.target.value)}
+          className="h-9 w-full border-0 bg-white py-1.5 pl-8 pr-3 text-sm text-gray-900 placeholder-gray-400 focus:outline-none"
+          placeholder={searchPlaceholder}
+          autoFocus
+        />
+      </div>
+      <div className="max-h-64 overflow-y-auto py-1">
+        {loading ? (
+          <div className="px-3 py-3 text-xs text-gray-500">
+            正在读取 Shopify 后台...
+          </div>
+        ) : visibleOptions.length ? (
+          <>
+            {filteredFeaturedOptions.length ? (
+              <div className="px-3 pb-1 pt-2 text-xs font-medium text-gray-500">
+                {featuredLabel || "常用"}
+              </div>
+            ) : null}
+            {filteredFeaturedOptions.map(renderOption)}
+            {regularOptions.length && regularOptionsLabel ? (
+              <div className="px-3 pb-1 pt-2 text-xs font-medium text-gray-500">
+                {regularOptionsLabel}
+              </div>
+            ) : null}
+            {regularOptions.map(renderOption)}
+          </>
+        ) : error ? (
+          <div className="px-3 py-3 text-xs text-amber-600">{error}</div>
+        ) : (
+          <div className="px-3 py-3 text-xs text-gray-500">{emptyLabel}</div>
+        )}
+        {!loading && error && visibleOptions.length ? (
+          <div className="border-t border-gray-100 px-3 py-2 text-xs text-amber-600">
+            {error}
+          </div>
+        ) : null}
+        {allowAdd && hasSearchValue && onAddSearch ? (
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 border-t border-gray-100 px-3 py-2 text-left text-sm text-gray-800 hover:bg-gray-50"
+            onClick={() => onAddSearch(searchValue)}
+          >
+            <Plus size={14} className="text-gray-500" />
+            <span className="min-w-0 truncate">添加 “{searchValue}”</span>
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function ProductOrganizationTextPicker({
+  label,
+  value,
+  placeholder,
+  onChange,
+  open,
+  onOpen,
+  menu,
+}: {
+  label: string;
+  value: string;
+  placeholder?: string;
+  onChange: (value: string) => void;
+  open: boolean;
+  onOpen: () => void;
+  menu: React.ReactNode;
+}) {
+  return (
+    <div className="relative" data-product-organization-picker>
+      <label className="mb-1 block text-xs font-medium text-gray-700">
+        {label}
+      </label>
+      <div className="relative">
+        <input
+          value={value}
+          placeholder={placeholder}
+          onChange={(event) => onChange(event.target.value)}
+          onClick={onOpen}
+          className="h-9 w-full rounded-md border border-gray-300 bg-white px-3 py-1.5 pr-8 text-sm text-gray-900 transition-colors hover:border-gray-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+        />
+        <button
+          type="button"
+          className="absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+          aria-label={`打开${label}选项`}
+          onClick={onOpen}
+        >
+          <ChevronDown
+            size={14}
+            className={`transition-transform ${open ? "rotate-180" : ""}`}
+          />
+        </button>
+      </div>
+      {open ? menu : null}
+    </div>
+  );
+}
+
 function SyncPanel({
   form,
+  shopifyBindingKey,
   syncState,
   syncAction,
   lastAction,
@@ -8234,11 +8967,13 @@ function SyncPanel({
   onProductTypeChange,
   onVendorChange,
   onTemplateStyleChange,
+  onAddCollection,
   onAddTag,
   onRemoveTag,
   onRemoveCollection,
 }: {
   form: ProductForm;
+  shopifyBindingKey: string;
   syncState: SyncState;
   syncAction: SyncAction;
   lastAction: string;
@@ -8250,10 +8985,24 @@ function SyncPanel({
   onProductTypeChange: (value: string) => void;
   onVendorChange: (value: string) => void;
   onTemplateStyleChange: (value: string) => void;
+  onAddCollection: (collection: string) => void;
   onAddTag: (tag: string) => void;
   onRemoveTag: (tag: string) => void;
   onRemoveCollection: (collection: string) => void;
 }) {
+  const organizationOptionsAbortRef = useRef<AbortController | null>(null);
+  const [organizationOptions, setOrganizationOptions] =
+    useState<ShopifyProductOrganizationOptionsState>(
+      EMPTY_PRODUCT_ORGANIZATION_OPTIONS,
+    );
+  const [organizationOptionsLoaded, setOrganizationOptionsLoaded] =
+    useState(false);
+  const [loadingOrganizationOptions, setLoadingOrganizationOptions] =
+    useState(false);
+  const [organizationOptionsError, setOrganizationOptionsError] = useState("");
+  const [activeOrganizationPicker, setActiveOrganizationPicker] =
+    useState<ProductOrganizationPickerKey | null>(null);
+  const [organizationSearch, setOrganizationSearch] = useState("");
   const completed = [
     Boolean(form.title.trim()),
     Boolean(form.description.trim()),
@@ -8265,6 +9014,125 @@ function SyncPanel({
   const productTags = splitProductTags(form.tags);
   const canSaveDraft = Boolean(form.title.trim());
   const canPublish = completed >= 3;
+  const selectedOrganizationValues = {
+    productType: form.productType ? [form.productType] : [],
+    vendor: form.vendor ? [form.vendor] : [],
+    collections: productCollections,
+    tags: productTags,
+  };
+  const commonTagOptions = useMemo(() => {
+    const tagByKey = new Map(
+      organizationOptions.tags.map((tag) => [tag.value.toLowerCase(), tag] as const),
+    );
+    const merged: ShopifyProductOrganizationOption[] = [];
+    const seen = new Set<string>();
+    for (const value of PRODUCT_TAG_QUICK_OPTIONS) {
+      const key = value.toLowerCase();
+      const tag = tagByKey.get(key);
+      if (!tag || seen.has(key)) continue;
+      seen.add(key);
+      merged.push(tag);
+    }
+    for (const tag of organizationOptions.commonTags) {
+      const key = tag.value.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(tag);
+    }
+    return merged;
+  }, [organizationOptions.commonTags, organizationOptions.tags]);
+
+  useEffect(() => {
+    organizationOptionsAbortRef.current?.abort();
+    setOrganizationOptions(EMPTY_PRODUCT_ORGANIZATION_OPTIONS);
+    setOrganizationOptionsLoaded(false);
+    setLoadingOrganizationOptions(false);
+    setOrganizationOptionsError("");
+    setActiveOrganizationPicker(null);
+    setOrganizationSearch("");
+  }, [shopifyBindingKey, form.shopifyCategoryId]);
+
+  useEffect(() => {
+    return () => organizationOptionsAbortRef.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    if (!activeOrganizationPicker) return;
+    function handlePointerDown(e: MouseEvent) {
+      if (!(e.target as Element).closest("[data-product-organization-picker]")) {
+        setActiveOrganizationPicker(null);
+      }
+    }
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, [activeOrganizationPicker]);
+
+  async function loadProductOrganizationOptions() {
+    if (!shopifyBindingKey) {
+      setOrganizationOptionsError("请先绑定 Shopify 店铺。");
+      return;
+    }
+    if (
+      !form.shopifyCategoryId ||
+      form.shopifyCategoryId === SHOPIFY_UNCATEGORIZED_CATEGORY_ID
+    ) {
+      setOrganizationOptionsError("请先选择 Shopify 类别。");
+      return;
+    }
+    if (organizationOptionsLoaded || loadingOrganizationOptions) return;
+
+    organizationOptionsAbortRef.current?.abort();
+    const controller = new AbortController();
+    organizationOptionsAbortRef.current = controller;
+    setLoadingOrganizationOptions(true);
+    setOrganizationOptionsError("");
+    try {
+      const params = new URLSearchParams({
+        categoryId: form.shopifyCategoryId,
+      });
+      const res = await fetchWithShopifyDevice(
+        `/api/shopify/product-organization-options?${params.toString()}`,
+        { signal: controller.signal },
+      );
+      const contentType = res.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        throw new Error("Shopify 产品组织接口暂不可用，请刷新页面后重试。");
+      }
+      const data = (await res.json()) as Partial<
+        ShopifyProductOrganizationOptionsState
+      > & {
+        warnings?: string[];
+        error?: string;
+      };
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      setOrganizationOptions({
+        productTypes: data.productTypes || [],
+        vendors: data.vendors || [],
+        collections: data.collections || [],
+        commonTags: data.commonTags || [],
+        tags: data.tags || [],
+      });
+      setOrganizationOptionsLoaded(true);
+      setOrganizationOptionsError(
+        (data.warnings || []).filter(Boolean).join("；"),
+      );
+    } catch (e) {
+      if (controller.signal.aborted) return;
+      setOrganizationOptions(EMPTY_PRODUCT_ORGANIZATION_OPTIONS);
+      setOrganizationOptionsLoaded(false);
+      setOrganizationOptionsError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (!controller.signal.aborted) {
+        setLoadingOrganizationOptions(false);
+      }
+    }
+  }
+
+  function openOrganizationPicker(key: ProductOrganizationPickerKey) {
+    setActiveOrganizationPicker(key);
+    setOrganizationSearch("");
+    void loadProductOrganizationOptions();
+  }
 
   const status = {
     idle: { label: "未同步", tone: "gray" as const, icon: <Clock size={13} /> },
@@ -8322,22 +9190,143 @@ function SyncPanel({
               </span>
             }
           />
-          <Input
+          <ProductOrganizationTextPicker
             label="类型"
             value={form.productType}
-            onChange={(event) => onProductTypeChange(event.target.value)}
+            placeholder="无"
+            onChange={onProductTypeChange}
+            open={activeOrganizationPicker === "productType"}
+            onOpen={() => openOrganizationPicker("productType")}
+            menu={
+              <ProductOrganizationOptionMenu
+                search={organizationSearch}
+                onSearchChange={setOrganizationSearch}
+                options={organizationOptions.productTypes}
+                selectedValues={selectedOrganizationValues.productType}
+                loading={loadingOrganizationOptions}
+                error={organizationOptionsError}
+                searchPlaceholder="搜索或添加类型"
+                emptyLabel="Shopify 后台暂无类型条目"
+                allowAdd
+                onSelect={(value) => {
+                  onProductTypeChange(value);
+                  setActiveOrganizationPicker(null);
+                }}
+                onAddSearch={(value) => {
+                  onProductTypeChange(value);
+                  setActiveOrganizationPicker(null);
+                }}
+              />
+            }
           />
-          <Input
+          <ProductOrganizationTextPicker
             label="厂商"
             value={form.vendor}
-            onChange={(event) => onVendorChange(event.target.value)}
+            onChange={onVendorChange}
+            open={activeOrganizationPicker === "vendor"}
+            onOpen={() => openOrganizationPicker("vendor")}
+            menu={
+              <ProductOrganizationOptionMenu
+                search={organizationSearch}
+                onSearchChange={setOrganizationSearch}
+                options={organizationOptions.vendors}
+                selectedValues={selectedOrganizationValues.vendor}
+                loading={loadingOrganizationOptions}
+                error={organizationOptionsError}
+                searchPlaceholder="搜索或添加厂商"
+                emptyLabel="Shopify 后台暂无厂商条目"
+                allowAdd
+                onSelect={(value) => {
+                  onVendorChange(value);
+                  setActiveOrganizationPicker(null);
+                }}
+                onAddSearch={(value) => {
+                  onVendorChange(value);
+                  setActiveOrganizationPicker(null);
+                }}
+              />
+            }
           />
-          <TagBox
-            label="产品系列"
-            tags={productCollections}
-            onRemoveTag={onRemoveCollection}
-          />
-          <TagBox label="标记" tags={productTags} onRemoveTag={onRemoveTag} />
+          <div className="relative" data-product-organization-picker>
+            <TagBox
+              label="产品系列"
+              tags={productCollections}
+              onRemoveTag={onRemoveCollection}
+              onAddClick={() => openOrganizationPicker("collections")}
+            />
+            {activeOrganizationPicker === "collections" ? (
+              <ProductOrganizationOptionMenu
+                search={organizationSearch}
+                onSearchChange={setOrganizationSearch}
+                options={organizationOptions.collections}
+                selectedValues={selectedOrganizationValues.collections}
+                loading={loadingOrganizationOptions}
+                error={organizationOptionsError}
+                searchPlaceholder="搜索或添加产品系列"
+                emptyLabel="Shopify 后台暂无产品系列条目"
+                allowAdd
+                multiSelect
+                onSelect={(value) => {
+                  if (
+                    selectedOrganizationValues.collections.some(
+                      (item) => item.toLowerCase() === value.toLowerCase(),
+                    )
+                  ) {
+                    onRemoveCollection(value);
+                  } else {
+                    onAddCollection(value);
+                  }
+                  setOrganizationSearch("");
+                }}
+                onAddSearch={(value) => {
+                  onAddCollection(value);
+                  setOrganizationSearch("");
+                }}
+              />
+            ) : null}
+          </div>
+          <div className="relative" data-product-organization-picker>
+            <TagBox
+              label="标记"
+              tags={productTags}
+              onRemoveTag={onRemoveTag}
+              onAddClick={() => openOrganizationPicker("tags")}
+            />
+            {activeOrganizationPicker === "tags" ? (
+              <ProductOrganizationOptionMenu
+                search={organizationSearch}
+                onSearchChange={setOrganizationSearch}
+                options={organizationOptions.tags}
+                featuredOptions={commonTagOptions}
+                selectedValues={selectedOrganizationValues.tags}
+                loading={loadingOrganizationOptions}
+                error={organizationOptionsError}
+                searchPlaceholder="搜索或添加标记"
+                emptyLabel="Shopify 后台暂无标记条目"
+                allowAdd
+                multiSelect
+                wrapLabels
+                featuredLabel="常用"
+                optionsLabel="其他标记"
+                onSelect={(value) => {
+                  if (
+                    selectedOrganizationValues.tags.some(
+                      (item) => item.toLowerCase() === value.toLowerCase(),
+                    )
+                  ) {
+                    onRemoveTag(value);
+                  } else {
+                    onAddTag(value);
+                  }
+                  setOrganizationSearch("");
+                }}
+                onAddSearch={(value) => {
+                  onAddTag(value);
+                  setOrganizationSearch("");
+                }}
+              />
+            ) : null}
+          </div>
           <TagQuickOptions
             options={PRODUCT_TAG_QUICK_OPTIONS}
             activeTags={productTags}

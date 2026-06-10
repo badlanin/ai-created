@@ -28,6 +28,13 @@ import {
   SearchInput,
   extractFolderName,
 } from "@/app/_components/ui";
+import {
+  appendProductListingMedia,
+  PRODUCT_LISTING_MEDIA_STORAGE_KEY,
+  PRODUCT_LISTING_NOTICE_STORAGE_KEY,
+  type ProductListingMediaItem,
+} from "@/lib/product-listing-draft";
+import { fetchWithShopifyDevice } from "@/lib/shopify-device-client";
 import { useCurrentUser } from "@/lib/hooks/use-current-user";
 import { useJobPolling } from "@/lib/hooks/use-job-polling";
 import { useSlotStore } from "@/lib/stores/task-store";
@@ -181,6 +188,23 @@ function fileNameFromUrl(url: string, index: number, mimeType: string | null) {
   return `${base || `url-image-${index + 1}`}.${extensionFromMime(mimeType)}`;
 }
 
+function readListingMediaDraft(): ProductListingMediaItem[] {
+  try {
+    const raw = window.localStorage.getItem(PRODUCT_LISTING_MEDIA_STORAGE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as ProductListingMediaItem[]) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeListingMediaDraft(media: ProductListingMediaItem[]) {
+  window.localStorage.setItem(
+    PRODUCT_LISTING_MEDIA_STORAGE_KEY,
+    JSON.stringify(media),
+  );
+}
+
 /* ─────────── 页面主组件 ─────────── */
 
 export default function RecolorPage() {
@@ -207,6 +231,7 @@ export default function RecolorPage() {
     new Set(),
   );
   const [savingScraped, setSavingScraped] = useState(false);
+  const [savingToProductMedia, setSavingToProductMedia] = useState(false);
   const [originalPreview, setOriginalPreview] =
     useState<OriginalPreview | null>(null);
   const scrapedClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -738,6 +763,108 @@ export default function RecolorPage() {
     }
   }
 
+  async function saveSelectedScrapedImagesToProductMedia() {
+    const selected = scrapedImages.filter((img) =>
+      selectedScrapedUrls.has(img.url),
+    );
+    if (selected.length === 0) {
+      notifyHelpers.warn(push, "请先选择要保存到媒体文件的图片");
+      return;
+    }
+
+    setSavingToProductMedia(true);
+    try {
+      const bindingRes = await fetchWithShopifyDevice("/api/shopify/connection");
+      const binding = (await bindingRes.json().catch(() => ({}))) as {
+        bound?: boolean;
+      };
+      if (!bindingRes.ok || !binding.bound) {
+        notifyHelpers.warn(push, "请先绑定 Shopify 店铺", "未绑定时不会写入产品上架媒体文件");
+        return;
+      }
+
+      const formData = new FormData();
+      const uploadedSources: ScrapedImage[] = [];
+      let fileCount = 0;
+      for (const img of selected) {
+        const res = await fetch(img.proxyUrl);
+        if (!res.ok) continue;
+        const mimeType = res.headers.get("content-type") || "image/jpeg";
+        const blob = await res.blob();
+        formData.append(
+          "files",
+          new File([blob], fileNameFromUrl(img.url, fileCount, mimeType), {
+            type: mimeType,
+          }),
+        );
+        uploadedSources.push(img);
+        fileCount += 1;
+      }
+
+      if (fileCount === 0) {
+        notifyHelpers.error(
+          push,
+          "保存至媒体文件失败",
+          "选中的图片无法下载",
+        );
+        return;
+      }
+
+      const uploadRes = await fetch("/api/product-listing/media", {
+        method: "POST",
+        body: formData,
+      });
+      const uploadData = (await uploadRes.json()) as {
+        items?: Array<{ url: string; alt?: string | null }>;
+        error?: string;
+      };
+      if (!uploadRes.ok) {
+        throw new Error(uploadData.error || uploadRes.statusText);
+      }
+
+      const uploadedItems = uploadData.items || [];
+      const { media, addedCount } = appendProductListingMedia(
+        readListingMediaDraft(),
+        uploadedItems.map((item, index) => ({
+          url: item.url,
+          alt:
+            item.alt ||
+            uploadedSources[index]?.alt ||
+            `HEX 换色抓取图片 ${index + 1}`,
+          role: index === 0 ? "main" : "detail",
+          sourceLabel: "HEX 换色抓取图片",
+        })),
+      );
+      writeListingMediaDraft(media);
+      setSelectedScrapedUrls((prev) => {
+        const next = new Set(prev);
+        for (const img of selected) next.delete(img.url);
+        return next;
+      });
+      window.sessionStorage.setItem(
+        PRODUCT_LISTING_NOTICE_STORAGE_KEY,
+        addedCount > 0
+          ? `已添加 ${addedCount} 张 HEX 换色抓取图片到媒体文件`
+          : "选中的图片已经在媒体文件中",
+      );
+      notifyHelpers.success(
+        push,
+        addedCount > 0
+          ? `已保存 ${addedCount} 张图片到媒体文件`
+          : "选中的图片已经在媒体文件中",
+      );
+      window.location.href = "/product-listing?media=added";
+    } catch (e) {
+      notifyHelpers.error(
+        push,
+        "保存至媒体文件失败",
+        e instanceof Error ? e.message : String(e),
+      );
+    } finally {
+      setSavingToProductMedia(false);
+    }
+  }
+
   function onCropConfirm(i: number, blob: Blob) {
     setCompressedBlobs((prev) => {
       const next = [...prev];
@@ -1210,20 +1337,40 @@ export default function RecolorPage() {
                         <div className="text-[11px] text-fg-tertiary">
                           ↑ 被选中图片右上角显示绿色 √
                         </div>
-                        <button
-                          type="button"
-                          onClick={saveSelectedScrapedImages}
-                          disabled={savingScraped || selectedScrapedUrls.size === 0}
-                          className="btn btn-primary btn-md"
-                        >
-                          {savingScraped
-                            ? "保存中..."
-                            : `保存选中图片${
-                                selectedScrapedUrls.size
-                                  ? `（${selectedScrapedUrls.size}）`
-                                  : ""
-                              }`}
-                        </button>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={saveSelectedScrapedImages}
+                            disabled={
+                              savingScraped ||
+                              savingToProductMedia ||
+                              selectedScrapedUrls.size === 0
+                            }
+                            className="btn btn-primary btn-md"
+                          >
+                            {savingScraped
+                              ? "保存中..."
+                              : `保存选中图片${
+                                  selectedScrapedUrls.size
+                                    ? `（${selectedScrapedUrls.size}）`
+                                    : ""
+                                }`}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={saveSelectedScrapedImagesToProductMedia}
+                            disabled={
+                              savingScraped ||
+                              savingToProductMedia ||
+                              selectedScrapedUrls.size === 0
+                            }
+                            className="btn btn-secondary btn-md"
+                          >
+                            {savingToProductMedia
+                              ? "保存中..."
+                              : "保存至媒体文件"}
+                          </button>
+                        </div>
                       </div>
                     ) : null}
                   </div>
