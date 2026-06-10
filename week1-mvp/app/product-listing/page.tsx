@@ -3933,6 +3933,9 @@ function AiPanel({
         label="大模型提示词"
         value={promptText}
         onChange={(e) => onPromptTextChange(e.target.value)}
+        onCopy={(e) => e.stopPropagation()}
+        onCut={(e) => e.stopPropagation()}
+        onPaste={(e) => e.stopPropagation()}
         placeholder="例如：请根据主图和细节图生成 Shopify 英文商品标题、描述、产品系列、标签、类别元字段、SKU、原价、售价建议和 SEO 信息，输出为 key: value 格式。"
         rows={5}
       />
@@ -6478,6 +6481,19 @@ function ProductFormPanel({
     return Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean)));
   }
 
+  function saveBackendSellingContextsToForm() {
+    const shouldPersist =
+      backendSellingContextsLoaded ||
+      backendSelectedSalesChannelIds.length > 0 ||
+      backendSelectedCatalogIds.length > 0;
+    if (!shouldPersist) return;
+    const publicationIds = getBackendSelectedPublicationIds();
+    setForm((prev) => ({
+      ...prev,
+      publicationIds,
+    }));
+  }
+
   function renderSwitchControl(active: boolean, disabled = false) {
     return (
       <span
@@ -6581,7 +6597,12 @@ function ProductFormPanel({
     const optionValue = normalizeCategoryMetafieldMemoryValue(
       optionEntries.map((entry) => entry.value).join(" / "),
     );
-    if (!optionValue || backendVariantValueExists) return;
+    if (!optionValue) {
+      saveBackendSellingContextsToForm();
+      closeBackendVariantEditor();
+      return;
+    }
+    if (backendVariantValueExists) return;
 
     const primaryEntry = optionEntries[0];
     const primaryGroup = primaryEntry?.group || backendVariantEditorGroups[0];
