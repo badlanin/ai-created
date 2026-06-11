@@ -279,6 +279,26 @@ type ProductVariantOptionGroup = {
   rows: ProductVariantRow[];
 };
 
+type VariantTableDisplayRow = {
+  id: string;
+  label: string;
+  rows: ProductVariantRow[];
+  representative: ProductVariantRow;
+  selected: boolean;
+  price: string;
+  inventory: string;
+  childCount: number;
+};
+
+type VariantGroupImageOverride = {
+  url: string;
+  alt: string;
+};
+
+type VariantImagePickerTarget =
+  | { type: "variant"; rowId: string }
+  | { type: "group"; groupName: string; value: string; displayRowId: string };
+
 type AiImageSuggestion = {
   id: string;
   originalUrl: string;
@@ -5024,8 +5044,11 @@ function ProductFormPanel({
     useState("");
   const [backendImagePickerSelectionAlt, setBackendImagePickerSelectionAlt] =
     useState("");
-  const [backendImagePickerTargetRowId, setBackendImagePickerTargetRowId] =
-    useState<string | null>(null);
+  const [backendImagePickerTarget, setBackendImagePickerTarget] =
+    useState<VariantImagePickerTarget | null>(null);
+  const [variantGroupImageOverrides, setVariantGroupImageOverrides] = useState<
+    Record<string, VariantGroupImageOverride>
+  >({});
   const [backendVariantOptionValues, setBackendVariantOptionValues] = useState<
     Record<string, string>
   >({});
@@ -5187,15 +5210,15 @@ function ProductFormPanel({
       }));
     }
 
-    const values = activeOptionGroup.values.length
-      ? activeOptionGroup.values
-      : Array.from(
-          new Set(
-            variantRows
-              .map((row) => getVariantRowOptionValue(row, activeOptionGroup))
-              .filter(Boolean),
-          ),
-        );
+    const valuesByKey = new Map<string, string>();
+    for (const row of variantRows) {
+      const value = normalizeCategoryMetafieldMemoryValue(
+        getVariantRowOptionValue(row, activeOptionGroup),
+      );
+      const key = value.toLowerCase();
+      if (key && !valuesByKey.has(key)) valuesByKey.set(key, value);
+    }
+    const values = Array.from(valuesByKey.values());
     return values
       .map((value) => {
         const normalized = normalizeCategoryMetafieldMemoryValue(value).toLowerCase();
@@ -5225,16 +5248,7 @@ function ProductFormPanel({
       .filter(
         (
           row,
-        ): row is {
-          id: string;
-          label: string;
-          rows: ProductVariantRow[];
-          representative: ProductVariantRow;
-          selected: boolean;
-          price: string;
-          inventory: string;
-          childCount: number;
-        } => Boolean(row),
+        ): row is VariantTableDisplayRow => Boolean(row),
       );
   }, [activeOptionGroup, variantRows]);
   const backendVisibleVariantGroups = useMemo<ProductVariantOptionGroup[]>(() => {
@@ -6276,12 +6290,17 @@ function ProductFormPanel({
     setBackendImageSearch("");
     setBackendImagePickerSelectionUrl("");
     setBackendImagePickerSelectionAlt("");
-    setBackendImagePickerTargetRowId(null);
+    setBackendImagePickerTarget(null);
     setBackendImagePickerOpen(false);
     setBackendSellingContextPanel(null);
     setBackendSellingContextError("");
-    setBackendSelectedSalesChannelIds([]);
-    setBackendSelectedCatalogIds([]);
+    const savedSellingContextSelection = getBackendSelectionFromPublicationIds(
+      form.publicationIds,
+    );
+    setBackendSelectedSalesChannelIds(
+      savedSellingContextSelection.salesChannelIds,
+    );
+    setBackendSelectedCatalogIds(savedSellingContextSelection.catalogIds);
     setBackendVariantEditorOpen(true);
   }
 
@@ -6298,7 +6317,7 @@ function ProductFormPanel({
     setBackendImageSearch("");
     setBackendImagePickerSelectionUrl("");
     setBackendImagePickerSelectionAlt("");
-    setBackendImagePickerTargetRowId(null);
+    setBackendImagePickerTarget(null);
     setBackendImagePickerOpen(false);
     setBackendSellingContextPanel(null);
     setBackendSelectedSalesChannelIds([]);
@@ -6310,7 +6329,7 @@ function ProductFormPanel({
     setBackendImageSearch("");
     setBackendImagePickerSelectionUrl(backendVariantImageUrl);
     setBackendImagePickerSelectionAlt(backendVariantImageAlt);
-    setBackendImagePickerTargetRowId(null);
+    setBackendImagePickerTarget(null);
     setBackendImagePickerOpen(true);
   }
 
@@ -6320,22 +6339,99 @@ function ProductFormPanel({
     setBackendImageSearch("");
     setBackendImagePickerSelectionUrl(currentUrl);
     setBackendImagePickerSelectionAlt(currentAlt);
-    setBackendImagePickerTargetRowId(row.id);
+    setBackendImagePickerTarget({ type: "variant", rowId: row.id });
+    setBackendImagePickerOpen(true);
+  }
+
+  function openVariantDisplayRowImagePicker(displayRow: VariantTableDisplayRow) {
+    if (displayRow.childCount <= 1) {
+      openVariantRowImagePicker(displayRow.representative);
+      return;
+    }
+
+    const override = variantGroupImageOverrides[displayRow.id];
+    const row = displayRow.representative;
+    const currentUrl = override?.url || row.imageUrl || selectedMainMedia?.url || "";
+    const currentAlt =
+      override?.alt || row.imageAlt || selectedMainMedia?.alt || displayRow.label;
+    setBackendImageSearch("");
+    setBackendImagePickerSelectionUrl(currentUrl);
+    setBackendImagePickerSelectionAlt(currentAlt);
+    setBackendImagePickerTarget({
+      type: "group",
+      groupName: activeOptionGroup?.optionName || variantGroupByOptionName,
+      value: displayRow.label,
+      displayRowId: displayRow.id,
+    });
     setBackendImagePickerOpen(true);
   }
 
   function closeBackendImagePicker() {
     setBackendImagePickerOpen(false);
     setBackendImageSearch("");
-    setBackendImagePickerTargetRowId(null);
+    setBackendImagePickerTarget(null);
     setBackendImagePickerSelectionUrl(backendVariantImageUrl);
     setBackendImagePickerSelectionAlt(backendVariantImageAlt);
   }
 
   function confirmBackendImagePicker() {
     if (!backendImagePickerSelectionUrl) return;
-    if (backendImagePickerTargetRowId) {
-      const targetRowId = backendImagePickerTargetRowId;
+    if (backendImagePickerTarget?.type === "group") {
+      const targetGroupRowId = backendImagePickerTarget.displayRowId;
+      const targetGroupName = normalizeVariantOptionName(
+        backendImagePickerTarget.groupName,
+      ).toLowerCase();
+      const targetValue = normalizeCategoryMetafieldMemoryValue(
+        backendImagePickerTarget.value,
+      ).toLowerCase();
+      const targetDisplayRow = variantTableRows.find(
+        (row) => row.id === targetGroupRowId,
+      );
+      const targetRowIds = new Set<string>();
+      for (const row of variantRows) {
+        const matchedSelection = row.optionValues?.find(
+          (selection) =>
+            normalizeVariantOptionName(selection.optionName).toLowerCase() ===
+            targetGroupName,
+        );
+        if (
+          matchedSelection &&
+          normalizeCategoryMetafieldMemoryValue(matchedSelection.value).toLowerCase() ===
+            targetValue
+        ) {
+          targetRowIds.add(row.id);
+        }
+      }
+      if (!targetRowIds.size) {
+        for (const row of targetDisplayRow?.rows || []) targetRowIds.add(row.id);
+      }
+      if (targetRowIds.size) {
+        setCurrentVariantRows((prev) =>
+          prev.map((row) =>
+            targetRowIds.has(row.id)
+              ? {
+                  ...row,
+                  imageUrl: backendImagePickerSelectionUrl,
+                  imageAlt: backendImagePickerSelectionAlt || row.imageAlt,
+                }
+              : row,
+          ),
+        );
+      }
+      setVariantGroupImageOverrides((prev) => ({
+        ...prev,
+        [targetGroupRowId]: {
+          url: backendImagePickerSelectionUrl,
+          alt: backendImagePickerSelectionAlt,
+        },
+      }));
+      setBackendImagePickerTarget(null);
+      setBackendImagePickerOpen(false);
+      setBackendImageSearch("");
+      return;
+    }
+    if (backendImagePickerTarget?.type === "variant") {
+      const targetRowId = backendImagePickerTarget.rowId;
       setCurrentVariantRows((prev) =>
         prev.map((row) =>
           row.id === targetRowId
@@ -6347,7 +6443,7 @@ function ProductFormPanel({
             : row,
         ),
       );
-      setBackendImagePickerTargetRowId(null);
+      setBackendImagePickerTarget(null);
       setBackendImagePickerOpen(false);
       setBackendImageSearch("");
       return;
@@ -6481,6 +6577,40 @@ function ProductFormPanel({
     return Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean)));
   }
 
+  function getBackendSelectionFromPublicationIds(
+    publicationIds: string[],
+    channels: ShopifySalesChannelOption[] = backendSalesChannels,
+    catalogs: ShopifyCatalogOption[] = backendCatalogs,
+  ) {
+    const publicationIdSet = new Set(
+      publicationIds.map((id) => id.trim()).filter(Boolean),
+    );
+    if (!publicationIdSet.size) {
+      return {
+        hasSavedPublicationIds: false,
+        salesChannelIds: [] as string[],
+        catalogIds: [] as string[],
+      };
+    }
+
+    return {
+      hasSavedPublicationIds: true,
+      salesChannelIds: channels
+        .filter(
+          (channel) =>
+            !channel.disabled && publicationIdSet.has(channel.publicationId),
+        )
+        .map((channel) => channel.id),
+      catalogIds: catalogs
+        .filter(
+          (catalog) =>
+            catalog.publicationId &&
+            publicationIdSet.has(catalog.publicationId),
+        )
+        .map((catalog) => catalog.id),
+    };
+  }
+
   function saveBackendSellingContextsToForm() {
     const shouldPersist =
       backendSellingContextsLoaded ||
@@ -6568,13 +6698,30 @@ function ProductFormPanel({
       const res = await fetchWithShopifyDevice("/api/shopify/selling-contexts");
       const data = (await res.json()) as ShopifySellingContextsResponse;
       if (!res.ok) throw new Error(data.error || res.statusText);
-      setBackendSalesChannels(data.channels || []);
-      setBackendCatalogs(data.catalogs || []);
+      const channels = data.channels || [];
+      const catalogs = data.catalogs || [];
+      const savedSelection = getBackendSelectionFromPublicationIds(
+        form.publicationIds,
+        channels,
+        catalogs,
+      );
+      setBackendSalesChannels(channels);
+      setBackendCatalogs(catalogs);
       setBackendSelectedSalesChannelIds((prev) => {
         if (prev.length) return prev;
-        return (data.channels || [])
+        if (savedSelection.hasSavedPublicationIds) {
+          return savedSelection.salesChannelIds;
+        }
+        return channels
           .filter((channel) => !channel.disabled)
           .map((channel) => channel.id);
+      });
+      setBackendSelectedCatalogIds((prev) => {
+        if (prev.length) return prev;
+        if (savedSelection.hasSavedPublicationIds) {
+          return savedSelection.catalogIds;
+        }
+        return prev;
       });
       setBackendSellingContextError((data.warnings || []).join("；"));
       setBackendSellingContextsLoaded(true);
@@ -6681,7 +6828,18 @@ function ProductFormPanel({
         id: primaryGroup?.id || makeVariantOptionGroupId(),
         optionName,
         optionMetafieldKey: linkedKey,
-        values: nextRows.map((row) => row.size),
+        values: Array.from(
+          new Set(
+            nextRows
+              .map((row) =>
+                primaryGroup
+                  ? getVariantRowOptionValue(row, primaryGroup)
+                  : row.size,
+              )
+              .map(normalizeCategoryMetafieldMemoryValue)
+              .filter(Boolean),
+          ),
+        ),
         rows: nextRows,
       };
       const existingIndex = groups.findIndex(
@@ -7869,9 +8027,17 @@ function ProductFormPanel({
                   </div>
                   {variantTableRows.map((displayRow) => {
                     const row = displayRow.representative;
-                    const variantImageUrl = row.imageUrl || selectedMainMedia?.url;
+                    const groupImageOverride =
+                      displayRow.childCount > 1
+                        ? variantGroupImageOverrides[displayRow.id]
+                        : null;
+                    const variantImageUrl =
+                      groupImageOverride?.url || row.imageUrl || selectedMainMedia?.url;
                     const variantImageAlt =
-                      row.imageAlt || selectedMainMedia?.alt || displayRow.label;
+                      groupImageOverride?.alt ||
+                      row.imageAlt ||
+                      selectedMainMedia?.alt ||
+                      displayRow.label;
                     return (
                       <div
                         key={displayRow.id}
@@ -7899,7 +8065,7 @@ function ProductFormPanel({
                             className="flex h-14 w-12 items-center justify-center overflow-hidden rounded-md border border-gray-200 bg-gray-50 transition hover:border-blue-300 hover:ring-2 hover:ring-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                             aria-label={`选择 ${displayRow.label} 图片`}
                             title="选择图片"
-                            onClick={() => openVariantRowImagePicker(row)}
+                            onClick={() => openVariantDisplayRowImagePicker(displayRow)}
                           >
                             {variantImageUrl ? (
                               // eslint-disable-next-line @next/next/no-img-element
@@ -8786,7 +8952,7 @@ function ProductFormPanel({
               disabled={!backendImagePickerSelectionUrl}
               onClick={confirmBackendImagePicker}
             >
-              {backendImagePickerTargetRowId ? "保存" : "完成"}
+              {backendImagePickerTarget ? "保存" : "完成"}
             </Button>
           </>
         }
