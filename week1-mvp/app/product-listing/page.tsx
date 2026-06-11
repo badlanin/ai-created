@@ -5801,8 +5801,25 @@ function ProductFormPanel({
         normalizeVariantOptionName(item.optionName).toLowerCase() === groupName,
     );
     if (selection?.value) return selection.value;
+    const normalizedLabel = normalizeCategoryMetafieldMemoryValue(row.size);
+    const matchedValue = group.values.find((value) =>
+      variantLabelIncludesOptionValue(normalizedLabel, value),
+    );
+    if (matchedValue) return matchedValue;
+    if (group.values.length === 1) return group.values[0];
     if (row.optionValues?.length) return "";
     return row.size;
+  }
+
+  function variantLabelIncludesOptionValue(label: string, value: string) {
+    const normalizedValue = normalizeCategoryMetafieldMemoryValue(value);
+    if (!label || !normalizedValue) return false;
+    return (
+      label === normalizedValue ||
+      label.startsWith(`${normalizedValue} / `) ||
+      label.endsWith(` / ${normalizedValue}`) ||
+      label.includes(` / ${normalizedValue} / `)
+    );
   }
 
   function getVariantSelectionKey(selections: ProductVariantOptionSelection[]) {
@@ -6384,21 +6401,19 @@ function ProductFormPanel({
       const targetValue = normalizeCategoryMetafieldMemoryValue(
         backendImagePickerTarget.value,
       ).toLowerCase();
+      const targetGroup =
+        variantOptionGroups.find(
+          (group) =>
+            normalizeVariantOptionName(group.optionName).toLowerCase() ===
+            targetGroupName,
+        ) || null;
       const targetDisplayRow = variantTableRows.find(
         (row) => row.id === targetGroupRowId,
       );
       const targetRowIds = new Set<string>();
       for (const row of variantRows) {
-        const matchedSelection = row.optionValues?.find(
-          (selection) =>
-            normalizeVariantOptionName(selection.optionName).toLowerCase() ===
-            targetGroupName,
-        );
-        if (
-          matchedSelection &&
-          normalizeCategoryMetafieldMemoryValue(matchedSelection.value).toLowerCase() ===
-            targetValue
-        ) {
+        const rowValue = targetGroup ? getVariantRowOptionValue(row, targetGroup) : "";
+        if (normalizeCategoryMetafieldMemoryValue(rowValue).toLowerCase() === targetValue) {
           targetRowIds.add(row.id);
         }
       }
