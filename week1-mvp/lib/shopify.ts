@@ -20,6 +20,7 @@ export const SHOPIFY_OAUTH_SCOPES = [
   "read_products",
   "write_products",
   "read_publications",
+  "write_publications",
 ].join(",");
 
 export type ShopifyAuthMode =
@@ -2094,7 +2095,7 @@ export async function getShopifySellingContexts(
   const publicationErrors = formatGraphqlMessages(publicationsJson.errors);
   if (publicationErrors) {
     warnings.push(
-      `读取 Shopify 销售渠道失败：${publicationErrors}。如使用 OAuth，请确认应用权限包含 read_publications 并重新授权。`,
+      `读取 Shopify 销售渠道失败：${publicationErrors}。如使用 OAuth，请确认应用权限包含 read_publications/write_publications 并重新授权。`,
     );
   } else {
     const seenChannels = new Set<string>();
@@ -3303,19 +3304,27 @@ async function syncShopifyProductPublications(
     );
     const topLevelErrors = formatGraphqlMessages(json.errors);
     if (topLevelErrors) {
-      warnings.push(`发布到 Shopify 销售渠道/目录失败：${topLevelErrors}`);
+      warnings.push(
+        `发布到 Shopify 销售渠道/目录失败：${topLevelErrors}。请确认授权包含 write_publications，并重新授权/重新安装应用后再发布。`,
+      );
     }
+    const userErrors = normalizeUserErrors(
+      json.data?.publishablePublish?.userErrors,
+    );
     warnings.push(
-      ...normalizeUserErrors(json.data?.publishablePublish?.userErrors).map(
-        (message) => `发布到 Shopify 销售渠道/目录失败：${message}`,
+      ...userErrors.map(
+        (message) =>
+          `发布到 Shopify 销售渠道/目录失败：${message}。请确认授权包含 write_publications，并重新授权/重新安装应用后再发布。`,
       ),
     );
-    if (!topLevelErrors) {
+    if (!topLevelErrors && !userErrors.length) {
       warnings.push(`已匹配发布到 Shopify 销售渠道/目录：${ids.length} 个。`);
     }
   } catch (e) {
     warnings.push(
-      `发布到 Shopify 销售渠道/目录失败：${e instanceof Error ? e.message : String(e)}`,
+      `发布到 Shopify 销售渠道/目录失败：${
+        e instanceof Error ? e.message : String(e)
+      }。请确认授权包含 write_publications，并重新授权/重新安装应用后再发布。`,
     );
   }
 }
