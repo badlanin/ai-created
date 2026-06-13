@@ -505,6 +505,21 @@ function parseBooleanLike(value: string): boolean | null {
   return null;
 }
 
+const FIXED_FULFILLMENT_DEFAULTS: Pick<
+  ProductForm,
+  | "inventory"
+  | "weight"
+  | "weightUnit"
+  | "countryCodeOfOrigin"
+  | "harmonizedSystemCode"
+> = {
+  inventory: "1000",
+  weight: "1500",
+  weightUnit: "GRAMS",
+  countryCodeOfOrigin: "CN",
+  harmonizedSystemCode: "610419",
+};
+
 const EMPTY_FORM: ProductForm = {
   title: "",
   description: "",
@@ -522,13 +537,13 @@ const EMPTY_FORM: ProductForm = {
   sku: "",
   compareAtPrice: "",
   price: "",
-  inventory: "",
+  inventory: FIXED_FULFILLMENT_DEFAULTS.inventory,
   taxable: false,
   requiresShipping: true,
-  weight: "0.0",
-  weightUnit: "GRAMS",
-  countryCodeOfOrigin: "",
-  harmonizedSystemCode: "",
+  weight: FIXED_FULFILLMENT_DEFAULTS.weight,
+  weightUnit: FIXED_FULFILLMENT_DEFAULTS.weightUnit,
+  countryCodeOfOrigin: FIXED_FULFILLMENT_DEFAULTS.countryCodeOfOrigin,
+  harmonizedSystemCode: FIXED_FULFILLMENT_DEFAULTS.harmonizedSystemCode,
   status: "DRAFT",
   categoryColor: "",
   categorySize: "",
@@ -943,8 +958,22 @@ function stripMarkdownJsonFence(value: string): string {
 function parseAiOutputToForm(raw: string): Partial<ProductForm> {
   const cleaned = sanitizeAiOutput(raw);
   const json = parseAiJson(cleaned);
-  if (json) return mapObjectToProductForm(json);
-  return mapKeyValueTextToProductForm(cleaned);
+  const parsed = json
+    ? mapObjectToProductForm(json)
+    : mapKeyValueTextToProductForm(cleaned);
+  return removeAiFulfillmentFields(parsed);
+}
+
+function removeAiFulfillmentFields(
+  parsed: Partial<ProductForm>,
+): Partial<ProductForm> {
+  const rest = { ...parsed };
+  delete rest.inventory;
+  delete rest.weight;
+  delete rest.weightUnit;
+  delete rest.countryCodeOfOrigin;
+  delete rest.harmonizedSystemCode;
+  return rest;
 }
 
 function parseAiJson(value: string): Record<string, unknown> | null {

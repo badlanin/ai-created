@@ -221,6 +221,51 @@ function fileNameFromUrl(url: string, index: number, mimeType: string | null) {
   return `${base || `web-image-${index + 1}`}.${extensionFromMime(mimeType)}`;
 }
 
+const DIRECT_IMAGE_URL_EXTENSIONS = /\.(avif|bmp|gif|jpe?g|png|tiff?|webp)$/i;
+
+function parseDirectImageUrls(value: string) {
+  const parts = value
+    .split(/[\s,，;；]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (!parts.length) return [];
+
+  const urls: string[] = [];
+  for (const item of parts) {
+    let parsed: URL;
+    try {
+      parsed = new URL(item);
+    } catch {
+      return [];
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return [];
+    const pathname = decodeURIComponent(parsed.pathname || "");
+    const format = (parsed.searchParams.get("format") || parsed.searchParams.get("fm") || "")
+      .trim()
+      .toLowerCase();
+    const looksLikeImage =
+      DIRECT_IMAGE_URL_EXTENSIONS.test(pathname) ||
+      ["avif", "bmp", "gif", "jpeg", "jpg", "png", "tif", "tiff", "webp"].includes(
+        format,
+      );
+    if (!looksLikeImage) return [];
+    urls.push(parsed.href);
+  }
+
+  return Array.from(new Set(urls));
+}
+
+function buildDirectImageItems(urls: string[]): ScrapedImage[] {
+  return urls.map((url, index) => ({
+    id: `direct_${index + 1}`,
+    url,
+    proxyUrl: `/api/scrape-images?url=${encodeURIComponent(url)}`,
+    alt: fileNameFromUrl(url, index, null),
+    width: null,
+    height: null,
+  }));
+}
+
 function normalizeAssetUrl(url?: string | null): string {
   if (!url) return "";
   try {
@@ -911,6 +956,14 @@ function BatchPhotoTab({
     setScrapeLoading(true);
     setSelectedScrapedUrls(new Set());
     try {
+      const directImageUrls = parseDirectImageUrls(url);
+      if (directImageUrls.length) {
+        const images = buildDirectImageItems(directImageUrls);
+        setScrapedImages(images);
+        notifyHelpers.success(push, `已导入 ${images.length} 张图片 URL`);
+        return;
+      }
+
       const res = await fetch("/api/scrape-images", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

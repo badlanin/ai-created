@@ -433,18 +433,13 @@ type ShopifyPublicationsResponse = {
     publications?: {
       nodes?: Array<{
         id: string;
+        name?: string | null;
         autoPublish?: boolean | null;
         supportsFuturePublishing?: boolean | null;
         catalog?: {
           id?: string | null;
           title?: string | null;
           status?: string | null;
-        } | null;
-        channels?: {
-          nodes?: Array<{
-            id: string;
-            name?: string | null;
-          }>;
         } | null;
       }>;
     } | null;
@@ -658,6 +653,17 @@ type ShopifyVariantAppendMediaResponse = {
       }>;
       userErrors?: Array<{ field?: string[]; message?: string }>;
     };
+  };
+  errors?: Array<{ message?: string }>;
+};
+
+type ShopifySkuLookupResponse = {
+  data?: {
+    productVariants?: {
+      nodes?: Array<{
+        inventoryItem?: { sku?: string | null } | null;
+      }>;
+    } | null;
   };
   errors?: Array<{ message?: string }>;
 };
@@ -2075,18 +2081,13 @@ export async function getShopifySellingContexts(
       publications(first: 50) {
         nodes {
           id
+          name
           autoPublish
           supportsFuturePublishing
           catalog {
             id
             title
             status
-          }
-          channels(first: 20) {
-            nodes {
-              id
-              name
-            }
           }
         }
       }
@@ -2104,7 +2105,14 @@ export async function getShopifySellingContexts(
       const catalogTitle = cleanField(publication.catalog?.title) || null;
       const status = cleanField(publication.catalog?.status) || null;
       const publicationId = cleanField(publication.id);
-      const channelNodes = publication.channels?.nodes || [];
+      const channelNodes = publicationId
+        ? [
+            {
+              id: publicationId,
+              name: cleanField(publication.name) || catalogTitle || "",
+            },
+          ]
+        : [];
 
       if (!channelNodes.length && publicationId) {
         const key = `publication:${publicationId}`;
@@ -2482,6 +2490,13 @@ export async function syncShopifyProduct(
     variantDrafts,
     warnings,
   );
+  const resolvedVariantSkus = await resolveSharedShopifyVariantSkus(
+    stored.shopDomain,
+    stored.accessToken,
+    input,
+    variantDrafts,
+    warnings,
+  );
   const variantOptionName =
     productOptionDrafts[0]?.optionName ||
     cleanField(input.variantGroupByOptionName) ||
@@ -2518,6 +2533,7 @@ export async function syncShopifyProduct(
     mediaInput = await buildProductMediaInput(
       stored.shopDomain,
       stored.accessToken,
+      title,
       input.media || [],
     );
   } catch (e) {
@@ -2649,7 +2665,7 @@ export async function syncShopifyProduct(
   const price = normalizeVariantPrice(firstVariantDraft?.price, input.price);
   if (compareAtPrice) variantInput.compareAtPrice = compareAtPrice;
   if (price) variantInput.price = price;
-  const sku = cleanField(firstVariantDraft?.sku || input.sku);
+  const sku = resolvedVariantSkus[0] || "";
   variantInput.inventoryItem = buildInventoryItemInput(input, sku);
   const firstVariantMediaId = resolveVariantMediaId(
     firstVariantDraft,
@@ -2707,7 +2723,7 @@ export async function syncShopifyProduct(
 
   const extraVariantDrafts = variantDrafts.slice(1);
   if (extraVariantDrafts.length) {
-    const createVariantInput = extraVariantDrafts.map((variant) => {
+    const createVariantInput = extraVariantDrafts.map((variant, index) => {
       const inputVariant: Record<string, unknown> = {
         optionValues: buildVariantOptionValueInputsForVariant(
           variant,
@@ -2718,7 +2734,7 @@ export async function syncShopifyProduct(
       const variantPrice = normalizeVariantPrice(variant.price, input.price);
       if (variantPrice) inputVariant.price = variantPrice;
       if (compareAtPrice) inputVariant.compareAtPrice = compareAtPrice;
-      const variantSku = cleanField(variant.sku);
+      const variantSku = resolvedVariantSkus[index + 1] || "";
       inputVariant.inventoryItem = buildInventoryItemInput(input, variantSku);
       const variantMediaId = resolveVariantMediaId(
         variant,
@@ -3853,24 +3869,43 @@ function collectionHandleFromTitle(value: string): string {
 async function buildProductMediaInput(
   shopDomain: string,
   accessToken: string,
+  productTitle: string,
   media: NonNullable<ShopifyProductDraftInput["media"]>,
 ): Promise<ShopifyMediaInputWithSource[]> {
   const result: ShopifyMediaInputWithSource[] = [];
-  for (const item of media) {
+  for (const [index, item] of media.entries()) {
     const url = cleanField(item.url);
     if (!url) continue;
     const localPath = resolveLocalAssetPath(url);
     const originalSource = localPath
-      ? await uploadLocalImageToShopify(shopDomain, accessToken, localPath)
+      ? await uploadLocalImageToShopify(
+          shopDomain,
+          accessToken,
+          localPath,
+          buildProductMediaFilename(productTitle, index, localPath),
+        )
       : url;
     result.push({
       mediaContentType: "IMAGE",
       originalSource,
       sourceUrl: url,
-      alt: cleanField(item.alt) || undefined,
     });
   }
   return result;
+}
+
+function buildProductMediaFilename(
+  productTitle: string,
+  index: number,
+  filePath: string,
+): string {
+  const ext = path.extname(filePath) || ".jpg";
+  const title = cleanField(productTitle)
+    .replace(/[/\\?%*:|"<>]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 160);
+  return `${title || path.basename(filePath, ext)}${index + 1}${ext}`;
 }
 
 function resolveLocalAssetPath(url: string): string | null {
@@ -3890,8 +3925,9 @@ async function uploadLocalImageToShopify(
   shopDomain: string,
   accessToken: string,
   filePath: string,
+  filenameOverride?: string,
 ): Promise<string> {
-  const filename = path.basename(filePath);
+  const filename = filenameOverride || path.basename(filePath);
   const mimeType = mimeTypeFromFilename(filename);
   const createJson = await shopifyGraphql<ShopifyStagedUploadsCreateResponse>(
     shopDomain,
@@ -6066,6 +6102,80 @@ function normalizeCountryCodeOfOriginForShopify(value?: string): string {
 function normalizeHarmonizedSystemCodeForShopify(value?: string): string {
   const code = cleanField(value).replace(/\D/g, "").slice(0, 13);
   return code.length >= 6 ? code : "";
+}
+
+const SHORT_SKU_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const SHORT_SKU_LENGTH = 6;
+const SHORT_SKU_PATTERN = /^[A-Z0-9]{5,7}$/;
+
+async function resolveSharedShopifyVariantSkus(
+  shopDomain: string,
+  accessToken: string,
+  input: ShopifyProductDraftInput,
+  variants: NormalizedProductVariantDraft[],
+  warnings: string[],
+): Promise<string[]> {
+  const count = Math.max(1, variants.length);
+  const preferred = normalizeShortSkuCandidate(
+    input.sku || variants.find((variant) => variant.sku)?.sku || "",
+  );
+  let sharedSku = preferred;
+
+  if (!sharedSku || (await shopifySkuExists(shopDomain, accessToken, sharedSku))) {
+    sharedSku = await generateAvailableShopifySku(shopDomain, accessToken);
+    warnings.push(`已自动生成不重复的商品 SKU：${sharedSku}。`);
+  }
+
+  return Array.from({ length: count }, () => sharedSku);
+}
+
+function normalizeShortSkuCandidate(value?: string): string {
+  const sku = cleanField(value).toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return SHORT_SKU_PATTERN.test(sku) ? sku : "";
+}
+
+async function generateAvailableShopifySku(
+  shopDomain: string,
+  accessToken: string,
+): Promise<string> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const sku = generateShortSku();
+    if (!(await shopifySkuExists(shopDomain, accessToken, sku))) return sku;
+  }
+  throw new Error("无法生成不重复 SKU，请稍后重试或手动填写 SKU。");
+}
+
+function generateShortSku(length = SHORT_SKU_LENGTH): string {
+  let sku = "";
+  for (let i = 0; i < length; i += 1) {
+    sku += SHORT_SKU_ALPHABET[crypto.randomInt(SHORT_SKU_ALPHABET.length)];
+  }
+  return sku;
+}
+
+async function shopifySkuExists(
+  shopDomain: string,
+  accessToken: string,
+  sku: string,
+): Promise<boolean> {
+  const json = await shopifyGraphql<ShopifySkuLookupResponse>(
+    shopDomain,
+    accessToken,
+    `query FindBuqiqiSku($query: String!) {
+      productVariants(first: 10, query: $query) {
+        nodes {
+          inventoryItem {
+            sku
+          }
+        }
+      }
+    }`,
+    { query: `sku:${sku}` },
+  );
+  assertNoTopLevelGraphqlErrors(json.errors);
+  return (json.data?.productVariants?.nodes || []).some(
+    (node) => cleanField(node.inventoryItem?.sku).toUpperCase() === sku,
+  );
 }
 
 function buildInventoryItemInput(
