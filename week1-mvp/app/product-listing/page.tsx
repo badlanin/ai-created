@@ -5129,6 +5129,7 @@ function ProductFormPanel({
   const [editingOptionGroupId, setEditingOptionGroupId] = useState<string | null>(
     null,
   );
+  const [dragVariantGroupIndex, setDragVariantGroupIndex] = useState<number | null>(null);
   const [variantEditorSnapshot, setVariantEditorSnapshot] = useState<{
     optionName: string;
     optionMetafieldKey: string;
@@ -6938,6 +6939,24 @@ function ProductFormPanel({
     closeBackendVariantEditor();
   }
 
+  function handleVariantGroupDragStart(index: number) {
+    setDragVariantGroupIndex(index);
+  }
+
+  function handleVariantGroupDrop(targetIndex: number) {
+    if (dragVariantGroupIndex === null || dragVariantGroupIndex === targetIndex) {
+      setDragVariantGroupIndex(null);
+      return;
+    }
+    setVariantOptionGroups((groups) => {
+      const next = [...groups];
+      const [moved] = next.splice(dragVariantGroupIndex, 1);
+      next.splice(targetIndex, 0, moved);
+      return next;
+    });
+    setDragVariantGroupIndex(null);
+  }
+
   function chooseVariantOption(optionName: string) {
     setVariantOptionMenuOpen(false);
     setVariantOptionSearch("");
@@ -7726,35 +7745,53 @@ function ProductFormPanel({
                     const active =
                       normalizeVariantOptionName(group.optionName) ===
                       normalizeVariantOptionName(variantGroupByOptionName);
+                    const isDragSource = dragVariantGroupIndex === index;
                     return (
-                      <button
+                      <div
                         key={group.id}
-                        type="button"
+                        draggable
+                        onDragStart={() => handleVariantGroupDragStart(index)}
+                        onDragOver={(e) => {
+                          if (dragVariantGroupIndex !== null) e.preventDefault();
+                        }}
+                        onDrop={() => handleVariantGroupDrop(index)}
+                        onDragEnd={() => setDragVariantGroupIndex(null)}
                         style={{ order: index * 2 }}
-                        className={`w-full rounded-md border bg-white px-4 py-3 text-left transition-colors ${
+                        className={`w-full rounded-md border bg-white transition-colors ${
                           active
                             ? "border-blue-200 ring-1 ring-blue-100"
                             : "border-gray-200 hover:border-gray-300"
-                        }`}
-                        onClick={() =>
-                          openVariantDialog(
-                            group.optionName,
-                            group.optionMetafieldKey,
-                            group.id,
-                          )
-                        }
+                        } ${isDragSource ? "opacity-40" : ""}`}
                       >
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="text-xs font-semibold text-gray-900">
-                            {group.optionName}
-                          </div>
-                          {active ? (
-                            <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700 ring-1 ring-blue-100">
-                              分组中
-                            </span>
-                          ) : null}
+                        <div className="flex items-center px-3 py-2">
+                          <span
+                            className="mr-2 cursor-grab text-gray-300 hover:text-gray-500 active:cursor-grabbing"
+                            aria-label="拖动排序"
+                          >
+                            <GripVertical size={16} strokeWidth={2} />
+                          </span>
+                          <button
+                            type="button"
+                            className="flex flex-1 items-center justify-between gap-3 py-1"
+                            onClick={() =>
+                              openVariantDialog(
+                                group.optionName,
+                                group.optionMetafieldKey,
+                                group.id,
+                              )
+                            }
+                          >
+                            <div className="text-xs font-semibold text-gray-900">
+                              {group.optionName}
+                            </div>
+                            {active ? (
+                              <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700 ring-1 ring-blue-100">
+                                分组中
+                              </span>
+                            ) : null}
+                          </button>
                         </div>
-                        <div className="mt-2 flex flex-wrap gap-1.5">
+                        <div className="flex flex-wrap gap-1.5 px-3 pb-3">
                           {group.values.map((value) => {
                             const displayValue = getVariantOptionValueDisplayValue(
                               value,
@@ -7770,7 +7807,7 @@ function ProductFormPanel({
                             );
                           })}
                         </div>
-                      </button>
+                      </div>
                     );
                   })}
                 </>
