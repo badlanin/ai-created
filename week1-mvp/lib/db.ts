@@ -357,6 +357,35 @@ function migrate(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_render_job_items_status
       ON render_job_items(status);
 
+    CREATE TABLE IF NOT EXISTS url_capture_jobs (
+      id              TEXT PRIMARY KEY,
+      user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      source          TEXT NOT NULL DEFAULT 'url_capture',
+      source_label    TEXT,
+      source_url      TEXT NOT NULL,
+      source_host     TEXT,
+      status          TEXT NOT NULL DEFAULT 'saved',
+      selected_count  INTEGER NOT NULL DEFAULT 0,
+      saved_count     INTEGER NOT NULL DEFAULT 0,
+      created_at      INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_url_capture_jobs_user
+      ON url_capture_jobs(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_url_capture_jobs_status
+      ON url_capture_jobs(status, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS url_capture_items (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      job_id      TEXT NOT NULL REFERENCES url_capture_jobs(id) ON DELETE CASCADE,
+      idx         INTEGER NOT NULL,
+      image_url   TEXT NOT NULL,
+      media_url   TEXT NOT NULL,
+      created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
+      UNIQUE(job_id, idx)
+    );
+    CREATE INDEX IF NOT EXISTS idx_url_capture_items_job
+      ON url_capture_items(job_id, idx);
+
     -- ==========================================
     -- P3-2: 公告栏（管理员可编辑，所有用户可见）
     -- ==========================================

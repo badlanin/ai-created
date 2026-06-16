@@ -2903,6 +2903,31 @@ export default function ProductListingPage() {
     setLastAction("大模型输出已清理并填入 Shopify 商品表单");
   }
 
+  function buildShopifySyncMediaItems() {
+    const syncMedia = mediaItems.map((item) => ({
+      url: item.url,
+      alt: item.alt,
+      role: item.role,
+    }));
+    const seen = new Set(
+      syncMedia.map((item) => normalizeMediaUrlForCompare(item.url)),
+    );
+
+    for (const row of variantRows) {
+      const url = row.imageUrl.trim();
+      const key = normalizeMediaUrlForCompare(url);
+      if (!url || seen.has(key)) continue;
+      seen.add(key);
+      syncMedia.push({
+        url,
+        alt: row.imageAlt || row.size || form.title,
+        role: "gallery" as ProductMediaRole,
+      });
+    }
+
+    return syncMedia;
+  }
+
   async function syncToShopify(
     statusOverride?: ProductStatus,
     action: Exclude<SyncAction, null> =
@@ -2918,6 +2943,7 @@ export default function ProductListingPage() {
       `正在同步到 Shopify 商品后台：${getProductStatusOption(productStatus).label}`,
     );
     try {
+      const shopifyMediaItems = buildShopifySyncMediaItems();
       const res = await fetchWithShopifyDevice("/api/shopify/products", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2927,11 +2953,7 @@ export default function ProductListingPage() {
             status: productStatus,
             categoryId: form.shopifyCategoryId,
             categoryName: form.shopifyCategoryName,
-            media: mediaItems.map((item) => ({
-              url: item.url,
-              alt: item.alt,
-              role: item.role,
-            })),
+            media: shopifyMediaItems,
             optionGroups: variantOptionGroups.map((group) => ({
               optionName: group.optionName,
               optionMetafieldKey: group.optionMetafieldKey,
@@ -2946,8 +2968,8 @@ export default function ProductListingPage() {
               inventory: row.inventory,
               imageUrl:
                 row.imageUrl ||
-                mediaItems.find((item) => item.role === "main")?.url ||
-                mediaItems[0]?.url ||
+                shopifyMediaItems.find((item) => item.role === "main")?.url ||
+                shopifyMediaItems[0]?.url ||
                 "",
               isMainImage: row.isMainImage,
             })),
@@ -6446,9 +6468,7 @@ function ProductFormPanel({
           targetRowIds.add(row.id);
         }
       }
-      if (!targetRowIds.size) {
-        for (const row of targetDisplayRow?.rows || []) targetRowIds.add(row.id);
-      }
+      for (const row of targetDisplayRow?.rows || []) targetRowIds.add(row.id);
       if (targetRowIds.size) {
         setCurrentVariantRows((prev) =>
           prev.map((row) =>

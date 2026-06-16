@@ -34,6 +34,7 @@ import {
   PRODUCT_LISTING_NOTICE_STORAGE_KEY,
   type ProductListingMediaItem,
 } from "@/lib/product-listing-draft";
+import { appendUrlCaptureHistory } from "@/lib/url-capture-history";
 import { fetchWithShopifyDevice } from "@/lib/shopify-device-client";
 import { useCurrentUser } from "@/lib/hooks/use-current-user";
 import { useJobPolling } from "@/lib/hooks/use-job-polling";
@@ -889,6 +890,35 @@ export default function RecolorPage() {
         })),
       );
       writeListingMediaDraft(media);
+      const captureRes = await fetch("/api/url-captures", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source: "recolor",
+          sourceLabel: "HEX 换色",
+          sourceUrl,
+          selectedCount: selected.length,
+          savedCount: addedCount,
+          images: uploadedItems.map((item, index) => ({
+            imageUrl: uploadedSources[index]?.url || item.url,
+            mediaUrl: item.url,
+          })),
+        }),
+      });
+      if (!captureRes.ok) {
+        console.warn("[url-captures] save failed", await captureRes.text());
+      }
+      appendUrlCaptureHistory({
+        userId: user?.id,
+        username: user?.username,
+        displayName: user?.display_name,
+        source: "recolor",
+        sourceLabel: "HEX 换色",
+        sourceUrl,
+        selectedCount: selected.length,
+        addedCount,
+        imageUrls: uploadedItems.map((item) => item.url),
+      });
       setSelectedScrapedUrls((prev) => {
         const next = new Set(prev);
         for (const img of selected) next.delete(img.url);

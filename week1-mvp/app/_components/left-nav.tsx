@@ -94,6 +94,7 @@ export function LeftNav({
 
   const adminPaths = [
     "/admin/users",
+    "/admin/product-stats",
     "/admin/billing",
     "/admin/model-prices",
     "/admin/announcements",
@@ -369,6 +370,7 @@ export function LeftNav({
               hasActive={adminExpanded}
             >
               <SubItem href="/admin/users" label="用户" active={isActive("/admin/users")} />
+              <SubItem href="/admin/product-stats" label="产品数量统计" active={isActive("/admin/product-stats")} />
               <SubItem href="/admin/billing" label="团队账单" active={isActive("/admin/billing")} />
               <SubItem href="/admin/model-prices" label="单价 / 汇率" active={isActive("/admin/model-prices")} />
               <SubItem href="/admin/announcements" label="公告栏" active={isActive("/admin/announcements")} />

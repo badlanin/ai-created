@@ -42,6 +42,11 @@ import {
   type ProductListingMediaItem,
 } from "@/lib/product-listing-draft";
 import { fetchWithShopifyDevice } from "@/lib/shopify-device-client";
+import {
+  deleteUrlCaptureHistory,
+  readUrlCaptureHistory,
+  type UrlCaptureHistoryRecord,
+} from "@/lib/url-capture-history";
 
 type Me = {
   id: number;
@@ -92,7 +97,7 @@ type Stats = {
   total: number;
 };
 
-type StatusTab = "all" | "active" | "completed" | "failed";
+type StatusTab = "url" | "all" | "active" | "completed" | "failed";
 type FeatureTab = "all" | Feature;
 
 const FEATURE_TAB_OPTIONS: Array<{ value: FeatureTab; label: string }> = [
@@ -200,10 +205,14 @@ export default function HistoryPage() {
   /** 支持 ?status=active|completed|failed|all URL 参数初始化 tab */
   const initialStatus = (() => {
     const s = searchParams?.get("status");
+    if (s === "url") return "url";
     if (s === "active" || s === "completed" || s === "failed") return s;
     return "all";
   })();
   const [statusTab, setStatusTab] = useState<StatusTab>(initialStatus);
+  const [urlCaptureItems, setUrlCaptureItems] = useState<
+    UrlCaptureHistoryRecord[]
+  >([]);
   const [featureTab, setFeatureTab] = useState<FeatureTab>("all");
   const [scope, setScope] = useState<"me" | "all">("me");
   const [search, setSearch] = useState("");
@@ -211,9 +220,15 @@ export default function HistoryPage() {
   const limit = 20;
   const [total, setTotal] = useState(0);
   const [detailJobId, setDetailJobId] = useState<string | null>(null);
+  const [detailUrlCaptureId, setDetailUrlCaptureId] = useState<string | null>(
+    null,
+  );
 
   // 多选
   const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(new Set());
+  const [selectedUrlCaptureIds, setSelectedUrlCaptureIds] = useState<
+    Set<string>
+  >(new Set());
   const [zipping, setZipping] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [listingJobId, setListingJobId] = useState<string | null>(null);
@@ -225,11 +240,15 @@ export default function HistoryPage() {
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    setUrlCaptureItems(readUrlCaptureHistory());
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const qs = new URLSearchParams({
-        status: statusTab,
+        status: statusTab === "url" ? "all" : statusTab,
         feature: featureTab,
         scope,
         page: String(page),
@@ -272,10 +291,34 @@ export default function HistoryPage() {
     });
   }, [items, search]);
 
-  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const filteredUrlCaptureItems = useMemo(() => {
+    if (!search.trim()) return urlCaptureItems;
+    const q = search.trim().toLowerCase();
+    return urlCaptureItems.filter((item) => {
+      return (
+        item.id.toLowerCase().includes(q) ||
+        item.sourceUrl.toLowerCase().includes(q) ||
+        item.sourceLabel.toLowerCase().includes(q)
+      );
+    });
+  }, [search, urlCaptureItems]);
+
+  const isUrlCaptureTab = statusTab === "url";
+  const pagedUrlCaptureItems = filteredUrlCaptureItems.slice(
+    (page - 1) * limit,
+    page * limit,
+  );
+  const displayTotal = isUrlCaptureTab ? urlCaptureItems.length : total;
+  const totalPages = Math.max(
+    1,
+    Math.ceil(
+      (isUrlCaptureTab ? filteredUrlCaptureItems.length : total) / limit,
+    ),
+  );
 
   const statusTabs: TabItem[] = [
-    { key: "all", label: "全部", badge: stats.total },
+    { key: "url", label: "URL抓取", badge: urlCaptureItems.length },
+    { key: "all", label: "AI处理", badge: stats.total },
     {
       key: "active",
       label: "进行中",
@@ -305,11 +348,56 @@ export default function HistoryPage() {
     });
   }
 
+  function toggleUrlCapture(id: string) {
+    setSelectedUrlCaptureIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   function selectAllOnPage() {
     setSelectedJobIds(new Set(filteredItems.map((it) => it.id)));
   }
+  function selectAllUrlCapturesOnPage() {
+    setSelectedUrlCaptureIds(new Set(pagedUrlCaptureItems.map((it) => it.id)));
+  }
   function clearSelection() {
     setSelectedJobIds(new Set());
+    setSelectedUrlCaptureIds(new Set());
+  }
+
+  async function downloadSelectedUrlCaptures() {
+    const ids = selectedUrlCaptureIds;
+    if (ids.size === 0) return;
+    const allEntries = filteredUrlCaptureItems
+      .filter((item) => ids.has(item.id))
+      .flatMap((item) =>
+        item.imageUrls.map((url, index) => ({
+          url,
+          filename: `${item.id.slice(0, 12)}_${index + 1}.jpg`,
+        })),
+      );
+    if (allEntries.length === 0) {
+      alert("选中的 URL 抓取记录里没有可下载图片");
+      return;
+    }
+    setZipping(true);
+    try {
+      await downloadImagesAsZip(allEntries, `url_capture_${Date.now()}.zip`);
+    } finally {
+      setZipping(false);
+    }
+  }
+
+  function deleteSelectedUrlCaptures() {
+    const ids = [...selectedUrlCaptureIds];
+    if (ids.length === 0) return;
+    if (!confirm(`确定删除选中的 ${ids.length} 条 URL 抓取记录吗？`)) return;
+    const next = deleteUrlCaptureHistory(ids);
+    setUrlCaptureItems(next);
+    setSelectedUrlCaptureIds(new Set());
   }
 
   async function downloadSelected() {
@@ -441,12 +529,18 @@ export default function HistoryPage() {
     }
   }
 
+  const selectedCount = isUrlCaptureTab
+    ? selectedUrlCaptureIds.size
+    : selectedJobIds.size;
+  const detailUrlCaptureItem =
+    urlCaptureItems.find((item) => item.id === detailUrlCaptureId) || null;
+
   return (
     <main className="max-w-6xl mx-auto p-4 md:p-8">
       <header className="mb-5">
         <h1 className="text-2xl font-bold text-fg-primary">历史记录</h1>
         <p className="mt-1 text-sm text-fg-tertiary">
-          {scope === "all" ? "全团队" : "我的"}所有任务 · 共 {total} 条
+          {scope === "all" ? "全团队" : "我的"}所有任务 · 共 {displayTotal} 条
         </p>
       </header>
 
@@ -457,6 +551,8 @@ export default function HistoryPage() {
           value={statusTab}
           onChange={(k) => {
             setStatusTab(k as StatusTab);
+            if (k === "url") setSelectedJobIds(new Set());
+            else setSelectedUrlCaptureIds(new Set());
             setPage(1);
           }}
         />
@@ -500,12 +596,18 @@ export default function HistoryPage() {
       </div>
 
       {/* 批量工具栏（选中任何后出现） */}
-      {selectedJobIds.size > 0 ? (
+      {selectedCount > 0 ? (
         <div className="sticky top-2 z-20 mb-4 p-3 rounded-xl bg-[var(--brand-50-bg)] border border-[rgba(59,130,246,0.3)] shadow-sm flex flex-wrap items-center gap-2 text-sm">
           <span className="text-brand-400 font-medium">
-            已选 {selectedJobIds.size} 个任务
+            已选 {selectedCount} 个任务
           </span>
-          <Button size="sm" variant="outline" onClick={selectAllOnPage}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={
+              isUrlCaptureTab ? selectAllUrlCapturesOnPage : selectAllOnPage
+            }
+          >
             全选本页
           </Button>
           <Button size="sm" variant="ghost" onClick={clearSelection}>
@@ -516,7 +618,9 @@ export default function HistoryPage() {
             variant="primary"
             loading={zipping}
             leftIcon={<Download size={13} strokeWidth={2} />}
-            onClick={downloadSelected}
+            onClick={
+              isUrlCaptureTab ? downloadSelectedUrlCaptures : downloadSelected
+            }
           >
             下载选中图片 ZIP
           </Button>
@@ -525,7 +629,9 @@ export default function HistoryPage() {
             variant="danger-outline"
             loading={deleting}
             leftIcon={<Trash2 size={13} strokeWidth={2} />}
-            onClick={deleteSelectedJobs}
+            onClick={
+              isUrlCaptureTab ? deleteSelectedUrlCaptures : deleteSelectedJobs
+            }
           >
             删除选中
           </Button>
@@ -538,7 +644,25 @@ export default function HistoryPage() {
       ) : null}
 
       {/* 任务列表 */}
-      {loading ? (
+      {isUrlCaptureTab ? (
+        filteredUrlCaptureItems.length === 0 ? (
+          <Card padding="lg" className="text-center text-sm text-fg-tertiary">
+            {search.trim() ? "没有匹配的 URL 抓取记录" : "还没有 URL 抓取记录"}
+          </Card>
+        ) : (
+          <div className="space-y-2">
+            {pagedUrlCaptureItems.map((item) => (
+              <UrlCaptureCard
+                key={item.id}
+                item={item}
+                selected={selectedUrlCaptureIds.has(item.id)}
+                onToggleSelect={() => toggleUrlCapture(item.id)}
+                onOpenDetail={() => setDetailUrlCaptureId(item.id)}
+              />
+            ))}
+          </div>
+        )
+      ) : loading ? (
         <div className="p-8 text-center text-sm text-fg-tertiary">
           <Loader2 size={16} className="inline-block animate-spin mr-1" />
           加载中…
@@ -600,11 +724,129 @@ export default function HistoryPage() {
           onClose={() => setDetailJobId(null)}
         />
       ) : null}
+      {detailUrlCaptureItem ? (
+        <UrlCaptureDetailDialog
+          item={detailUrlCaptureItem}
+          onClose={() => setDetailUrlCaptureId(null)}
+        />
+      ) : null}
     </main>
   );
 }
 
 /* ═════════════ JobCard ═════════════ */
+
+function getUrlHost(url: string) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url || "-";
+  }
+}
+
+function UrlCaptureCard({
+  item,
+  selected,
+  onToggleSelect,
+  onOpenDetail,
+}: {
+  item: UrlCaptureHistoryRecord;
+  selected: boolean;
+  onToggleSelect: () => void;
+  onOpenDetail: () => void;
+}) {
+  const sourceHost = getUrlHost(item.sourceUrl);
+
+  return (
+    <Card
+      padding="none"
+      className={`overflow-hidden transition ${
+        selected ? "ring-2 ring-blue-500" : "hover:border-border-default"
+      }`}
+    >
+      <div className="flex items-center gap-3 p-3">
+        <button
+          type="button"
+          onClick={onToggleSelect}
+          className={`shrink-0 w-5 h-5 rounded-md border-2 flex items-center justify-center text-[10px] transition-colors ${
+            selected
+              ? "bg-brand-600 border-blue-600 text-white"
+              : "bg-bg-secondary border-border-default hover:border-border-strong"
+          }`}
+          aria-label={selected ? "取消选择" : "选择"}
+        >
+          {selected ? "✓" : ""}
+        </button>
+
+        <div className="shrink-0">
+          {item.thumbnailUrl ? (
+            <Thumbnail
+              src={item.thumbnailUrl}
+              alt=""
+              ratio="3/4"
+              fit="contain"
+              className="!w-12 !rounded-lg"
+            />
+          ) : (
+            <div className="w-12 aspect-[3/4] rounded-lg bg-bg-tertiary flex items-center justify-center">
+              <ExternalLink
+                size={14}
+                strokeWidth={2}
+                className="text-blue-500"
+              />
+            </div>
+          )}
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap mb-1">
+            <span className="inline-flex items-center gap-1 text-[11px] text-fg-secondary font-medium">
+              <ExternalLink size={14} strokeWidth={2} className="text-blue-500" />
+              URL抓取
+            </span>
+            <Chip tone="success" icon={<CheckCircle2 size={10} />}>
+              已保存
+            </Chip>
+            <span className="text-[11px] text-fg-tertiary tabular-nums">
+              保存 {item.addedCount} 张
+            </span>
+            <span className="text-[11px] text-fg-tertiary">
+              · {formatTime(Math.floor(item.createdAt / 1000))}
+            </span>
+          </div>
+          <div className="text-[12px] text-fg-secondary truncate">
+            来源 {sourceHost} · 已同步到媒体文件
+          </div>
+        </div>
+
+        <div className="shrink-0 flex items-center gap-3">
+          <Button
+            size="sm"
+            variant="primary"
+            leftIcon={<ShoppingBag size={13} strokeWidth={2} />}
+            onClick={() => {
+              window.location.href = "/product-listing?media=added";
+            }}
+          >
+            产品上架
+          </Button>
+          <div className="text-right">
+            <div className="text-[11px] text-fg-tertiary leading-tight">花费</div>
+            <div className="text-sm font-medium text-fg-primary tabular-nums">
+              ¥0.00
+            </div>
+          </div>
+          <IconButton
+            icon={<Eye size={14} strokeWidth={2} />}
+            aria-label="查看来源"
+            size="sm"
+            onClick={onOpenDetail}
+          />
+        </div>
+      </div>
+    </Card>
+  );
+}
 
 function JobCard({
   job,
@@ -790,6 +1032,133 @@ function JobCard({
         </div>
       </div>
     </Card>
+  );
+}
+
+function UrlCaptureDetailDialog({
+  item,
+  onClose,
+}: {
+  item: UrlCaptureHistoryRecord;
+  onClose: () => void;
+}) {
+  const [zipping, setZipping] = useState(false);
+  const imageUrls = item.imageUrls.filter(Boolean);
+
+  async function downloadAll() {
+    if (imageUrls.length === 0) return;
+    setZipping(true);
+    try {
+      await downloadImagesAsZip(
+        imageUrls.map((url, index) => ({
+          url,
+          filename: `${item.id.slice(0, 12)}_${index + 1}.jpg`,
+        })),
+        `url_capture_${item.id.slice(0, 8)}.zip`,
+      );
+    } finally {
+      setZipping(false);
+    }
+  }
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      width="xl"
+      title={`任务详情 · ${item.id.slice(0, 8)}`}
+      footer={
+        imageUrls.length > 0 ? (
+          <>
+            <Button variant="ghost" onClick={onClose}>
+              关闭
+            </Button>
+            <Button
+              variant="primary"
+              leftIcon={<Download size={13} strokeWidth={2} />}
+              loading={zipping}
+              onClick={downloadAll}
+            >
+              下载全部 ({imageUrls.length}) ZIP
+            </Button>
+          </>
+        ) : (
+          <Button variant="ghost" onClick={onClose}>
+            关闭
+          </Button>
+        )
+      }
+    >
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-3 text-xs">
+          <Info label="状态" value="completed" />
+          <Info
+            label="模型"
+            value={
+              item.sourceUrl ? (
+                <a
+                  href={item.sourceUrl}
+                  target="_blank"
+                  rel="noopener"
+                  className="text-brand-500 underline underline-offset-2 break-all"
+                >
+                  {item.sourceUrl}
+                </a>
+              ) : (
+                "-"
+              )
+            }
+            mono
+          />
+          <Info
+            label="数量"
+            value={`${item.addedCount}/${item.selectedCount} · 失败 0`}
+          />
+          <Info label="花费" value="¥0.00" />
+        </div>
+        {imageUrls.length > 0 ? (
+          <div>
+            <div className="section-label mb-2">已完成图片</div>
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+              {imageUrls.map((url, index) => (
+                <Thumbnail
+                  key={`${url}-${index}`}
+                  src={url}
+                  alt={`#${index + 1}`}
+                  ratio="3/4"
+                  hoverOverlay={
+                    <a
+                      href={url}
+                      target="_blank"
+                      rel="noopener"
+                      className="btn btn-secondary btn-sm"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <ExternalLink size={12} /> 原图
+                    </a>
+                  }
+                />
+              ))}
+            </div>
+          </div>
+        ) : null}
+        <details className="text-xs text-fg-secondary">
+          <summary className="cursor-pointer text-fg-tertiary">完整参数</summary>
+          <pre className="mt-2 p-2 bg-bg-tertiary border border-border-subtle rounded overflow-x-auto text-[11px]">
+            {JSON.stringify(
+              {
+                source: item.source,
+                sourceUrl: item.sourceUrl,
+                selectedCount: item.selectedCount,
+                addedCount: item.addedCount,
+              },
+              null,
+              2,
+            )}
+          </pre>
+        </details>
+      </div>
+    </Dialog>
   );
 }
 
