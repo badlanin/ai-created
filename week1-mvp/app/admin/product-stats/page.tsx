@@ -348,11 +348,23 @@ export default function ProductStatsPage() {
       rowMap.set(key, current);
     }
 
-    const chart = days.map((day) => ({
-      day,
-      urlCount: urlByDay.get(day) || 0,
-      aiCount: aiByDay.get(day) || 0,
-    }));
+    const chart = days.map((day) => {
+      if (userFilter === "all") {
+        return {
+          day,
+          urlCount: urlByDay.get(day) || 0,
+          aiCount: aiByDay.get(day) || 0,
+        };
+      }
+      // 选了具体子账户：从 rowMap 中找该用户当天的数据
+      const key = `${day}:${userFilter}`;
+      const row = rowMap.get(key);
+      return {
+        day,
+        urlCount: row?.urlCount || 0,
+        aiCount: row?.aiCount || 0,
+      };
+    });
 
     const rows = Array.from(rowMap.values())
       .filter((row) => {

@@ -40,7 +40,14 @@ export async function GET(req: NextRequest) {
         ? (featureRaw as FeatureFilter)
         : "all";
   const scope = url.searchParams.get("scope") || "me";
-  const showAll = scope === "all" && user.role === "admin";
+  const requestedUserId = Number(url.searchParams.get("userId"));
+  const filterUserId =
+    user.role === "admin" &&
+    Number.isInteger(requestedUserId) &&
+    requestedUserId > 0
+      ? requestedUserId
+      : null;
+  const showAll = scope === "all" && user.role === "admin" && !filterUserId;
   const page = Math.max(1, Number(url.searchParams.get("page") || "1"));
   const limit = Math.min(
     100,
@@ -51,7 +58,10 @@ export async function GET(req: NextRequest) {
 
   const where: string[] = [];
   const vals: Array<string | number> = [];
-  if (!showAll) {
+  if (filterUserId) {
+    where.push("j.user_id = ?");
+    vals.push(filterUserId);
+  } else if (!showAll) {
     where.push("j.user_id = ?");
     vals.push(user.id);
   }
@@ -122,7 +132,10 @@ export async function GET(req: NextRequest) {
   // 各状态计数（给 tab 角标）
   const statsWhere = [] as string[];
   const statsVals = [] as Array<string | number>;
-  if (!showAll) {
+  if (filterUserId) {
+    statsWhere.push("user_id = ?");
+    statsVals.push(filterUserId);
+  } else if (!showAll) {
     statsWhere.push("user_id = ?");
     statsVals.push(user.id);
   }

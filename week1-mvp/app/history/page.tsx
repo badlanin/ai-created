@@ -43,8 +43,6 @@ import {
 } from "@/lib/product-listing-draft";
 import { fetchWithShopifyDevice } from "@/lib/shopify-device-client";
 import {
-  deleteUrlCaptureHistory,
-  readUrlCaptureHistory,
   type UrlCaptureHistoryRecord,
 } from "@/lib/url-capture-history";
 
@@ -214,11 +212,15 @@ export default function HistoryPage() {
     UrlCaptureHistoryRecord[]
   >([]);
   const [featureTab, setFeatureTab] = useState<FeatureTab>("all");
-  const [scope, setScope] = useState<"me" | "all">("me");
+  const [scope, setScope] = useState<string>("me");
+  const [users, setUsers] = useState<
+    Array<{ id: number; username: string; display_name: string | null }>
+  >([]);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const limit = 20;
   const [total, setTotal] = useState(0);
+  const [urlCaptureTotal, setUrlCaptureTotal] = useState(0);
   const [detailJobId, setDetailJobId] = useState<string | null>(null);
   const [detailUrlCaptureId, setDetailUrlCaptureId] = useState<string | null>(
     null,
@@ -241,16 +243,54 @@ export default function HistoryPage() {
   }, []);
 
   useEffect(() => {
-    setUrlCaptureItems(readUrlCaptureHistory());
-  }, []);
+    if (me?.role !== "admin") return;
+    fetch("/api/admin/users")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list) => {
+        if (Array.isArray(list)) setUsers(list);
+      })
+      .catch(() => {});
+  }, [me?.role]);
+
+  const buildScopeQs = useCallback(
+    (extra: Record<string, string> = {}) => {
+      const qs = new URLSearchParams(extra);
+      if (scope === "me" || scope === "all") {
+        qs.set("scope", scope);
+      } else {
+        qs.set("scope", "all");
+        qs.set("userId", scope);
+      }
+      return qs;
+    },
+    [scope],
+  );
+
+  const loadUrlCaptures = useCallback(async () => {
+    setLoading(true);
+    try {
+      const qs = buildScopeQs({ page: String(page), limit: String(limit) });
+      const r = await fetch(`/api/url-captures?${qs.toString()}`);
+      if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+      const body = (await r.json()) as {
+        items: UrlCaptureHistoryRecord[];
+        total: number;
+      };
+      setUrlCaptureItems(body.items);
+      setUrlCaptureTotal(body.total);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  }, [buildScopeQs, page]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const qs = new URLSearchParams({
+      const qs = buildScopeQs({
         status: statusTab === "url" ? "all" : statusTab,
         feature: featureTab,
-        scope,
         page: String(page),
         limit: String(limit),
       });
@@ -269,11 +309,12 @@ export default function HistoryPage() {
     } finally {
       setLoading(false);
     }
-  }, [statusTab, featureTab, scope, page]);
+  }, [statusTab, featureTab, buildScopeQs, page]);
 
   useEffect(() => {
     load();
-  }, [load]);
+    loadUrlCaptures();
+  }, [load, loadUrlCaptures]);
 
   // 搜索过滤（本地，对当前页生效）
   const filteredItems = useMemo(() => {
@@ -304,20 +345,15 @@ export default function HistoryPage() {
   }, [search, urlCaptureItems]);
 
   const isUrlCaptureTab = statusTab === "url";
-  const pagedUrlCaptureItems = filteredUrlCaptureItems.slice(
-    (page - 1) * limit,
-    page * limit,
-  );
-  const displayTotal = isUrlCaptureTab ? urlCaptureItems.length : total;
+  const pagedUrlCaptureItems = filteredUrlCaptureItems;
+  const displayTotal = isUrlCaptureTab ? urlCaptureTotal : total;
   const totalPages = Math.max(
     1,
-    Math.ceil(
-      (isUrlCaptureTab ? filteredUrlCaptureItems.length : total) / limit,
-    ),
+    Math.ceil((isUrlCaptureTab ? urlCaptureTotal : total) / limit),
   );
 
   const statusTabs: TabItem[] = [
-    { key: "url", label: "URL抓取", badge: urlCaptureItems.length },
+    { key: "url", label: "URL抓取", badge: urlCaptureTotal },
     { key: "all", label: "AI处理", badge: stats.total },
     {
       key: "active",
@@ -391,13 +427,25 @@ export default function HistoryPage() {
     }
   }
 
-  function deleteSelectedUrlCaptures() {
+  async function deleteSelectedUrlCaptures() {
     const ids = [...selectedUrlCaptureIds];
     if (ids.length === 0) return;
     if (!confirm(`确定删除选中的 ${ids.length} 条 URL 抓取记录吗？`)) return;
-    const next = deleteUrlCaptureHistory(ids);
-    setUrlCaptureItems(next);
-    setSelectedUrlCaptureIds(new Set());
+    setDeleting(true);
+    try {
+      const res = await fetch("/api/url-captures", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || res.statusText);
+      setSelectedUrlCaptureIds(new Set());
+      await loadUrlCaptures();
+    } catch (e) {
+      alert("删除失败：" + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setDeleting(false);
+    }
   }
 
   async function downloadSelected() {
@@ -540,7 +588,13 @@ export default function HistoryPage() {
       <header className="mb-5">
         <h1 className="text-2xl font-bold text-fg-primary">历史记录</h1>
         <p className="mt-1 text-sm text-fg-tertiary">
-          {scope === "all" ? "全团队" : "我的"}所有任务 · 共 {displayTotal} 条
+          {scope === "all"
+            ? "全团队"
+            : scope === "me"
+              ? "我的"
+              : (users.find((u) => String(u.id) === scope)?.display_name ||
+                  users.find((u) => String(u.id) === scope)?.username ||
+                  scope)}所有任务 · 共 {displayTotal} 条
         </p>
       </header>
 
@@ -584,12 +638,21 @@ export default function HistoryPage() {
               size="sm"
               value={scope}
               onChange={(e) => {
-                setScope(e.target.value as "me" | "all");
+                setScope(e.target.value);
                 setPage(1);
               }}
             >
               <option value="me">我的</option>
               <option value="all">全团队</option>
+              {users.length > 0 ? (
+                <optgroup label="按子账户">
+                  {users.map((u) => (
+                    <option key={u.id} value={String(u.id)}>
+                      {u.display_name || u.username} (id={u.id})
+                    </option>
+                  ))}
+                </optgroup>
+              ) : null}
             </Select>
           ) : null}
         </div>
@@ -681,7 +744,7 @@ export default function HistoryPage() {
             <JobCard
               key={job.id}
               job={job}
-              showUser={scope === "all"}
+              showUser={scope !== "me"}
               selected={selectedJobIds.has(job.id)}
               onToggleSelect={() => toggleJob(job.id)}
               onOpenDetail={() => setDetailJobId(job.id)}

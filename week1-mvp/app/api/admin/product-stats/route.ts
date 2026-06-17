@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
     const aiByDay = db
       .prepare(
         `SELECT date(j.created_at, 'unixepoch', '+8 hours') AS day,
-                COALESCE(SUM(j.completed_count), 0) AS ai_count
+                COUNT(*) AS ai_count
          FROM render_jobs j
          LEFT JOIN users u ON u.id = j.user_id
          WHERE j.created_at >= ? AND j.created_at < ?
@@ -56,7 +56,7 @@ export async function GET(req: NextRequest) {
     const urlByDay = db
       .prepare(
         `SELECT date(j.created_at, 'unixepoch', '+8 hours') AS day,
-                COALESCE(SUM(j.saved_count), 0) AS url_count
+                COUNT(*) AS url_count
          FROM url_capture_jobs j
          LEFT JOIN users u ON u.id = j.user_id
          WHERE j.created_at >= ? AND j.created_at < ?
@@ -72,7 +72,7 @@ export async function GET(req: NextRequest) {
                 j.user_id,
                 u.username,
                 u.display_name,
-                COALESCE(SUM(j.saved_count), 0) AS url_count,
+                COUNT(*) AS url_count,
                 MAX(j.created_at) AS latest_at
          FROM url_capture_jobs j
          LEFT JOIN users u ON u.id = j.user_id
@@ -89,7 +89,7 @@ export async function GET(req: NextRequest) {
                 j.user_id,
                 u.username,
                 u.display_name,
-                COALESCE(SUM(j.completed_count), 0) AS ai_count,
+                COUNT(*) AS ai_count,
                 MAX(j.created_at) AS latest_at
          FROM render_jobs j
          LEFT JOIN users u ON u.id = j.user_id
