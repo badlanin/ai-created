@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { createRef, useEffect, useMemo, useState } from "react";
 
 interface SettingItem {
   key: string;
@@ -77,6 +77,58 @@ export default function SettingsAdminPage() {
     default_budget_cny: "0",
   });
 
+  // 水印管理
+  const [watermarkPreviewUrl, setWatermarkPreviewUrl] = useState<string | null>(null);
+  const [hasWatermark, setHasWatermark] = useState(false);
+  const [uploadingWatermark, setUploadingWatermark] = useState(false);
+  const [watermarkError, setWatermarkError] = useState<string | null>(null);
+  const [watermarkSuccess, setWatermarkSuccess] = useState<string | null>(null);
+  const watermarkInputRef = createRef<HTMLInputElement>();
+
+  async function handleUploadWatermark(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/png")) {
+      setWatermarkError("水印仅支持 PNG 格式");
+      setWatermarkSuccess(null);
+      return;
+    }
+    setUploadingWatermark(true);
+    setWatermarkError(null);
+    setWatermarkSuccess(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file, file.name);
+      const res = await fetch("/api/watermark/upload", {
+        method: "POST",
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "上传失败");
+      setWatermarkPreviewUrl(`/assets/watermark/watermark.png?t=${Date.now()}`);
+      setHasWatermark(true);
+      setWatermarkSuccess("水印上传成功");
+    } catch (err) {
+      setWatermarkError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUploadingWatermark(false);
+    }
+  }
+
+  async function handleRemoveWatermark() {
+    if (!confirm("确定移除水印？")) return;
+    try {
+      const res = await fetch("/api/watermark/upload", { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "移除失败");
+      setWatermarkPreviewUrl(null);
+      setHasWatermark(false);
+      setWatermarkSuccess("水印已移除");
+    } catch (err) {
+      setWatermarkError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   const settingMap = useMemo(() => {
     const m = new Map<string, SettingItem>();
     settings.forEach((s) => m.set(s.key, s));
@@ -108,6 +160,18 @@ export default function SettingsAdminPage() {
       // OpenAI 代理 URL 从 settings 表读（key 本身不回显，因为是 secret）
       setOpenaiProxyInput(map.get("openai_proxy_url") ?? "");
       setGptBaseUrlInput(map.get("gpt_base_url") ?? map.get("gpt_proxy_url") ?? "");
+
+      // 检查水印是否存在
+      try {
+        const wmRes = await fetch("/api/watermark/upload");
+        const wmData = await wmRes.json();
+        if (wmData.hasWatermark) {
+          setHasWatermark(true);
+          setWatermarkPreviewUrl(wmData.previewUrl);
+        }
+      } catch {
+        // 忽略水印检查错误
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -760,6 +824,68 @@ export default function SettingsAdminPage() {
             {saving ? "保存中…" : "保存"}
           </button>
         </form>
+      </section>
+
+      {/* ===== 品牌水印 ===== */}
+      <section className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle p-6">
+        <h2 className="text-base font-semibold text-fg-primary mb-1">
+          品牌水印
+        </h2>
+        <p className="text-xs text-fg-tertiary mb-4">
+          上传透明背景 PNG 水印，产品上架时可选择批量打在图片右下角。
+        </p>
+
+        <div className="flex items-start gap-6">
+          <div className="flex-1 space-y-3">
+            <div className="flex items-center gap-3">
+              <input
+                type="file"
+                accept="image/png"
+                ref={watermarkInputRef}
+                onChange={handleUploadWatermark}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => watermarkInputRef.current?.click()}
+                disabled={uploadingWatermark}
+                className="px-4 py-2 bg-brand-600 text-white text-sm rounded-md hover:bg-brand-700 disabled:opacity-50"
+              >
+                {uploadingWatermark ? "上传中…" : "上传水印"}
+              </button>
+              {hasWatermark && (
+                <button
+                  type="button"
+                  onClick={handleRemoveWatermark}
+                  disabled={saving}
+                  className="px-4 py-2 text-red-600 text-sm rounded-md border border-red-200 hover:bg-red-50 disabled:opacity-50"
+                >
+                  移除水印
+                </button>
+              )}
+            </div>
+            {watermarkError && (
+              <p className="text-sm text-red-600">{watermarkError}</p>
+            )}
+            {watermarkSuccess && (
+              <p className="text-sm text-emerald-600">{watermarkSuccess}</p>
+            )}
+          </div>
+          {watermarkPreviewUrl && (
+            <div className="w-32 shrink-0">
+              <div className="rounded-md border border-border-default bg-white p-2">
+                <img
+                  src={watermarkPreviewUrl}
+                  alt="水印预览"
+                  className="h-24 w-full object-contain"
+                />
+              </div>
+              <p className="mt-1 text-center text-[11px] text-fg-tertiary">
+                当前水印
+              </p>
+            </div>
+          )}
+        </div>
       </section>
     </main>
   );

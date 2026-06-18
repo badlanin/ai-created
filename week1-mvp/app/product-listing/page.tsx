@@ -2243,6 +2243,7 @@ export default function ProductListingPage() {
   const [shopifyProductUrl, setShopifyProductUrl] = useState<string | null>(null);
   const [syncWarnings, setSyncWarnings] = useState<string[]>([]);
   const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [watermarking, setWatermarking] = useState(false);
   const [mediaItems, setMediaItems] = useState<ProductListingMediaItem[]>(() => {
     if (typeof window === "undefined") return [];
     try {
@@ -3208,6 +3209,38 @@ export default function ProductListingPage() {
     );
   }
 
+  async function applyWatermarkToAll() {
+    const urls = mediaItems.map((item) => item.url);
+    if (urls.length === 0) return;
+    setWatermarking(true);
+    setLastAction("正在添加水印...");
+    try {
+      const res = await fetch("/api/watermark/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageUrls: urls }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "添加水印失败");
+      const results = (data.results || []) as Array<{ originalUrl: string; url: string | null }>;
+      // 替换 mediaItems 中的 url
+      setMediaItems((prev) =>
+        prev.map((item) => {
+          const result = results.find((r) => r.originalUrl === item.url);
+          if (result?.url) {
+            return { ...item, url: result.url, sourceLabel: "品牌水印" };
+          }
+          return item;
+        }),
+      );
+      setLastAction("水印添加完成");
+    } catch (e) {
+      setLastAction(e instanceof Error ? e.message : String(e));
+    } finally {
+      setWatermarking(false);
+    }
+  }
+
   return (
     <main className="mx-auto w-full max-w-7xl px-5 md:px-8 py-6 md:py-8">
       <header className="mb-6 flex items-center justify-between gap-4">
@@ -3331,6 +3364,8 @@ export default function ProductListingPage() {
               onUpdateMediaRole={updateMediaRole}
               onUploadLocalMedia={uploadLocalMedia}
               uploadingMedia={uploadingMedia}
+              watermarking={watermarking}
+              onApplyWatermark={applyWatermarkToAll}
               onCategoryMetafieldCandidatesChange={
                 setCategoryMetafieldCandidatesForAi
               }
@@ -5051,6 +5086,8 @@ function ProductFormPanel({
   onUpdateMediaRole,
   onUploadLocalMedia,
   uploadingMedia,
+  watermarking,
+  onApplyWatermark,
   onCategoryMetafieldCandidatesChange,
 }: {
   form: ProductForm;
@@ -7130,9 +7167,21 @@ function ProductFormPanel({
           <ShopifySectionHeader
             title="媒体文件"
             action={
-              <Chip tone={mediaItems.length > 0 ? "brand" : "gray"}>
-                {mediaItems.length} 张
-              </Chip>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  loading={watermarking}
+                  disabled={mediaItems.length === 0}
+                  onClick={onApplyWatermark}
+                  className="shrink-0"
+                >
+                  全部加水印
+                </Button>
+                <Chip tone={mediaItems.length > 0 ? "brand" : "gray"}>
+                  {mediaItems.length} 张
+                </Chip>
+              </div>
             }
           />
           {mediaItems.length > 0 ? (
