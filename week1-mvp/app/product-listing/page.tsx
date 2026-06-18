@@ -9617,7 +9617,6 @@ function SyncPanel({
   lastAction,
   shopifyProductUrl,
   warnings,
-  onSaveDraft,
   onSync,
   onStatusChange,
   onProductTypeChange,
