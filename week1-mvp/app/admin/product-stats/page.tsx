@@ -315,15 +315,18 @@ export default function ProductStatsPage() {
     for (const row of data?.aiByUserDay || []) {
       const userId = String(row.user_id);
       const key = `${row.day}:${userId}`;
-      rowMap.set(key, {
+      const current = rowMap.get(key) || {
         day: row.day,
         userId,
         username: row.username || `user-${row.user_id}`,
         displayName: row.display_name || row.username || `用户 ${row.user_id}`,
         urlCount: 0,
-        aiCount: toNumber(row.ai_count),
-        latestAt: row.latest_at,
-      });
+        aiCount: 0,
+        latestAt: null,
+      };
+      current.aiCount += toNumber(row.ai_count);
+      current.latestAt = Math.max(current.latestAt || 0, row.latest_at || 0);
+      rowMap.set(key, current);
     }
 
     for (const item of localUrlCaptureHistory) {
