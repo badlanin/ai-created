@@ -5182,6 +5182,8 @@ function ProductFormPanel({
   onUpdateMediaRole: (id: string, role: ProductMediaRole) => void;
   onUploadLocalMedia: (files: FileList | null) => void;
   uploadingMedia: boolean;
+  watermarking: boolean;
+  onApplyWatermark: () => void;
   onCategoryMetafieldCandidatesChange: (
     candidates: CategoryMetafieldMemory,
   ) => void;
