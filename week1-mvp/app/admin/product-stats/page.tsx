@@ -310,13 +310,6 @@ export default function ProductStatsPage() {
                 const urlHeight = (row.urlCount / maxChartValue) * 100;
                 const aiHeight = (row.aiCount / maxChartValue) * 100;
                 const localHeight = (row.localCount / maxChartValue) * 100;
-                const shouldShow =
-                  sourceFilter === "all" ||
-                  (sourceFilter === "url_capture" && row.urlCount > 0) ||
-                  (sourceFilter === "ai_generated" && row.aiCount > 0) ||
-                  (sourceFilter === "local_upload" && row.localCount > 0);
-
-                if (!shouldShow && sourceFilter !== "all") return null;
 
                 return (
                   <div key={row.day} className="flex min-w-0 flex-1 flex-col items-center gap-2">
