@@ -3330,12 +3330,6 @@ export default function ProductListingPage() {
               lastAction={lastAction}
               shopifyProductUrl={shopifyProductUrl}
               warnings={syncWarnings}
-              onSaveDraft={() =>
-                syncToShopify(
-                  form.status === "ARCHIVED" ? "ARCHIVED" : "DRAFT",
-                  "draft",
-                )
-              }
               onSync={() => syncToShopify("ACTIVE", "publish")}
               onStatusChange={(status) =>
                 setForm((prev) => ({ ...prev, status }))
@@ -7247,16 +7241,6 @@ function ProductFormPanel({
               e.currentTarget.value = "";
             }}
           />
-          <Button
-            size="sm"
-            variant="secondary"
-            loading={uploadingMedia}
-            leftIcon={<Upload size={13} strokeWidth={2} />}
-            className="absolute right-0 bottom-0 shadow-sm"
-            onClick={() => mediaInputRef.current?.click()}
-          >
-            本地上传
-          </Button>
         </div>
       </ShopifySection>
 
@@ -9651,7 +9635,6 @@ function SyncPanel({
   lastAction: string;
   shopifyProductUrl: string | null;
   warnings: string[];
-  onSaveDraft: () => void;
   onSync: () => void;
   onStatusChange: (status: ProductStatus) => void;
   onProductTypeChange: (value: string) => void;
@@ -10059,22 +10042,14 @@ function SyncPanel({
               <ExternalLink size={13} />
             </a>
           ) : null}
-          <div className="grid grid-cols-2 gap-2">
-            <Button
-              variant="outline"
-              leftIcon={<Save size={14} />}
-              loading={syncAction === "draft"}
-              disabled={!canSaveDraft || syncState === "syncing"}
-              onClick={onSaveDraft}
-            >
-              保存草稿
-            </Button>
+          <div className="w-full">
             <Button
               variant="primary"
               leftIcon={<Send size={14} />}
               loading={syncAction === "publish"}
               disabled={!canPublish || syncState === "syncing"}
               onClick={onSync}
+              className="w-full"
             >
               上架
             </Button>

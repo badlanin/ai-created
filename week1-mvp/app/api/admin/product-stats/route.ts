@@ -190,6 +190,36 @@ export async function GET(req: NextRequest) {
       items: urlItemMap.get(record.id) || [],
     }));
 
+    // 新增：上架统计数据
+    const uploadStats = db
+      .prepare(
+        `SELECT
+          source_type,
+          COUNT(*) as upload_count,
+          SUM(product_count) as total_products
+         FROM shopify_upload_stats
+         WHERE created_at >= ? AND created_at < ?
+         GROUP BY source_type`
+      )
+      .all(startUnix, endUnix) as Array<{
+        source_type: string;
+        upload_count: number;
+        total_products: number;
+      }>;
+
+    const uploadByDay = db
+      .prepare(
+        `SELECT
+          date(created_at, 'unixepoch', '+8 hours') AS day,
+          source_type,
+          COUNT(*) as upload_count
+         FROM shopify_upload_stats
+         WHERE created_at >= ? AND created_at < ?
+         GROUP BY day, source_type
+         ORDER BY day ASC`
+      )
+      .all(startUnix, endUnix);
+
     return NextResponse.json({
       start: startDay,
       end: endDay,
@@ -200,6 +230,8 @@ export async function GET(req: NextRequest) {
       aiByDay,
       aiByUserDay,
       aiRecords,
+      uploadStats,
+      uploadByDay,
     });
   } catch (e) {
     const status = (e as { status?: number }).status || 500;

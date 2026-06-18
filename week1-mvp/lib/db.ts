@@ -422,6 +422,21 @@ function migrate(db: Database.Database) {
       last_tested_at   INTEGER,
       UNIQUE(user_id, device_id, shop_domain)
     );
+
+    -- ==========================================
+    -- Shopify 产品上架统计（记录实际上架数量）
+    -- ==========================================
+    CREATE TABLE IF NOT EXISTS shopify_upload_stats (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      source_type     TEXT NOT NULL,  -- 'url_capture' | 'ai_generated' | 'local_upload'
+      product_count   INTEGER NOT NULL DEFAULT 1,
+      shopify_product_id TEXT,
+      status          TEXT NOT NULL DEFAULT 'success',  -- 'success' | 'failed'
+      created_at      INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_upload_stats_user_source
+      ON shopify_upload_stats(user_id, source_type, created_at DESC);
   `);
 
   // 增量迁移：新增列（已存在时跳过）

@@ -2434,6 +2434,36 @@ export async function getShopifyTaxonomyCategoryOptions(
   return { categories, warnings };
 }
 
+/**
+ * 推断产品来源类型（用于上架统计）
+ *
+ * 规则：
+ * - 如果产品有 metadata 或特定标记，从中提取
+ * - 否则根据产品特征推断：
+ *   - 有批量变体 → 可能是 AI 生成
+ *   - 描述中含特定关键词 → URL 抓取
+ *   - 默认 → 本地上传
+ */
+function inferProductSourceType(input: ShopifyProductDraftInput): 'url_capture' | 'ai_generated' | 'local_upload' {
+  // 优先检查是否有明确的来源标记（可以从产品 tags 或其他字段传递）
+  const tags = input.tags?.toLowerCase() || '';
+  if (tags.includes('url_capture') || tags.includes('1688') || tags.includes('淘宝')) {
+    return 'url_capture';
+  }
+  if (tags.includes('ai_generated') || tags.includes('批量摄影') || tags.includes('ai换色')) {
+    return 'ai_generated';
+  }
+
+  // 根据变体数量判断（AI生成通常有多个规整的变体）
+  const variantCount = input.variants?.length || 0;
+  if (variantCount >= 5) {
+    return 'ai_generated';
+  }
+
+  // 默认为本地上传
+  return 'local_upload';
+}
+
 export async function syncShopifyProduct(
   userId: number,
   deviceId: string,
@@ -2829,6 +2859,18 @@ export async function syncShopifyProduct(
   );
 
   await categoryMetafieldsPromise;
+
+  // 记录上架统计（独立事务，失败不影响上架）
+  try {
+    const sourceType = inferProductSourceType(input);
+    const db = getDb();
+    db.prepare(
+      `INSERT INTO shopify_upload_stats (user_id, source_type, product_count, shopify_product_id, status)
+       VALUES (?, ?, 1, ?, 'success')`
+    ).run(userId, sourceType, product.legacyResourceId || product.id);
+  } catch (err) {
+    console.warn('[shopify] 上架统计记录失败（不影响上架）:', err);
+  }
 
   return {
     productId: product.id,
