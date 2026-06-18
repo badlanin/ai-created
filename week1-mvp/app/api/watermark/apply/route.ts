@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
 
         // 读取原图信息
         const wmResizedMeta = await sharp(wmResized).metadata();
-        const pad = Math.round(origWidth * 0.015); // 1.5% 边距，尽量靠角落不挡人物
+        const pad = 0; // 无边距，紧贴右下角
         const left = origWidth - (wmResizedMeta.width || 0) - pad;
         const top = (origMeta.height || 0) - (wmResizedMeta.height || 0) - pad;
 
