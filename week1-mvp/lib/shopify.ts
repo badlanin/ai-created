@@ -71,6 +71,7 @@ export type ShopifyConnectionTestResult = {
 export type ShopifyProductDraftInput = {
   title: string;
   description: string;
+  sourceType?: string;  // 'url_capture' | 'ai_generated' | 'local_upload'
   categoryId?: string;
   categoryName?: string;
   productType?: string;
@@ -2445,22 +2446,11 @@ export async function getShopifyTaxonomyCategoryOptions(
  *   - 默认 → 本地上传
  */
 function inferProductSourceType(input: ShopifyProductDraftInput): 'url_capture' | 'ai_generated' | 'local_upload' {
-  // 优先检查是否有明确的来源标记（可以从产品 tags 或其他字段传递）
-  const tags = input.tags?.toLowerCase() || '';
-  if (tags.includes('url_capture') || tags.includes('1688') || tags.includes('淘宝')) {
-    return 'url_capture';
-  }
-  if (tags.includes('ai_generated') || tags.includes('批量摄影') || tags.includes('ai换色')) {
-    return 'ai_generated';
-  }
-
-  // 根据变体数量判断（AI生成通常有多个规整的变体）
-  const variantCount = input.variants?.length || 0;
-  if (variantCount >= 5) {
-    return 'ai_generated';
-  }
-
-  // 默认为本地上传
+  // 优先使用前端明确传入的来源类型
+  if (input.sourceType === 'url_capture') return 'url_capture';
+  if (input.sourceType === 'ai_generated') return 'ai_generated';
+  if (input.sourceType === 'local_upload') return 'local_upload';
+  // 兜底默认本地上传
   return 'local_upload';
 }
 

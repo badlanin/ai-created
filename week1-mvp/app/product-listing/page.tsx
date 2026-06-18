@@ -2944,6 +2944,22 @@ export default function ProductListingPage() {
     );
     try {
       const shopifyMediaItems = buildShopifySyncMediaItems();
+
+      // 根据媒体来源推断 sourceType（前端知道来源，不要猜）
+      const aiLabels = ["批量摄影", "换色", "HEX换色", "场景图", "大模型", "ai"];
+      const urlLabels = ["url", "抓取", "1688", "淘宝", "链接"];
+      const hasAiMedia = mediaItems.some((m) =>
+        aiLabels.some((kw) => m.sourceLabel?.toLowerCase().includes(kw))
+      );
+      const hasUrlMedia = mediaItems.some((m) =>
+        urlLabels.some((kw) => m.sourceLabel?.toLowerCase().includes(kw))
+      );
+      const sourceType = hasUrlMedia
+        ? "url_capture"
+        : hasAiMedia
+        ? "ai_generated"
+        : "local_upload";
+
       const res = await fetchWithShopifyDevice("/api/shopify/products", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2951,6 +2967,7 @@ export default function ProductListingPage() {
           product: {
             ...form,
             status: productStatus,
+            sourceType,
             categoryId: form.shopifyCategoryId,
             categoryName: form.shopifyCategoryName,
             media: shopifyMediaItems,
