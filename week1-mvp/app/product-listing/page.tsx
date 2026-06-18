@@ -2945,15 +2945,15 @@ export default function ProductListingPage() {
     try {
       const shopifyMediaItems = buildShopifySyncMediaItems();
 
-      // 根据媒体来源推断 sourceType（前端知道来源，不要猜）
-      const aiLabels = ["批量摄影", "换色", "HEX换色", "场景图", "大模型", "ai"];
-      const urlLabels = ["url", "抓取", "1688", "淘宝", "链接"];
-      const hasAiMedia = mediaItems.some((m) =>
-        aiLabels.some((kw) => m.sourceLabel?.toLowerCase().includes(kw))
-      );
+      // 根据媒体来源推断 sourceType
+      // URL抓取：sourceLabel 包含 URL 相关关键词
+      // AI处理：有 sourceJobId（来自 render_jobs）
+      // 本地上传：无 sourceJobId，无 URL 相关 sourceLabel
+      const urlLabels = ["url", "抓取", "1688", "淘宝"];
       const hasUrlMedia = mediaItems.some((m) =>
         urlLabels.some((kw) => m.sourceLabel?.toLowerCase().includes(kw))
       );
+      const hasAiMedia = mediaItems.some((m) => Boolean(m.sourceJobId));
       const sourceType = hasUrlMedia
         ? "url_capture"
         : hasAiMedia
