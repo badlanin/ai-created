@@ -72,16 +72,17 @@ export async function POST(req: NextRequest) {
 
         // 读取原图信息
         const wmResizedMeta = await sharp(wmResized).metadata();
-        const pad = 0; // 无边距，紧贴右下角
-        const left = origWidth - (wmResizedMeta.width || 0) - pad;
-        const top = (origMeta.height || 0) - (wmResizedMeta.height || 0) - pad;
+        // 水印往右移动20px（超出边缘的部分自动裁切），下边保持紧贴
+        const padBottom = 0;
+        const padRight = -20;
+        const left = origWidth - (wmResizedMeta.width || 0) + padRight;
+        const top = (origMeta.height || 0) - (wmResizedMeta.height || 0) - padBottom;
 
-        // 合成水印到右下角
+        // 用 gravity=southeast 让 Sharp 自动贴右下角（离下边刚好合适）
         const watermarked = await sharp(absPath)
           .composite([{
             input: wmResized,
-            top: Math.max(0, top),
-            left: Math.max(0, left),
+            gravity: "southeast",
             blend: "over",
           }])
           .png({ quality: 95 })
