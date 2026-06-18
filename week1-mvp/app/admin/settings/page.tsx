@@ -1,7 +1,6 @@
 "use client";
 
-import { createRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 interface SettingItem {
   key: string;
@@ -78,76 +77,6 @@ export default function SettingsAdminPage() {
     default_budget_cny: "0",
   });
 
-  // 水印管理
-  const [watermarks, setWatermarks] = useState<Array<{ id: string; name: string; previewUrl: string }>>([]);
-  const [watermarkLoadError, setWatermarkLoadError] = useState<string | null>(null);
-  const [uploadingWatermark, setUploadingWatermark] = useState(false);
-  const [newWatermarkName, setNewWatermarkName] = useState("");
-  const watermarkInputRef = createRef<HTMLInputElement>();
-  const watermarkLoadCounterRef = useRef(0);
-
-  async function loadWatermarks() {
-    try {
-      const res = await fetch("/api/watermark");
-      if (!res.ok) return;
-      const data = await res.json();
-      setWatermarks(data.watermarks || []);
-      setWatermarkLoadError(null);
-    } catch {
-      setWatermarkLoadError("加载水印失败");
-    }
-  }
-
-  async function handleUploadWatermark(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!newWatermarkName.trim()) {
-      setWatermarkLoadError("请先输入水印名称");
-      return;
-    }
-    if (!file.type.startsWith("image/png")) {
-      setWatermarkLoadError("水印仅支持 PNG 格式");
-      return;
-    }
-    setUploadingWatermark(true);
-    setWatermarkLoadError(null);
-    try {
-      const fd = new FormData();
-      fd.append("file", file, file.name);
-      fd.append("name", newWatermarkName.trim());
-      const res = await fetch("/api/watermark", {
-        method: "POST",
-        body: fd,
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "上传失败");
-      setNewWatermarkName("");
-      await loadWatermarks();
-    } catch (err) {
-      setWatermarkLoadError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setUploadingWatermark(false);
-      // 清空 input 以便重复上传同名文件
-      e.target.value = "";
-    }
-  }
-
-  async function handleDeleteWatermark(id: string, name: string) {
-    if (!confirm(`确定删除水印「${name}」？`)) return;
-    try {
-      const res = await fetch("/api/watermark", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "删除失败");
-      await loadWatermarks();
-    } catch (err) {
-      setWatermarkLoadError(err instanceof Error ? err.message : String(err));
-    }
-  }
-
   const settingMap = useMemo(() => {
     const m = new Map<string, SettingItem>();
     settings.forEach((s) => m.set(s.key, s));
@@ -179,9 +108,6 @@ export default function SettingsAdminPage() {
       // OpenAI 代理 URL 从 settings 表读（key 本身不回显，因为是 secret）
       setOpenaiProxyInput(map.get("openai_proxy_url") ?? "");
       setGptBaseUrlInput(map.get("gpt_base_url") ?? map.get("gpt_proxy_url") ?? "");
-
-      // 检查水印是否存在
-      loadWatermarks();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -836,79 +762,6 @@ export default function SettingsAdminPage() {
         </form>
       </section>
 
-      {/* ===== 品牌水印 ===== */}
-      <section className="bg-bg-secondary rounded-lg shadow-sm border border-border-subtle p-6">
-        <h2 className="text-base font-semibold text-fg-primary mb-1">
-          品牌水印
-        </h2>
-        <p className="text-xs text-fg-tertiary mb-4">
-          上传透明背景 PNG 水印，可上传多个。产品上架时子账户可从列表中选择使用。
-        </p>
-
-        <div className="space-y-4">
-          {/* 上传表单 */}
-          <div className="flex items-end gap-3">
-            <div className="flex-1">
-              <label className="block text-xs text-fg-secondary mb-1">水印名称</label>
-              <input
-                type="text"
-                value={newWatermarkName}
-                onChange={(e) => setNewWatermarkName(e.target.value)}
-                placeholder="如 FANNYWE / 品牌Logo"
-                className="w-full h-9 px-3 rounded-md border border-border-default bg-bg-primary text-sm"
-              />
-            </div>
-            <input
-              type="file"
-              accept="image/png"
-              ref={watermarkInputRef}
-              onChange={handleUploadWatermark}
-              className="hidden"
-            />
-            <button
-              type="button"
-              onClick={() => watermarkInputRef.current?.click()}
-              disabled={uploadingWatermark}
-              className="shrink-0 h-9 px-4 bg-brand-600 text-white text-sm rounded-md hover:bg-brand-700 disabled:opacity-50"
-            >
-              {uploadingWatermark ? <Loader2 size={14} className="animate-spin inline mr-1" /> : null}
-              上传水印
-            </button>
-          </div>
-          {watermarkLoadError && (
-            <p className="text-sm text-red-600">{watermarkLoadError}</p>
-          )}
-
-          {/* 水印列表 */}
-          {watermarks.length > 0 && (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-              {watermarks.map((wm) => (
-                <div key={wm.id} className="relative rounded-md border border-border-default bg-bg-primary p-2">
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteWatermark(wm.id, wm.name)}
-                    className="absolute top-1 right-1 w-6 h-6 flex items-center justify-center rounded-full bg-white/80 text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-opacity"
-                    title="删除"
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                  <div className="h-16 flex items-center justify-center">
-                    <img
-                      src={wm.previewUrl}
-                      alt={wm.name}
-                      className="max-h-full max-w-full object-contain"
-                    />
-                  </div>
-                  <p className="mt-1 text-center text-[11px] text-fg-secondary truncate">{wm.name}</p>
-                </div>
-              ))}
-            </div>
-          )}
-          {watermarks.length === 0 && !watermarkLoadError && (
-            <p className="text-xs text-fg-tertiary py-4 text-center">暂无水印，请上传</p>
-          )}
-        </div>
-      </section>
     </main>
   );
 }

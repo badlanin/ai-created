@@ -358,6 +358,7 @@ export function LeftNav({
               <SubItem href="/admin/expressions" label="表情" active={isActive("/admin/expressions")} />
               <SubItem href="/admin/photography" label="摄影" active={isActive("/admin/photography")} />
               <SubItem href="/admin/prompts" label="Prompt" active={isActive("/admin/prompts")} />
+              <SubItem href="/admin/watermarks" label="水印" active={isActive("/admin/watermarks")} />
               <SubItem href="/admin/ai-models" label="AI 模型" active={isActive("/admin/ai-models")} />
             </Collapsible>
 
