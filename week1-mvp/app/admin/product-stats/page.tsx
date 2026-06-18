@@ -215,9 +215,9 @@ function dbUrlRecordToHistory(record: UrlCaptureRecord): UrlCaptureHistoryRecord
 }
 
 export default function ProductStatsPage() {
-  const range = useMemo(defaultDateRange, []);
-  const [start, setStart] = useState(range.start);
-  const [end, setEnd] = useState(range.end);
+  const [date, setDate] = useState(() => formatDay(new Date()));
+  const start = date;
+  const end = date;
   const [userFilter, setUserFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [data, setData] = useState<ApiData | null>(null);
@@ -251,8 +251,10 @@ export default function ProductStatsPage() {
 
   useEffect(() => {
     load();
+    const timer = setInterval(load, 2 * 60 * 1000);
+    return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [start, end]);
+  }, [date]);
 
   const urlCaptureHistory = useMemo(() => readUrlCaptureHistory(), [data]);
   const localUrlCaptureHistory = useMemo(
@@ -327,7 +329,7 @@ export default function ProductStatsPage() {
     for (const item of localUrlCaptureHistory) {
       const day = formatDay(new Date(item.createdAt));
       if (day < start || day > end) continue;
-      const count = toNumber(item.addedCount);
+      const count = 1;
       urlByDay.set(day, (urlByDay.get(day) || 0) + count);
       const userId = item.userId ? String(item.userId) : "local-url";
       const key = `${day}:${userId}`;
@@ -463,19 +465,12 @@ export default function ProductStatsPage() {
 
       <section className="mb-5 flex flex-wrap items-center gap-3 rounded-lg border border-border-subtle bg-bg-secondary p-4 shadow-sm">
         <label className="text-xs text-fg-tertiary">
-          日期范围
-          <div className="mt-1 flex items-center gap-2">
+          日期
+          <div className="mt-1">
             <input
               type="date"
-              value={start}
-              onChange={(e) => setStart(e.target.value)}
-              className="h-9 rounded-md border border-border-default bg-bg-primary px-3 text-sm"
-            />
-            <span className="text-fg-tertiary">-</span>
-            <input
-              type="date"
-              value={end}
-              onChange={(e) => setEnd(e.target.value)}
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
               className="h-9 rounded-md border border-border-default bg-bg-primary px-3 text-sm"
             />
           </div>
