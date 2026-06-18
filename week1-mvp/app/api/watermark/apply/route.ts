@@ -64,15 +64,15 @@ export async function POST(req: NextRequest) {
         const origMeta = await sharp(absPath).metadata();
         const origWidth = origMeta.width || 1024;
 
-        // 水印宽度 = 原图宽的 15%（最大 400px）
-        const targetWmWidth = Math.min(origWidth * 0.15, 400);
+        // 水印宽度 = 原图宽的 30%（最大 800px），确保障清晰可见
+        const targetWmWidth = Math.min(origWidth * 0.30, 800);
         const wmResized = await sharp(watermarkBuffer)
           .resize(Math.round(targetWmWidth), null, { fit: "inside" })
           .toBuffer();
 
         // 读取原图信息
         const wmResizedMeta = await sharp(wmResized).metadata();
-        const pad = Math.round(origWidth * 0.03); // 3% 边距
+        const pad = Math.round(origWidth * 0.04); // 4% 边距
         const left = origWidth - (wmResizedMeta.width || 0) - pad;
         const top = (origMeta.height || 0) - (wmResizedMeta.height || 0) - pad;
 
