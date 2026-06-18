@@ -752,9 +752,7 @@ function DetailListModal({
   onOpenAiDetail: (jobId: string) => void;
 }) {
   const recordsCount =
-    target.kind === "url"
-      ? urlRecords.reduce((sum, item) => sum + toNumber(item.addedCount), 0)
-      : aiRecords.reduce((sum, item) => sum + toNumber(item.completed_count), 0);
+    target.kind === "url" ? urlRecords.length : aiRecords.length;
   const title =
     target.kind === "url"
       ? `URL抓取明细 · ${target.displayName} · ${target.day}`
