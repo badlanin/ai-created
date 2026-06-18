@@ -12,40 +12,35 @@ export const maxDuration = 30;
 /**
  * POST /api/watermark/apply
  *
- * 给指定图片叠加品牌水印（右下角）。
+ * 给指定图片叠加指定水印（右下角）。
  *
- * 请求体: { imageUrl: string }
- *   imageUrl: 图片的访问路径（如 /assets/uploads/product-media/xxx.png）
+ * 请求体: { imageUrls: string[], watermarkId: string }
+ *   imageUrls: 图片的访问路径数组
+ *   watermarkId: 水印的 id（来自 GET /api/watermark）
  *
- * 响应: { url: "/assets/uploads/watermarked/xxx.png" }
+ * 响应: { ok: true, results: [{ originalUrl, url }] }
  */
 export async function POST(req: NextRequest) {
   try {
     const user = await requireUser();
-    const body = (await req.json()) as { imageUrl?: string; imageUrls?: string[] };
+    const body = (await req.json()) as { imageUrl?: string; imageUrls?: string[]; watermarkId?: string };
     const urls = body.imageUrls || (body.imageUrl ? [body.imageUrl] : []);
+    const watermarkId = body.watermarkId;
 
     if (urls.length === 0) {
       return NextResponse.json({ error: "请提供 imageUrl 或 imageUrls" }, { status: 400 });
     }
-    if (urls.length > 20) {
-      return NextResponse.json({ error: "一次最多处理 20 张图片" }, { status: 400 });
+    if (!watermarkId) {
+      return NextResponse.json({ error: "请提供 watermarkId" }, { status: 400 });
     }
 
-    // 检查水印文件是否存在
-    const watermarks = ["watermark.png", "watermark.jpg", "watermark.jpeg", "watermark.webp"];
-    const fullWmDir = path.join(DATA_DIR_PATH, "watermark");
-    let watermarkBuffer: Buffer | null = null;
-    let watermarkExt = "";
-    for (const wm of watermarks) {
-      try {
-        watermarkBuffer = await fs.readFile(path.join(fullWmDir, wm));
-        watermarkExt = wm;
-        break;
-      } catch { /* 继续找 */ }
-    }
-    if (!watermarkBuffer) {
-      return NextResponse.json({ error: "水印文件未设置，请到设置页上传水印" }, { status: 400 });
+    // 读取水印文件
+    const wmPath = path.join(DATA_DIR_PATH, "watermark", `${watermarkId}.png`);
+    let watermarkBuffer: Buffer;
+    try {
+      watermarkBuffer = await fs.readFile(wmPath);
+    } catch {
+      return NextResponse.json({ error: "水印文件不存在，请到设置页重新上传" }, { status: 400 });
     }
 
     // 把水印缩放到图片的 15% 宽度（自适应），最大 200px

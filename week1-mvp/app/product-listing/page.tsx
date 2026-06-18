@@ -2244,6 +2244,9 @@ export default function ProductListingPage() {
   const [syncWarnings, setSyncWarnings] = useState<string[]>([]);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [watermarking, setWatermarking] = useState(false);
+  const [watermarkPickerOpen, setWatermarkPickerOpen] = useState(false);
+  const [watermarkList, setWatermarkList] = useState<Array<{ id: string; name: string; previewUrl: string }>>([]);
+  const [selectedWatermarkId, setSelectedWatermarkId] = useState<string | null>(null);
   const [mediaItems, setMediaItems] = useState<ProductListingMediaItem[]>(() => {
     if (typeof window === "undefined") return [];
     try {
@@ -3209,21 +3212,37 @@ export default function ProductListingPage() {
     );
   }
 
+  async function openWatermarkPicker() {
+    if (mediaItems.length === 0) return;
+    setWatermarking(true);
+    try {
+      const res = await fetch("/api/watermark");
+      if (!res.ok) throw new Error("加载水印列表失败");
+      const data = await res.json();
+      setWatermarkList(data.watermarks || []);
+      setWatermarkPickerOpen(true);
+    } catch (e) {
+      setLastAction(e instanceof Error ? e.message : String(e));
+    } finally {
+      setWatermarking(false);
+    }
+  }
+
   async function applyWatermarkToAll() {
     const urls = mediaItems.map((item) => item.url);
-    if (urls.length === 0) return;
+    if (!selectedWatermarkId) return;
     setWatermarking(true);
+    setWatermarkPickerOpen(false);
     setLastAction("正在添加水印...");
     try {
       const res = await fetch("/api/watermark/apply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageUrls: urls }),
+        body: JSON.stringify({ imageUrls: urls, watermarkId: selectedWatermarkId }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "添加水印失败");
       const results = (data.results || []) as Array<{ originalUrl: string; url: string | null }>;
-      // 替换 mediaItems 中的 url
       setMediaItems((prev) =>
         prev.map((item) => {
           const result = results.find((r) => r.originalUrl === item.url);
@@ -3365,7 +3384,7 @@ export default function ProductListingPage() {
               onUploadLocalMedia={uploadLocalMedia}
               uploadingMedia={uploadingMedia}
               watermarking={watermarking}
-              onApplyWatermark={applyWatermarkToAll}
+              onApplyWatermark={openWatermarkPicker}
               onCategoryMetafieldCandidatesChange={
                 setCategoryMetafieldCandidatesForAi
               }
@@ -3513,6 +3532,63 @@ export default function ProductListingPage() {
         <div className="rounded-md border border-red-100 bg-red-50 p-3 text-sm text-red-700">
           解除绑定只影响 Shopify 连接信息，不会删除当前页面已经填写的商品草稿。
         </div>
+      </Dialog>
+
+      {/* 水印选择弹窗 */}
+      <Dialog
+        open={watermarkPickerOpen}
+        onClose={() => setWatermarkPickerOpen(false)}
+        title="选择水印"
+        description="选择要叠加到所有媒体图片的水印"
+        width="lg"
+        footer={
+          <div className="flex gap-2 w-full">
+            <Button variant="ghost" onClick={() => setWatermarkPickerOpen(false)} className="flex-1">
+              取消
+            </Button>
+            <Button
+              variant="primary"
+              loading={watermarking}
+              disabled={!selectedWatermarkId}
+              onClick={applyWatermarkToAll}
+              className="flex-1"
+            >
+              确定加水印
+            </Button>
+          </div>
+        }
+      >
+        {watermarkList.length === 0 ? (
+          <div className="py-8 text-center text-sm text-fg-tertiary">
+            暂无水印，请联系管理员上传
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 sm:grid-cols-4 gap-3 max-h-[50vh] overflow-y-auto">
+            {watermarkList.map((wm) => (
+              <button
+                key={wm.id}
+                type="button"
+                onClick={() => setSelectedWatermarkId(wm.id)}
+                className={`rounded-md border-2 p-2 transition-all ${
+                  selectedWatermarkId === wm.id
+                    ? "border-brand-500 bg-brand-50/30 shadow-sm"
+                    : "border-border-default hover:border-brand-300"
+                }`}
+              >
+                <div className="h-16 flex items-center justify-center">
+                  <img
+                    src={wm.previewUrl}
+                    alt={wm.name}
+                    className="max-h-full max-w-full object-contain"
+                  />
+                </div>
+                <p className="mt-1 text-center text-[11px] text-fg-secondary truncate">
+                  {wm.name}
+                </p>
+              </button>
+            ))}
+          </div>
+        )}
       </Dialog>
 
       <Dialog
