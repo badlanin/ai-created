@@ -22,12 +22,22 @@ type UploadByDay = {
   upload_count: number;
 };
 
+type UploadByUserDay = {
+  user_id: number;
+  username: string | null;
+  display_name: string | null;
+  day: string;
+  source_type: string;
+  upload_count: number;
+};
+
 type ApiData = {
   start: string;
   end: string;
   users: UserRow[];
   uploadStats: UploadStat[];
   uploadByDay: UploadByDay[];
+  uploadByUserDay: UploadByUserDay[];
 };
 
 type SourceFilter = "all" | "url_capture" | "ai_generated" | "local_upload";
@@ -74,6 +84,7 @@ export default function ProductStatsPage() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<ApiData | null>(null);
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
+  const [userFilter, setUserFilter] = useState<string>("all");
 
   const { start, end } = useMemo(() => {
     const endDate = new Date(`${date}T00:00:00`);
@@ -99,24 +110,36 @@ export default function ProductStatsPage() {
   const computed = useMemo(() => {
     if (!data) return { totalBySource: [], chart: [], todayTotal: 0 };
 
-    const stats = data.uploadStats || [];
-    const byDay = data.uploadByDay || [];
+    const byUserDay = data.uploadByUserDay || [];
+
+    // 按用户筛选数据
+    const filteredData = userFilter === "all"
+      ? byUserDay
+      : byUserDay.filter((d) => String(d.user_id) === userFilter);
 
     // 计算各来源总数
     const totalBySource = ["url_capture", "ai_generated", "local_upload"].map((sourceType) => {
-      const stat = stats.find((s) => s.source_type === sourceType);
+      const count = filteredData
+        .filter((d) => d.source_type === sourceType)
+        .reduce((sum, d) => sum + (d.upload_count || 0), 0);
       return {
         sourceType,
-        count: stat?.upload_count || 0,
+        count,
       };
     });
 
     // 按天统计（用于图表）
     const days = enumerateDays(start, end);
     const chart = days.map((day) => {
-      const urlCount = byDay.find((d) => d.day === day && d.source_type === "url_capture")?.upload_count || 0;
-      const aiCount = byDay.find((d) => d.day === day && d.source_type === "ai_generated")?.upload_count || 0;
-      const localCount = byDay.find((d) => d.day === day && d.source_type === "local_upload")?.upload_count || 0;
+      const urlCount = filteredData
+        .filter((d) => d.day === day && d.source_type === "url_capture")
+        .reduce((sum, d) => sum + (d.upload_count || 0), 0);
+      const aiCount = filteredData
+        .filter((d) => d.day === day && d.source_type === "ai_generated")
+        .reduce((sum, d) => sum + (d.upload_count || 0), 0);
+      const localCount = filteredData
+        .filter((d) => d.day === day && d.source_type === "local_upload")
+        .reduce((sum, d) => sum + (d.upload_count || 0), 0);
       return { day, urlCount, aiCount, localCount };
     });
 
@@ -126,7 +149,7 @@ export default function ProductStatsPage() {
     const todayTotal = (todayRow?.urlCount || 0) + (todayRow?.aiCount || 0) + (todayRow?.localCount || 0);
 
     return { totalBySource, chart, todayTotal };
-  }, [data, start, end]);
+  }, [data, start, end, userFilter]);
 
   function exportCsv() {
     const lines = [
@@ -156,12 +179,19 @@ export default function ProductStatsPage() {
     ...computed.chart.map((row) => row.urlCount + row.aiCount + row.localCount)
   );
 
+  const selectedUserName = useMemo(() => {
+    if (userFilter === "all") return null;
+    const user = data?.users.find((u) => String(u.id) === userFilter);
+    return user ? (user.display_name || user.username) : null;
+  }, [userFilter, data]);
+
   return (
     <main className="max-w-6xl mx-auto p-4 md:p-8">
       <header className="mb-6">
         <h1 className="text-2xl font-bold text-fg-primary">产品上架统计</h1>
         <p className="mt-1 text-sm text-fg-tertiary">
           统计点击"上架"按钮的产品数量（按来源分类）
+          {selectedUserName && ` · ${selectedUserName}`}
         </p>
       </header>
 
@@ -175,6 +205,23 @@ export default function ProductStatsPage() {
               onChange={(e) => setDate(e.target.value)}
               className="h-9 rounded-md border border-border-default bg-bg-primary px-3 text-sm text-fg-primary"
             />
+          </div>
+        </label>
+        <label className="text-xs text-fg-tertiary">
+          子账户
+          <div className="mt-1">
+            <select
+              value={userFilter}
+              onChange={(e) => setUserFilter(e.target.value)}
+              className="h-9 rounded-md border border-border-default bg-bg-primary px-3 text-sm text-fg-primary"
+            >
+              <option value="all">全部子账户</option>
+              {(data?.users || []).map((user) => (
+                <option key={user.id} value={String(user.id)}>
+                  {user.display_name || user.username}
+                </option>
+              ))}
+            </select>
           </div>
         </label>
         <div className="flex flex-col text-xs text-fg-tertiary">

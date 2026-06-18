@@ -220,6 +220,23 @@ export async function GET(req: NextRequest) {
       )
       .all(startUnix, endUnix);
 
+    const uploadByUserDay = db
+      .prepare(
+        `SELECT
+          s.user_id,
+          u.username,
+          u.display_name,
+          date(s.created_at, 'unixepoch', '+8 hours') AS day,
+          s.source_type,
+          COUNT(*) as upload_count
+         FROM shopify_upload_stats s
+         LEFT JOIN users u ON u.id = s.user_id
+         WHERE s.created_at >= ? AND s.created_at < ?
+         GROUP BY s.user_id, day, s.source_type
+         ORDER BY day DESC, s.user_id ASC`
+      )
+      .all(startUnix, endUnix);
+
     return NextResponse.json({
       start: startDay,
       end: endDay,
@@ -232,6 +249,7 @@ export async function GET(req: NextRequest) {
       aiRecords,
       uploadStats,
       uploadByDay,
+      uploadByUserDay,
     });
   } catch (e) {
     const status = (e as { status?: number }).status || 500;
