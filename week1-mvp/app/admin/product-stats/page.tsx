@@ -80,18 +80,13 @@ const SOURCE_COLORS: Record<string, { bg: string; text: string; chart: string }>
 };
 
 export default function ProductStatsPage() {
-  const [date, setDate] = useState(defaultDateRange().end);
+  const initialRange = useMemo(defaultDateRange, []);
+  const [start, setStart] = useState(initialRange.start);
+  const [end, setEnd] = useState(initialRange.end);
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<ApiData | null>(null);
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [userFilter, setUserFilter] = useState<string>("all");
-
-  const { start, end } = useMemo(() => {
-    const endDate = new Date(`${date}T00:00:00`);
-    const startDate = new Date(endDate);
-    startDate.setDate(startDate.getDate() - 6);
-    return { start: formatDay(startDate), end: formatDay(endDate) };
-  }, [date]);
 
   useEffect(() => {
     setLoading(true);
@@ -108,9 +103,14 @@ export default function ProductStatsPage() {
   }, [start, end]);
 
   const computed = useMemo(() => {
-    if (!data) return { totalBySource: [], chart: [], todayTotal: 0 };
+    if (!data) {
+      return { totalBySource: [], chart: [], memberSummary: [], rangeTotal: 0 };
+    }
 
-    const byUserDay = data.uploadByUserDay || [];
+    const allowedUserIds = new Set(data.users.map((user) => user.id));
+    const byUserDay = (data.uploadByUserDay || []).filter((item) =>
+      allowedUserIds.has(item.user_id),
+    );
 
     // 按用户筛选数据
     const filteredData = userFilter === "all"
@@ -143,25 +143,58 @@ export default function ProductStatsPage() {
       return { day, urlCount, aiCount, localCount };
     });
 
-    // 今日总数
-    const today = formatDay(new Date());
-    const todayRow = chart.find((row) => row.day === today);
-    const todayTotal = (todayRow?.urlCount || 0) + (todayRow?.aiCount || 0) + (todayRow?.localCount || 0);
+    const memberSummary = data.users.map((user) => {
+      const userData = byUserDay.filter((item) => item.user_id === user.id);
+      const countFor = (sourceType: SourceFilter) =>
+        userData
+          .filter((item) => item.source_type === sourceType)
+          .reduce((sum, item) => sum + (item.upload_count || 0), 0);
+      const urlCount = countFor("url_capture");
+      const aiCount = countFor("ai_generated");
+      const localCount = countFor("local_upload");
+      return {
+        userId: user.id,
+        username: user.username,
+        displayName: user.display_name || user.username,
+        urlCount,
+        aiCount,
+        localCount,
+        total: urlCount + aiCount + localCount,
+      };
+    });
 
-    return { totalBySource, chart, todayTotal };
+    const rangeTotal = chart.reduce(
+      (sum, row) => sum + row.urlCount + row.aiCount + row.localCount,
+      0,
+    );
+
+    return { totalBySource, chart, memberSummary, rangeTotal };
   }, [data, start, end, userFilter]);
 
   function exportCsv() {
-    const lines = [
-      ["日期", "URL抓取", "AI处理", "本地上传", "合计"],
-      ...computed.chart.map((row) => [
-        row.day,
-        String(row.urlCount),
-        String(row.aiCount),
-        String(row.localCount),
-        String(row.urlCount + row.aiCount + row.localCount),
-      ]),
-    ];
+    const lines =
+      userFilter === "all"
+        ? [
+            ["子账户", "用户名", "URL抓取", "AI处理", "本地上传", "合计"],
+            ...computed.memberSummary.map((row) => [
+              row.displayName,
+              row.username,
+              String(row.urlCount),
+              String(row.aiCount),
+              String(row.localCount),
+              String(row.total),
+            ]),
+          ]
+        : [
+            ["日期", "URL抓取", "AI处理", "本地上传", "合计"],
+            ...computed.chart.map((row) => [
+              row.day,
+              String(row.urlCount),
+              String(row.aiCount),
+              String(row.localCount),
+              String(row.urlCount + row.aiCount + row.localCount),
+            ]),
+          ];
     const csv = lines
       .map((row) => row.map((cell) => `"${cell}"`).join(","))
       .join("\n");
@@ -197,12 +230,21 @@ export default function ProductStatsPage() {
 
       <section className="mb-5 flex flex-wrap items-center gap-3 rounded-lg border border-border-subtle bg-bg-secondary p-4 shadow-sm">
         <label className="text-xs text-fg-tertiary">
-          日期
-          <div className="mt-1">
+          日期范围
+          <div className="mt-1 flex items-center gap-2">
             <input
               type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
+              value={start}
+              max={end}
+              onChange={(e) => setStart(e.target.value)}
+              className="h-9 rounded-md border border-border-default bg-bg-primary px-3 text-sm text-fg-primary"
+            />
+            <span className="text-fg-tertiary">-</span>
+            <input
+              type="date"
+              value={end}
+              min={start}
+              onChange={(e) => setEnd(e.target.value)}
               className="h-9 rounded-md border border-border-default bg-bg-primary px-3 text-sm text-fg-primary"
             />
           </div>
@@ -267,7 +309,7 @@ export default function ProductStatsPage() {
       ) : (
         <>
           <section className="mb-5 grid grid-cols-1 gap-3 md:grid-cols-4">
-            <StatCard label="今日总数" value={computed.todayTotal} icon={<Package size={16} />} />
+            <StatCard label="范围总数" value={computed.rangeTotal} icon={<Package size={16} />} />
             <StatCard
               label="URL抓取"
               value={computed.totalBySource.find((s) => s.sourceType === "url_capture")?.count || 0}
@@ -347,13 +389,15 @@ export default function ProductStatsPage() {
 
           <section className="rounded-lg border border-border-subtle bg-bg-secondary p-5 shadow-sm">
             <h2 className="mb-3 text-sm font-semibold text-fg-primary">
-              每日明细
+              {userFilter === "all" ? "子账户明细（日期范围）" : "每日明细"}
             </h2>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border-subtle text-xs text-fg-tertiary">
-                    <th className="py-2 text-left">日期</th>
+                    <th className="py-2 text-left">
+                      {userFilter === "all" ? "子账户" : "日期"}
+                    </th>
                     <th className="py-2 text-right">URL抓取</th>
                     <th className="py-2 text-right">AI处理</th>
                     <th className="py-2 text-right">本地上传</th>
@@ -361,7 +405,37 @@ export default function ProductStatsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {computed.chart.length === 0 ? (
+                  {userFilter === "all" ? (
+                    computed.memberSummary.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="py-8 text-center text-fg-tertiary">
+                          暂无统计记录
+                        </td>
+                      </tr>
+                    ) : (
+                      computed.memberSummary.map((row) => (
+                        <tr
+                          key={row.userId}
+                          className="border-b border-border-subtle hover:bg-bg-tertiary"
+                        >
+                          <td className="py-2 text-fg-secondary">
+                            <div className="font-medium text-fg-primary">
+                              {row.displayName}
+                            </div>
+                            <div className="text-xs text-fg-tertiary">
+                              @{row.username}
+                            </div>
+                          </td>
+                          <td className="py-2 text-right text-fg-primary">{row.urlCount}</td>
+                          <td className="py-2 text-right text-fg-primary">{row.aiCount}</td>
+                          <td className="py-2 text-right text-fg-primary">{row.localCount}</td>
+                          <td className="py-2 text-right font-medium text-fg-primary">
+                            {row.total}
+                          </td>
+                        </tr>
+                      ))
+                    )
+                  ) : computed.chart.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="py-8 text-center text-fg-tertiary">
                         暂无统计记录
