@@ -838,6 +838,7 @@ export default function RecolorPage() {
       }
 
       const formData = new FormData();
+      formData.append("convertToWebp", "1");
       const uploadedSources: ScrapedImage[] = [];
       let fileCount = 0;
       for (const img of selected) {

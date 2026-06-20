@@ -575,6 +575,7 @@ type ShopifyVariantsBulkCreateResponse = {
       productVariants?: Array<{
         id: string;
         title?: string | null;
+        selectedOptions?: Array<{ name: string; value: string }> | null;
         inventoryItem?: { id: string; sku?: string | null } | null;
       }>;
       userErrors?: Array<{ field?: string[]; message?: string }>;
@@ -1558,6 +1559,20 @@ type NormalizedProductOptionDraft = {
   linkedMetafield: { namespace: string; key: string; values: string[] } | null;
   linkedValueByValue: Map<string, string>;
 };
+
+function normalizedVariantOptionsKey(
+  values: Array<{ optionName?: string; name?: string; value?: string }> | null | undefined,
+) {
+  return (values || [])
+    .map((item) => ({
+      name: cleanField(item.optionName || item.name).toLowerCase(),
+      value: cleanField(item.value).toLowerCase(),
+    }))
+    .filter((item) => item.name && item.value)
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((item) => `${item.name}:${item.value}`)
+    .join("|");
+}
 
 function findShopifyCategoryMetafieldMappingByField(field?: string) {
   const normalized = cleanField(field);
@@ -2775,6 +2790,10 @@ export async function syncShopifyProduct(
           productVariants {
             id
             title
+            selectedOptions {
+              name
+              value
+            }
             inventoryItem {
               id
               sku
@@ -2803,9 +2822,20 @@ export async function syncShopifyProduct(
     );
     const createdVariants =
       variantsJson.data?.productVariantsBulkCreate?.productVariants || [];
+    const createdVariantByOptions = new Map(
+      createdVariants
+        .map((variant) => [
+          normalizedVariantOptionsKey(variant.selectedOptions),
+          variant,
+        ] as const)
+        .filter(([key]) => Boolean(key)),
+    );
     for (let index = 0; index < extraVariantDrafts.length; index += 1) {
-      const variant = createdVariants[index];
       const draft = extraVariantDrafts[index];
+      const variant =
+        createdVariantByOptions.get(
+          normalizedVariantOptionsKey(draft.optionValues),
+        ) || createdVariants[index];
       const quantity = normalizeInventoryQuantity(draft.inventory || input.inventory);
       if (variant?.inventoryItem?.id && quantity !== null) {
         inventoryTargets.push({
@@ -2983,7 +3013,7 @@ function resolveVariantMediaId(
 ): string {
   if (!draft || !cleanField(draft.imageUrl)) return "";
   const matchedMediaId = mediaIdBySource.get(normalizeMediaSourceKey(draft.imageUrl));
-  return matchedMediaId || mediaIds[0] || "";
+  return matchedMediaId || "";
 }
 
 function buildMediaIdBySource(
