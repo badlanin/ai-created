@@ -7,6 +7,23 @@ export const PRODUCT_LISTING_PROMPT_PRESETS_STORAGE_KEY =
 
 export type ProductMediaRole = "main" | "detail" | "back";
 
+export interface ProductMediaWatermarkPlacement {
+  /** 水印中心点横向位置，0-1 */
+  x: number;
+  /** 水印中心点纵向位置，0-1 */
+  y: number;
+  /** 水印宽度占原图宽度的比例，0-1 */
+  width: number;
+}
+
+export interface ProductMediaWatermark {
+  id: string;
+  name: string;
+  /** 未叠加水印的源图；再次调整时始终从该图重新合成 */
+  sourceUrl: string;
+  placement: ProductMediaWatermarkPlacement;
+}
+
 export interface ProductListingPromptPreset {
   id: string;
   name: string;
@@ -23,6 +40,7 @@ export interface ProductListingMediaItem {
   sourceJobId?: string;
   sourceItemId?: number;
   sourceLabel?: string;
+  watermark?: ProductMediaWatermark;
 }
 
 export interface ProductListingMediaInput {

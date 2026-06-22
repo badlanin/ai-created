@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
-import { DATA_DIR_PATH, getDb } from "@/lib/db";
-import { saveUploadFile } from "@/lib/uploads";
+import { DATA_DIR_PATH } from "@/lib/db";
 import fs from "fs/promises";
 import path from "path";
 import sharp from "sharp";
@@ -12,23 +11,49 @@ export const maxDuration = 30;
 /**
  * POST /api/watermark/apply
  *
- * 给指定图片叠加指定水印（右下角）。
+ * 给指定图片按归一化坐标叠加水印。
  *
- * 请求体: { imageUrls: string[], watermarkId: string }
- *   imageUrls: 图片的访问路径数组
+ * 请求体: { items: [{ key, imageUrl, placement }], watermarkId: string }
+ *   placement: { x, y, width }，均为相对图片尺寸的 0-1 数值；x/y 是中心点
  *   watermarkId: 水印的 id（来自 GET /api/watermark）
  *
  * 响应: { ok: true, results: [{ originalUrl, url }] }
  */
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireUser();
-    const body = (await req.json()) as { imageUrl?: string; imageUrls?: string[]; watermarkId?: string };
-    const urls = body.imageUrls || (body.imageUrl ? [body.imageUrl] : []);
+    await requireUser();
+    const body = (await req.json()) as {
+      imageUrl?: string;
+      imageUrls?: string[];
+      watermarkId?: string;
+      placement?: WatermarkPlacement;
+      items?: Array<{
+        key?: string;
+        imageUrl?: string;
+        placement?: WatermarkPlacement;
+      }>;
+    };
+    const legacyUrls = body.imageUrls || (body.imageUrl ? [body.imageUrl] : []);
+    const items = Array.isArray(body.items)
+      ? body.items
+          .filter((item) => typeof item.imageUrl === "string" && item.imageUrl)
+          .map((item) => ({
+            key: item.key || item.imageUrl!,
+            imageUrl: item.imageUrl!,
+            placement: normalizePlacement(item.placement || body.placement),
+          }))
+      : legacyUrls.map((imageUrl) => ({
+          key: imageUrl,
+          imageUrl,
+          placement: normalizePlacement(body.placement),
+        }));
     const watermarkId = body.watermarkId;
 
-    if (urls.length === 0) {
-      return NextResponse.json({ error: "请提供 imageUrl 或 imageUrls" }, { status: 400 });
+    if (items.length === 0) {
+      return NextResponse.json(
+        { error: "请提供 imageUrl、imageUrls 或 items" },
+        { status: 400 },
+      );
     }
     if (!watermarkId) {
       return NextResponse.json({ error: "请提供 watermarkId" }, { status: 400 });
@@ -43,62 +68,82 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "水印文件不存在，请到设置页重新上传" }, { status: 400 });
     }
 
-    // 把水印缩放到图片的 15% 宽度（自适应），最大 200px
-    const wmMeta = await sharp(watermarkBuffer).metadata();
-    const wmWidth = wmMeta.width || 200;
+    const results: Array<{
+      key: string;
+      originalUrl: string;
+      url: string | null;
+      error?: string;
+    }> = [];
 
-    const results: Array<{ originalUrl: string; url: string | null; error?: string }> = [];
-
-    for (const imageUrl of urls) {
+    for (const item of items) {
+      const { key, imageUrl, placement } = item;
       try {
         // 把访问路径转为本地文件路径
         // /assets/uploads/product-media/xxx.png → DATA_DIR/uploads/product-media/xxx.png
         const relPath = imageUrl.replace(/^\/assets\//, "");
         const absPath = path.resolve(DATA_DIR_PATH, relPath);
         if (!absPath.startsWith(path.resolve(DATA_DIR_PATH) + path.sep)) {
-          results.push({ originalUrl: imageUrl, url: null, error: "非法路径" });
+          results.push({ key, originalUrl: imageUrl, url: null, error: "非法路径" });
           continue;
         }
 
         // 读取原图，获取宽高
         const origMeta = await sharp(absPath).metadata();
         const origWidth = origMeta.width || 1024;
+        const origHeight = origMeta.height || 1024;
 
-        // 水印宽度 = 原图宽的 40%（最大 1200px），适中大小
-        const targetWmWidth = Math.min(origWidth * 0.40, 1200);
+        // 前端传相对宽度，后端按原图真实像素重新计算，保证不同分辨率视觉一致。
+        const targetWmWidth = Math.max(
+          8,
+          Math.min(Math.round(origWidth * placement.width), origWidth),
+        );
         const wmResized = await sharp(watermarkBuffer)
-          .resize(Math.round(targetWmWidth), null, { fit: "inside" })
+          .resize({
+            width: targetWmWidth,
+            height: origHeight,
+            fit: "inside",
+            withoutEnlargement: false,
+          })
           .toBuffer();
 
-        // 读取原图信息
         const wmResizedMeta = await sharp(wmResized).metadata();
-        // 水印往右移动20px（超出边缘的部分自动裁切），下边保持紧贴
-        const padBottom = 0;
-        const padRight = -20;
-        const left = origWidth - (wmResizedMeta.width || 0) + padRight;
-        const top = (origMeta.height || 0) - (wmResizedMeta.height || 0) - padBottom;
+        const renderedWidth = wmResizedMeta.width || targetWmWidth;
+        const renderedHeight = wmResizedMeta.height || 1;
+        const left = clampInt(
+          Math.round(placement.x * origWidth - renderedWidth / 2),
+          0,
+          Math.max(0, origWidth - renderedWidth),
+        );
+        const top = clampInt(
+          Math.round(placement.y * origHeight - renderedHeight / 2),
+          0,
+          Math.max(0, origHeight - renderedHeight),
+        );
 
-        // 用 gravity=southeast 让 Sharp 自动贴右下角（离下边刚好合适）
         const watermarked = await sharp(absPath)
           .composite([{
             input: wmResized,
-            gravity: "southeast",
+            left,
+            top,
             blend: "over",
           }])
           .png({ quality: 95 })
           .toBuffer();
 
         // 保存到 watermarked 目录
-        const fileName = `watermarked_${path.basename(relPath)}`;
+        const sourceBase = path.basename(relPath, path.extname(relPath));
+        const unique = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const fileName = `watermarked_${sourceBase}_${unique}.png`;
         const outDir = path.join(DATA_DIR_PATH, "uploads", "watermarked");
         await fs.mkdir(outDir, { recursive: true });
         const outPath = path.join(outDir, fileName);
         await fs.writeFile(outPath, watermarked);
 
         const outUrl = `/assets/uploads/watermarked/${fileName}`;
-        results.push({ originalUrl: imageUrl, url: outUrl });
+        results.push({ key, originalUrl: imageUrl, url: outUrl });
       } catch (e) {
         results.push({
+          key,
           originalUrl: imageUrl,
           url: null,
           error: e instanceof Error ? e.message : String(e),
@@ -107,7 +152,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 单图兼容返回 { url }
-    if (urls.length === 1 && results[0]?.url) {
+    if (items.length === 1 && results[0]?.url) {
       return NextResponse.json({ ok: true, url: results[0].url, results });
     }
 
@@ -119,4 +164,24 @@ export async function POST(req: NextRequest) {
       { status },
     );
   }
+}
+
+type WatermarkPlacement = { x?: number; y?: number; width?: number };
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function clampInt(value: number, min: number, max: number): number {
+  return Math.round(clamp(value, min, max));
+}
+
+function normalizePlacement(
+  placement?: WatermarkPlacement,
+): { x: number; y: number; width: number } {
+  return {
+    x: clamp(Number(placement?.x ?? 0.78), 0, 1),
+    y: clamp(Number(placement?.y ?? 0.9), 0, 1),
+    width: clamp(Number(placement?.width ?? 0.4), 0.08, 0.9),
+  };
 }

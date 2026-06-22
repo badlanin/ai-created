@@ -27,6 +27,14 @@ type MediaInput = {
   role?: string | null;
 };
 
+type ProductMetafieldDefinitionInput = {
+  id: string;
+  name: string;
+  namespace: string;
+  key: string;
+  type: string;
+};
+
 type CategoryMetafieldCandidateKey =
   | "categoryColor"
   | "categorySize"
@@ -183,6 +191,7 @@ const PRODUCT_LISTING_SYSTEM_PROMPT = `你是专业的 Shopify 礼服商品上�
 - 字段建议包含：商品标题、商品描述、产品类型、供应商、产品系列、标签、主色调、面料材质、领口设计、整体版型、SKU、原价、售价、库存、SEO标题、SEO描述。
 - 用户提示词明确点名要求输出的字段必须逐项输出，不得省略；即使无法确定，也要保留字段名，值可以留空或使用保守值。
 - 不要主动输出 Shopify 类别元字段；只有用户提示词明确要求输出类别元字段、元字段，或明确写出“类别元字段颜色/类别元字段尺寸”等完整类别元字段名时，才输出对应字段。
+- 如果系统提供了 Shopify 产品自定义元字段定义，必须按定义名称逐项输出；这些字段与类别元字段相互独立。
 - 如果用户提示词要求生成图片，不要在文字输出中编造图片 URL、/assets/outputs 路径、文件名或占位图；图片生成由系统另行处理。
 - 字段名使用中文，字段值可按用户要求使用英文或中文；如果用户没有指定，商品标题、描述、标签和 SEO 信息优先使用英文。
 - SEO描述必须控制在 150-160 个字符以内，字符数包含空格和标点符号。
@@ -204,6 +213,7 @@ export async function POST(req: NextRequest) {
         name?: string;
       };
       categoryMetafieldCandidates?: unknown;
+      productMetafieldDefinitions?: unknown;
       productOrganizationCandidates?: unknown;
       customsCandidates?: unknown;
     };
@@ -254,6 +264,9 @@ export async function POST(req: NextRequest) {
     const categoryMetafieldCandidates = normalizeCategoryMetafieldCandidates(
       body.categoryMetafieldCandidates,
     );
+    const productMetafieldDefinitions = normalizeProductMetafieldDefinitions(
+      body.productMetafieldDefinitions,
+    );
     const productOrganizationCandidates =
       normalizeProductOrganizationCandidates(
         body.productOrganizationCandidates,
@@ -282,6 +295,21 @@ export async function POST(req: NextRequest) {
     const requiredOutputFieldInstruction =
       formatRequiredOutputFieldInstruction(prompt);
     const shouldGenerateImages = shouldGenerateProductListingImages(prompt);
+    const productMetafieldInstruction = productMetafieldDefinitions.length
+      ? `Shopify 产品自定义元字段（必须逐项生成，字段名必须原样输出）：
+${productMetafieldDefinitions
+  .map(
+    (definition) =>
+      `- ${definition.name}（${definition.namespace}.${definition.key}，类型 ${definition.type}）`,
+  )
+  .join("\n")}
+
+产品自定义元字段生成规则：
+- FAQ 开头的字段：生成一条买家最可能询问、且与当前商品直接相关的简洁问题。
+- Answer 开头的字段：生成与对应 FAQ 序号匹配的清晰答案；只能依据图片、提示词和已生成商品信息，不确定的信息不要编造。
+- 富文本字段仍输出普通纯文本，由系统在同步 Shopify 时转换为富文本结构。
+- 每个字段单独一行，严格使用“定义名称: 内容”格式。`
+      : "当前没有需要生成的 Shopify 产品自定义元字段。";
 
     const client = buildGenaiClient();
     const result = await withTimeout(
@@ -299,6 +327,8 @@ ${prompt}
 ${mediaSummary}
 
 ${shopifyCategorySummary}
+
+${productMetafieldInstruction}
 
 Shopify 后台已有产品组织候选条目（按当前类别读取）：
 ${productOrganizationCandidateSummary}
@@ -389,6 +419,7 @@ ${categoryMetafieldCandidateSummary}
         category_candidate_fields: wantsCategoryMetafields
           ? Object.keys(categoryMetafieldCandidates).length
           : 0,
+        product_metafield_definition_count: productMetafieldDefinitions.length,
         image_generation_requested: shouldGenerateImages,
         generated_image_count: generatedImageUrls.length,
       },
@@ -674,6 +705,30 @@ function getProductListingAngleInstruction(index: number, total: number): string
 function appendGeneratedImageUrls(text: string, urls: string[]): string {
   if (!urls.length) return text;
   return `${text.trim()}\n\n大模型生成图片：\n${urls.join("\n")}`;
+}
+
+function normalizeProductMetafieldDefinitions(
+  value: unknown,
+): ProductMetafieldDefinitionInput[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const definitions: ProductMetafieldDefinitionInput[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const source = item as Record<string, unknown>;
+    const id = sanitizeText(String(source.id || ""));
+    const name = sanitizeText(String(source.name || source.key || ""));
+    const namespace = sanitizeText(String(source.namespace || ""));
+    const key = sanitizeText(String(source.key || ""));
+    const type = sanitizeText(
+      String(source.type || "single_line_text_field"),
+    );
+    const identity = `${namespace}.${key}`;
+    if (!name || !namespace || !key || seen.has(identity)) continue;
+    seen.add(identity);
+    definitions.push({ id, name, namespace, key, type });
+  }
+  return definitions.slice(0, 20);
 }
 
 function normalizeCandidateList(value: unknown, limit: number): string[] {

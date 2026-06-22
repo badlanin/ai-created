@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -21,6 +21,7 @@ import {
   Info,
   KeyRound,
   Link,
+  Move,
   MoreHorizontal,
   Package,
   Plus,
@@ -50,6 +51,10 @@ import { Thumbnail, ThumbnailBadge } from "@/app/_components/thumbnail";
 import { ImageCropper } from "@/app/_components/image-cropper";
 import { PageRefreshButton } from "@/app/_components/page-refresh-button";
 import {
+  DEFAULT_WATERMARK_PLACEMENT,
+  WatermarkPositionDialog,
+} from "@/app/_components/watermark-position-dialog";
+import {
   appendProductListingMedia,
   DEFAULT_PRODUCT_LISTING_PROMPT_PRESETS,
   PRODUCT_LISTING_MEDIA_STORAGE_KEY,
@@ -58,10 +63,27 @@ import {
   PRODUCT_MEDIA_ROLE_LABELS,
   type ProductListingMediaItem,
   type ProductListingPromptPreset,
+  type ProductMediaWatermarkPlacement,
   type ProductMediaRole,
 } from "@/lib/product-listing-draft";
 import { fetchWithShopifyDevice } from "@/lib/shopify-device-client";
 import shopifyTaxonomyZhCn from "@/lib/shopify-taxonomy-zh-cn.generated.json";
+
+type WatermarkEntry = {
+  id: string;
+  name: string;
+  previewUrl: string;
+};
+
+type WatermarkEditorState = {
+  mode: "all" | "single";
+  mediaId?: string;
+  imageUrl: string;
+  watermarkId: string;
+  watermarkName: string;
+  watermarkUrl: string;
+  placement: ProductMediaWatermarkPlacement;
+};
 
 type ShopifyBinding = {
   shopDomain: string;
@@ -229,6 +251,30 @@ type ShopifyCategoryMetafieldField = {
 type ShopifyCategoryMetafieldFields = Partial<
   Record<CategoryMetafieldFormKey, ShopifyCategoryMetafieldField>
 >;
+
+type ShopifyProductMetafieldDefinition = {
+  id: string;
+  name: string;
+  namespace: string;
+  key: string;
+  type: string;
+};
+
+function productMetafieldIdentity(
+  definition: Pick<ShopifyProductMetafieldDefinition, "namespace" | "key">,
+): string {
+  return `${definition.namespace}.${definition.key}`;
+}
+
+function isFaqProductMetafieldDefinition(
+  definition: ShopifyProductMetafieldDefinition,
+): boolean {
+  return [definition.name, definition.key].some((value) =>
+    /^(?:faq|answer)\d+$/.test(
+      value.toLowerCase().replace(/[^a-z0-9]/g, ""),
+    ),
+  );
+}
 
 type ShopifyTaxonomyCategoryOption = {
   id: string;
@@ -1658,6 +1704,36 @@ function extractByLabels(text: string, labels: string[]): string {
   return sanitizeAiOutput(match?.[1] || "").replace(/\n/g, "、");
 }
 
+function parseAiProductMetafieldValues(
+  raw: string,
+  definitions: ShopifyProductMetafieldDefinition[],
+): Record<string, string> {
+  const values: Record<string, string> = {};
+  const boundaryLabels = definitions.flatMap((definition) => [
+    definition.name,
+    definition.key,
+    `${definition.namespace}.${definition.key}`,
+  ]);
+  for (const definition of definitions) {
+    const labels = [
+      definition.name,
+      definition.key,
+      `${definition.namespace}.${definition.key}`,
+    ];
+    const labelPattern = labels.map(escapeRegExp).join("|");
+    const boundaryPattern = boundaryLabels.map(escapeRegExp).join("|");
+    const match = raw.match(
+      new RegExp(
+        `(?:^|\\n)\\s*(?:[-•*]\\s*)?(?:${labelPattern})\\s*[：:]\\s*([\\s\\S]*?)(?=\\n\\s*(?:[-•*]\\s*)?(?:${boundaryPattern})\\s*[：:]|$)`,
+        "i",
+      ),
+    );
+    const value = sanitizeAiOutput(match?.[1] || "");
+    if (value) values[productMetafieldIdentity(definition)] = value;
+  }
+  return values;
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -2237,6 +2313,11 @@ export default function ProductListingPage() {
   >(() => [buildDefaultSizeVariantOptionGroup()]);
   const [categoryMetafieldCandidatesForAi, setCategoryMetafieldCandidatesForAi] =
     useState<CategoryMetafieldMemory>({});
+  const [productMetafieldDefinitions, setProductMetafieldDefinitions] =
+    useState<ShopifyProductMetafieldDefinition[]>([]);
+  const [productMetafieldValues, setProductMetafieldValues] = useState<
+    Record<string, string>
+  >({});
   const [syncState, setSyncState] = useState<SyncState>("idle");
   const [syncAction, setSyncAction] = useState<SyncAction>(null);
   const [lastAction, setLastAction] = useState("等待填写或应用 AI 解析结果");
@@ -2245,8 +2326,10 @@ export default function ProductListingPage() {
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [watermarking, setWatermarking] = useState(false);
   const [watermarkPickerOpen, setWatermarkPickerOpen] = useState(false);
-  const [watermarkList, setWatermarkList] = useState<Array<{ id: string; name: string; previewUrl: string }>>([]);
+  const [watermarkList, setWatermarkList] = useState<WatermarkEntry[]>([]);
   const [selectedWatermarkId, setSelectedWatermarkId] = useState<string | null>(null);
+  const [watermarkEditor, setWatermarkEditor] =
+    useState<WatermarkEditorState | null>(null);
   const [mediaItems, setMediaItems] = useState<ProductListingMediaItem[]>(() => {
     if (typeof window === "undefined") return [];
     try {
@@ -2811,6 +2894,33 @@ export default function ProductListingPage() {
     return { productOrganizationCandidates, customsCandidates, warnings };
   }
 
+  const handleProductMetafieldDefinitionsChange = useCallback(
+    (definitions: ShopifyProductMetafieldDefinition[]) => {
+      const relevantDefinitions = definitions.filter(
+        isFaqProductMetafieldDefinition,
+      ).sort((a, b) => {
+        const aNumber = Number(a.name.match(/\d+/)?.[0] || 0);
+        const bNumber = Number(b.name.match(/\d+/)?.[0] || 0);
+        if (aNumber !== bNumber) return aNumber - bNumber;
+        const aIsFaq = /^faq/i.test(a.name) || /^faq/i.test(a.key);
+        const bIsFaq = /^faq/i.test(b.name) || /^faq/i.test(b.key);
+        return aIsFaq === bIsFaq ? a.name.localeCompare(b.name) : aIsFaq ? -1 : 1;
+      });
+      const validKeys = new Set(
+        relevantDefinitions.map(productMetafieldIdentity),
+      );
+      setProductMetafieldDefinitions(relevantDefinitions);
+      if (validKeys.size > 0) {
+        setProductMetafieldValues((current) =>
+          Object.fromEntries(
+            Object.entries(current).filter(([key]) => validKeys.has(key)),
+          ),
+        );
+      }
+    },
+    [],
+  );
+
   async function generateAiOutput() {
     const prompt = sanitizeAiOutput(aiPromptText);
     if (!prompt) {
@@ -2838,6 +2948,7 @@ export default function ProductListingPage() {
             name: form.shopifyCategoryName,
           },
           categoryMetafieldCandidates,
+          productMetafieldDefinitions,
           productOrganizationCandidates:
             shopifyReferences.productOrganizationCandidates,
           customsCandidates: shopifyReferences.customsCandidates,
@@ -2883,6 +2994,10 @@ export default function ProductListingPage() {
   function applyAiToForm() {
     const cleaned = sanitizeAiOutput(aiRawText);
     const parsed = parseAiOutputToForm(cleaned);
+    const parsedProductMetafields = parseAiProductMetafieldValues(
+      cleaned,
+      productMetafieldDefinitions,
+    );
     const nextForm: ProductForm = {
       ...EMPTY_FORM,
       ...parsed,
@@ -2899,6 +3014,10 @@ export default function ProductListingPage() {
       }
     }
     setForm(nextForm);
+    setProductMetafieldValues((current) => ({
+      ...current,
+      ...parsedProductMetafields,
+    }));
     setVariantRows(buildDefaultSizeVariantRows(nextForm));
     setVariantOptionGroups([buildDefaultSizeVariantOptionGroup(nextForm)]);
     setAiRawText(cleaned);
@@ -2974,6 +3093,18 @@ export default function ProductListingPage() {
             sourceType,
             categoryId: form.shopifyCategoryId,
             categoryName: form.shopifyCategoryName,
+            productMetafields: productMetafieldDefinitions
+              .map((definition) => ({
+                name: definition.name,
+                namespace: definition.namespace,
+                key: definition.key,
+                type: definition.type,
+                value:
+                  productMetafieldValues[
+                    productMetafieldIdentity(definition)
+                  ] || "",
+              }))
+              .filter((item) => item.value.trim()),
             media: shopifyMediaItems,
             optionGroups: variantOptionGroups.map((group) => ({
               optionName: group.optionName,
@@ -3228,31 +3359,108 @@ export default function ProductListingPage() {
     }
   }
 
-  async function applyWatermarkToAll() {
-    const urls = mediaItems.map((item) => item.url);
-    if (!selectedWatermarkId) return;
-    setWatermarking(true);
+  function openWatermarkEditorForAll() {
+    const watermark = watermarkList.find(
+      (item) => item.id === selectedWatermarkId,
+    );
+    const representative = mediaItems[0];
+    if (!watermark || !representative) return;
+
     setWatermarkPickerOpen(false);
-    setLastAction("正在添加水印...");
+    setWatermarkEditor({
+      mode: "all",
+      imageUrl: representative.watermark?.sourceUrl || representative.url,
+      watermarkId: watermark.id,
+      watermarkName: watermark.name,
+      watermarkUrl: watermark.previewUrl,
+      placement:
+        representative.watermark?.id === watermark.id
+          ? representative.watermark.placement
+          : DEFAULT_WATERMARK_PLACEMENT,
+    });
+  }
+
+  function openWatermarkEditorForMedia(item: ProductListingMediaItem) {
+    if (!item.watermark) return;
+    setWatermarkEditor({
+      mode: "single",
+      mediaId: item.id,
+      imageUrl: item.watermark.sourceUrl,
+      watermarkId: item.watermark.id,
+      watermarkName: item.watermark.name,
+      watermarkUrl: `/assets/watermark/${item.watermark.id}.png`,
+      placement: item.watermark.placement,
+    });
+  }
+
+  async function applyWatermarkPlacement(
+    placement: ProductMediaWatermarkPlacement,
+  ) {
+    const editor = watermarkEditor;
+    if (!editor) return;
+    const targets =
+      editor.mode === "all"
+        ? mediaItems
+        : mediaItems.filter((item) => item.id === editor.mediaId);
+    if (!targets.length) return;
+
+    setWatermarking(true);
+    setLastAction(
+      editor.mode === "all"
+        ? `正在给 ${targets.length} 张图片添加水印...`
+        : "正在更新水印位置...",
+    );
     try {
       const res = await fetch("/api/watermark/apply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageUrls: urls, watermarkId: selectedWatermarkId }),
+        body: JSON.stringify({
+          watermarkId: editor.watermarkId,
+          items: targets.map((item) => ({
+            key: item.id,
+            imageUrl: item.watermark?.sourceUrl || item.url,
+            placement,
+          })),
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "添加水印失败");
-      const results = (data.results || []) as Array<{ originalUrl: string; url: string | null }>;
+      const results = (data.results || []) as Array<{
+        key: string;
+        originalUrl: string;
+        url: string | null;
+      }>;
+      const resultById = new Map(results.map((result) => [result.key, result]));
+      const targetIds = new Set(targets.map((item) => item.id));
       setMediaItems((prev) =>
         prev.map((item) => {
-          const result = results.find((r) => r.originalUrl === item.url);
+          if (!targetIds.has(item.id)) return item;
+          const result = resultById.get(item.id);
           if (result?.url) {
-            return { ...item, url: result.url, sourceLabel: "品牌水印" };
+            return {
+              ...item,
+              url: result.url,
+              sourceLabel: "品牌水印",
+              watermark: {
+                id: editor.watermarkId,
+                name: editor.watermarkName,
+                sourceUrl: item.watermark?.sourceUrl || item.url,
+                placement,
+              },
+            };
           }
           return item;
         }),
       );
-      setLastAction("水印添加完成");
+      setWatermarkEditor(null);
+      const failedCount = results.filter((result) => !result.url).length;
+      setLastAction(
+        failedCount > 0
+          ? `水印处理完成，${failedCount} 张失败`
+          : editor.mode === "all"
+            ? `已给 ${targets.length} 张图片添加水印`
+            : "水印位置已更新",
+      );
     } catch (e) {
       setLastAction(e instanceof Error ? e.message : String(e));
     } finally {
@@ -3385,8 +3593,20 @@ export default function ProductListingPage() {
               uploadingMedia={uploadingMedia}
               watermarking={watermarking}
               onApplyWatermark={openWatermarkPicker}
+              onAdjustWatermark={openWatermarkEditorForMedia}
               onCategoryMetafieldCandidatesChange={
                 setCategoryMetafieldCandidatesForAi
+              }
+              productMetafieldDefinitions={productMetafieldDefinitions}
+              productMetafieldValues={productMetafieldValues}
+              onProductMetafieldDefinitionsChange={
+                handleProductMetafieldDefinitionsChange
+              }
+              onProductMetafieldValueChange={(key, value) =>
+                setProductMetafieldValues((current) => ({
+                  ...current,
+                  [key]: value,
+                }))
               }
             />
             <SyncPanel
@@ -3550,10 +3770,10 @@ export default function ProductListingPage() {
               variant="primary"
               loading={watermarking}
               disabled={!selectedWatermarkId}
-              onClick={applyWatermarkToAll}
+              onClick={openWatermarkEditorForAll}
               className="flex-1"
             >
-              确定加水印
+              下一步：调整位置
             </Button>
           </div>
         }
@@ -3590,6 +3810,20 @@ export default function ProductListingPage() {
           </div>
         )}
       </Dialog>
+
+      <WatermarkPositionDialog
+        open={!!watermarkEditor}
+        imageUrl={watermarkEditor?.imageUrl || ""}
+        watermarkUrl={watermarkEditor?.watermarkUrl || ""}
+        watermarkName={watermarkEditor?.watermarkName || "水印"}
+        initialPlacement={
+          watermarkEditor?.placement || DEFAULT_WATERMARK_PLACEMENT
+        }
+        applying={watermarking}
+        applyToAll={watermarkEditor?.mode === "all"}
+        onClose={() => setWatermarkEditor(null)}
+        onConfirm={applyWatermarkPlacement}
+      />
 
       <Dialog
         open={!!previewMedia}
@@ -5164,7 +5398,12 @@ function ProductFormPanel({
   uploadingMedia,
   watermarking,
   onApplyWatermark,
+  onAdjustWatermark,
   onCategoryMetafieldCandidatesChange,
+  productMetafieldDefinitions,
+  productMetafieldValues,
+  onProductMetafieldDefinitionsChange,
+  onProductMetafieldValueChange,
 }: {
   form: ProductForm;
   setForm: React.Dispatch<React.SetStateAction<ProductForm>>;
@@ -5184,9 +5423,16 @@ function ProductFormPanel({
   uploadingMedia: boolean;
   watermarking: boolean;
   onApplyWatermark: () => void;
+  onAdjustWatermark: (item: ProductListingMediaItem) => void;
   onCategoryMetafieldCandidatesChange: (
     candidates: CategoryMetafieldMemory,
   ) => void;
+  productMetafieldDefinitions: ShopifyProductMetafieldDefinition[];
+  productMetafieldValues: Record<string, string>;
+  onProductMetafieldDefinitionsChange: (
+    definitions: ShopifyProductMetafieldDefinition[],
+  ) => void;
+  onProductMetafieldValueChange: (key: string, value: string) => void;
 }) {
   const mediaInputRef = useRef<HTMLInputElement | null>(null);
   const sizeImportInputRef = useRef<HTMLInputElement | null>(null);
@@ -5300,6 +5546,10 @@ function ProductFormPanel({
   }, 0);
   const filledCategoryMetafields = CATEGORY_METAFIELD_ROWS.filter((row) =>
     form[row.key].trim(),
+  ).length;
+  const filledProductMetafields = productMetafieldDefinitions.filter(
+    (definition) =>
+      productMetafieldValues[productMetafieldIdentity(definition)]?.trim(),
   ).length;
   const categoryMetafieldContext = getShopifyCategoryMetafieldContext(
     form.shopifyCategoryId,
@@ -5651,6 +5901,7 @@ function ProductFormPanel({
       !isShopifyTaxonomyCategoryId(categoryId)
     ) {
       setShopifyCategoryMetafields({});
+      onProductMetafieldDefinitionsChange([]);
       setCategoryMetafieldLoadError("");
       setLoadingCategoryMetafields(false);
       categoryMetafieldsCategoryIdRef.current = "";
@@ -5660,6 +5911,7 @@ function ProductFormPanel({
     const controller = new AbortController();
     if (categoryMetafieldsCategoryIdRef.current !== categoryId) {
       setShopifyCategoryMetafields({});
+      onProductMetafieldDefinitionsChange([]);
     }
     setLoadingCategoryMetafields(true);
     setCategoryMetafieldLoadError("");
@@ -5674,10 +5926,12 @@ function ProductFormPanel({
         }
         const data = (await res.json()) as {
           fields?: ShopifyCategoryMetafieldFields;
+          productDefinitions?: ShopifyProductMetafieldDefinition[];
           error?: string;
         };
         if (!res.ok) throw new Error(data.error || res.statusText);
         setShopifyCategoryMetafields(data.fields || {});
+        onProductMetafieldDefinitionsChange(data.productDefinitions || []);
         categoryMetafieldsCategoryIdRef.current = categoryId;
       })
       .catch((e) => {
@@ -5692,7 +5946,11 @@ function ProductFormPanel({
       });
 
     return () => controller.abort();
-  }, [form.shopifyCategoryId, shopifyBindingKey]);
+  }, [
+    form.shopifyCategoryId,
+    onProductMetafieldDefinitionsChange,
+    shopifyBindingKey,
+  ]);
 
   useEffect(() => {
     if (!shopifyBindingKey) {
@@ -7254,7 +7512,9 @@ function ProductFormPanel({
                   onClick={onApplyWatermark}
                   className="shrink-0"
                 >
-                  全部加水印
+                  {mediaItems.some((item) => item.watermark)
+                    ? "统一调整水印"
+                    : "全部加水印"}
                 </Button>
                 <Chip tone={mediaItems.length > 0 ? "brand" : "gray"}>
                   {mediaItems.length} 张
@@ -7280,17 +7540,34 @@ function ProductFormPanel({
                       </ThumbnailBadge>
                     }
                     hoverOverlay={
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        leftIcon={<Eye size={12} strokeWidth={2} />}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onPreviewMedia(item);
-                        }}
-                      >
-                        预览
-                      </Button>
+                      <div className="flex flex-wrap items-center justify-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          className="w-[88px] justify-center"
+                          leftIcon={<Eye size={12} strokeWidth={2} />}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onPreviewMedia(item);
+                          }}
+                        >
+                          预览
+                        </Button>
+                        {item.watermark ? (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            className="w-[88px] justify-center"
+                            leftIcon={<Move size={12} strokeWidth={2} />}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onAdjustWatermark(item);
+                            }}
+                          >
+                            调整水印
+                          </Button>
+                        ) : null}
+                      </div>
                     }
                     onDoubleClick={() => onPreviewMedia(item)}
                     useThumb
@@ -8438,6 +8715,73 @@ function ProductFormPanel({
           </div>
         </div>
       </ShopifySection>
+
+      {productMetafieldDefinitions.length > 0 ? (
+        <ShopifySection>
+          <div className="space-y-3" data-product-metafields-section>
+            <ShopifySectionHeader
+              title="产品元字段"
+              action={
+                <Chip tone={filledProductMetafields > 0 ? "brand" : "gray"}>
+                  {filledProductMetafields}/{productMetafieldDefinitions.length}
+                </Chip>
+              }
+            />
+            <div className="flex items-center justify-between gap-2 text-[11px] text-gray-500">
+              <span>已读取 Shopify 产品自定义元字段</span>
+              <span>{form.shopifyCategoryName || "未分类"}</span>
+            </div>
+            <div className="space-y-2">
+              {productMetafieldDefinitions.map((definition) => {
+                const identity = productMetafieldIdentity(definition);
+                const value = productMetafieldValues[identity] || "";
+                const multiline =
+                  definition.type === "rich_text_field" ||
+                  definition.type === "multi_line_text_field";
+                return (
+                  <div
+                    key={identity}
+                    className="grid grid-cols-[116px_minmax(0,1fr)] items-start gap-3 text-xs text-gray-700"
+                  >
+                    <label htmlFor={`product-metafield-${definition.id}`} className="pt-2">
+                      {definition.name}
+                    </label>
+                    {multiline ? (
+                      <textarea
+                        id={`product-metafield-${definition.id}`}
+                        value={value}
+                        rows={3}
+                        onChange={(event) =>
+                          onProductMetafieldValueChange(
+                            identity,
+                            event.target.value,
+                          )
+                        }
+                        placeholder={`输入或由大模型生成 ${definition.name}`}
+                        className="min-h-[76px] w-full resize-y rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
+                      />
+                    ) : (
+                      <input
+                        id={`product-metafield-${definition.id}`}
+                        type="text"
+                        value={value}
+                        onChange={(event) =>
+                          onProductMetafieldValueChange(
+                            identity,
+                            event.target.value,
+                          )
+                        }
+                        placeholder={`输入或由大模型生成 ${definition.name}`}
+                        className="h-9 w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </ShopifySection>
+      ) : null}
 
       <ShopifySection>
         <div className="space-y-3">

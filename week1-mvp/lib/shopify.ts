@@ -111,6 +111,13 @@ export type ShopifyProductDraftInput = {
   variantOptionMetafieldKey?: string;
   variantGroupByOptionName?: string;
   publicationIds?: string[];
+  productMetafields?: Array<{
+    name?: string;
+    namespace: string;
+    key: string;
+    type: string;
+    value: string;
+  }>;
   optionGroups?: Array<{
     optionName: string;
     optionMetafieldKey?: string;
@@ -163,7 +170,16 @@ export type ShopifyCategoryMetafieldOptionsResult = {
   categoryId: string;
   hierarchy: Array<{ id: string; name: string | null }>;
   fields: Record<string, ShopifyCategoryMetafieldOptionField>;
+  productDefinitions?: ShopifyProductMetafieldDefinition[];
   warnings: string[];
+};
+
+export type ShopifyProductMetafieldDefinition = {
+  id: string;
+  name: string;
+  namespace: string;
+  key: string;
+  type: string;
 };
 
 export type ShopifySalesChannelOption = {
@@ -2042,6 +2058,21 @@ export async function getShopifyCategoryMetafieldOptions(
       name: group.name,
     })),
     fields,
+    productDefinitions: customDefinitions
+      .map((definition) => ({
+        id: cleanField(definition.id),
+        name: cleanField(definition.name) || cleanField(definition.key),
+        namespace: cleanField(definition.namespace),
+        key: cleanField(definition.key),
+        type: cleanField(definition.type?.name) || "single_line_text_field",
+      }))
+      .filter(
+        (definition) =>
+          definition.id &&
+          definition.name &&
+          definition.namespace &&
+          definition.key,
+      ),
     warnings,
   };
 }
@@ -6015,7 +6046,7 @@ function buildProductMetafields(input: ShopifyProductDraftInput) {
     ["buqiqi", "neckline", "领口设计", input.neckline],
     ["buqiqi", "silhouette", "整体版型", input.silhouette],
   ] as const;
-  return fields
+  const builtInFields = fields
     .map(([namespace, key, _name, value]) => ({
       namespace,
       key,
@@ -6023,6 +6054,54 @@ function buildProductMetafields(input: ShopifyProductDraftInput) {
       value: cleanField(value),
     }))
     .filter((item) => item.value);
+
+  const customFields = (input.productMetafields || [])
+    .map((item) => {
+      const namespace = cleanField(item.namespace);
+      const key = cleanField(item.key);
+      const type = cleanField(item.type) || "single_line_text_field";
+      const value = normalizeCustomProductMetafieldValue(type, item.value);
+      return { namespace, key, type, value };
+    })
+    .filter(
+      (item) =>
+        item.namespace &&
+        item.namespace !== SHOPIFY_CATEGORY_METAFIELD_NAMESPACE &&
+        item.key &&
+        item.value,
+    );
+
+  const deduped = new Map<string, (typeof customFields)[number]>();
+  for (const item of [...builtInFields, ...customFields]) {
+    deduped.set(`${item.namespace}.${item.key}`, item);
+  }
+  return Array.from(deduped.values());
+}
+
+function normalizeCustomProductMetafieldValue(type: string, value?: string): string {
+  const cleaned = cleanField(value);
+  if (!cleaned) return "";
+  if (type === "single_line_text_field") {
+    return cleaned.replace(/[\r\n]+/g, " ");
+  }
+  if (type === "rich_text_field") {
+    try {
+      const parsed = JSON.parse(cleaned) as { type?: unknown };
+      if (parsed?.type === "root") return cleaned;
+    } catch {}
+    return JSON.stringify({
+      type: "root",
+      children: cleaned
+        .split(/\n{2,}/)
+        .map((paragraph) => paragraph.trim())
+        .filter(Boolean)
+        .map((paragraph) => ({
+          type: "paragraph",
+          children: [{ type: "text", value: paragraph }],
+        })),
+    });
+  }
+  return cleaned;
 }
 
 function normalizeTags(tags?: string): string[] {
