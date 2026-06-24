@@ -56,7 +56,8 @@ type ProductOrganizationCandidateKey =
   | "vendors"
   | "collections"
   | "commonTags"
-  | "tags";
+  | "tags"
+  | "templateStyles";
 
 type ProductOrganizationCandidates = Partial<
   Record<ProductOrganizationCandidateKey, string[]>
@@ -135,6 +136,7 @@ const PRODUCT_ORGANIZATION_CANDIDATE_LABELS: Array<{
   { key: "collections", outputLabel: "产品系列", displayLabel: "产品系列" },
   { key: "commonTags", outputLabel: "常用标记", displayLabel: "常用标记" },
   { key: "tags", outputLabel: "标记", displayLabel: "标记" },
+  { key: "templateStyles", outputLabel: "模板样式", displayLabel: "模板样式" },
 ];
 
 const REQUIRED_OUTPUT_FIELD_ALIASES: Array<{
@@ -147,6 +149,7 @@ const REQUIRED_OUTPUT_FIELD_ALIASES: Array<{
   { label: "厂商", aliases: ["厂商", "供应商", "vendor"] },
   { label: "产品系列", aliases: ["产品系列", "商品系列", "系列", "collection", "collections"] },
   { label: "标记", aliases: ["标记", "标签", "tags", "tag"] },
+  { label: "模板样式", aliases: ["模板样式", "产品模板", "template suffix", "theme template"] },
   { label: "主色调", aliases: ["主色调", "颜色", "color"] },
   { label: "面料材质", aliases: ["面料材质", "材质", "material", "fabric"] },
   { label: "领口设计", aliases: ["领口设计", "领口", "neckline"] },
@@ -169,6 +172,7 @@ const FULL_PRODUCT_OUTPUT_FIELDS = [
   "厂商",
   "产品系列",
   "标记",
+  "模板样式",
   "主色调",
   "面料材质",
   "领口设计",
@@ -188,7 +192,7 @@ const PRODUCT_LISTING_SYSTEM_PROMPT = `你是专业的 Shopify 礼服商品上�
 - 必须以用户提供的商品图片为主要依据，优先识别图片中的颜色、面料、版型、领口、细节和商品风格。
 - 只输出字段内容，不要 Markdown、代码块、解释、寒暄。
 - 使用 key: value 格式，每个字段单独一行。
-- 字段建议包含：商品标题、商品描述、产品类型、供应商、产品系列、标签、主色调、面料材质、领口设计、整体版型、SKU、原价、售价、库存、SEO标题、SEO描述。
+- 字段建议包含：商品标题、商品描述、产品类型、供应商、产品系列、标签、模板样式、主色调、面料材质、领口设计、整体版型、SKU、原价、售价、库存、SEO标题、SEO描述。
 - 用户提示词明确点名要求输出的字段必须逐项输出，不得省略；即使无法确定，也要保留字段名，值可以留空或使用保守值。
 - 不要主动输出 Shopify 类别元字段；只有用户提示词明确要求输出类别元字段、元字段，或明确写出“类别元字段颜色/类别元字段尺寸”等完整类别元字段名时，才输出对应字段。
 - 如果系统提供了 Shopify 产品自定义元字段定义，必须按定义名称逐项输出；这些字段与类别元字段相互独立。
@@ -342,9 +346,10 @@ ${requiredOutputFieldInstruction}
 产品组织与海关信息生成规则：
 - 产品类型、厂商/供应商、产品系列、标记：优先从上面的 Shopify 后台已有候选条目中选择最匹配的原文；明显不适合商品图片时，再根据商品内容保守生成。
 - 标记可以输出多个，用逗号分隔；不要输出与商品无关的热门标记。
+- 模板样式：必须输出，并且只能从上面的 Shopify 后台“模板样式”候选中选择；没有其他合适选项时输出“默认产品”。
 - 原产国家/地区：优先输出 Shopify CountryCode 两位代码，例如 CN、US；如果当前已有值且图片/提示词没有冲突，优先保留当前值。
 - HS 编码：不要读取后台候选；根据商品类别、材质和用途生成纯数字 harmonizedSystemCode，至少 6 位；不确定时保持为空，不要编造解释文本。
-- 如果输出这些字段，请使用字段名：产品类型、厂商、产品系列、标记、原产国家/地区、HS 编码。
+- 如果输出这些字段，请使用字段名：产品类型、厂商、产品系列、标记、模板样式、原产国家/地区、HS 编码。
 
 ${wantsCategoryMetafields ? `用户明确要求生成类别元字段。
 
@@ -770,6 +775,7 @@ function normalizeProductOrganizationCandidates(
     collections: 120,
     commonTags: 60,
     tags: 160,
+    templateStyles: 60,
   };
   const result: ProductOrganizationCandidates = {};
   for (const { key } of PRODUCT_ORGANIZATION_CANDIDATE_LABELS) {

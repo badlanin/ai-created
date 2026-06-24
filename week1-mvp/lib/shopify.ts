@@ -233,6 +233,7 @@ export type ShopifyProductOrganizationOptionsResult = {
   collections: ShopifyProductOrganizationOption[];
   commonTags: ShopifyProductOrganizationOption[];
   tags: ShopifyProductOrganizationOption[];
+  templateStyles: ShopifyProductOrganizationOption[];
   warnings: string[];
 };
 
@@ -775,6 +776,7 @@ type ShopifyProductsOrganizationResponse = {
         productType?: string | null;
         vendor?: string | null;
         tags?: string[] | null;
+        templateSuffix?: string | null;
         collections?: {
           nodes?: ShopifyCollectionNode[];
         } | null;
@@ -2298,6 +2300,7 @@ export async function getShopifyProductOrganizationOptions(
       collections: [],
       commonTags: [],
       tags: [],
+      templateStyles: [],
       warnings: ["请先选择 Shopify 类别，再读取该类别下的产品组织条目。"],
     };
   }
@@ -2309,6 +2312,7 @@ export async function getShopifyProductOrganizationOptions(
       collections: [],
       commonTags: [],
       tags: [],
+      templateStyles: [],
       warnings: [
         "当前使用测试密钥，产品组织条目需要真实店铺读取。",
       ],
@@ -2318,6 +2322,7 @@ export async function getShopifyProductOrganizationOptions(
   const warnings: string[] = [];
   const productTypes: string[] = [];
   const vendors: string[] = [];
+  const templateStyles: string[] = [];
   const categoryTagCounts = new Map<string, number>();
   const collectionsPromise = readShopifyCollectionOptions(
     stored.shopDomain,
@@ -2351,6 +2356,7 @@ export async function getShopifyProductOrganizationOptions(
               productType
               vendor
               tags
+              templateSuffix
             }
           }
         }`,
@@ -2371,6 +2377,8 @@ export async function getShopifyProductOrganizationOptions(
       if (productType) productTypes.push(productType);
       const vendor = cleanField(product.vendor);
       if (vendor) vendors.push(vendor);
+      const templateStyle = normalizeShopifyTemplateSuffix(product.templateSuffix || "");
+      if (templateStyle) templateStyles.push(templateStyle);
       for (const tag of product.tags || []) {
         const cleanedTag = cleanField(tag);
         if (!cleanedTag) continue;
@@ -2399,6 +2407,7 @@ export async function getShopifyProductOrganizationOptions(
     collections,
     commonTags: buildShopifyCommonTagOptions(categoryTagCounts, tags),
     tags,
+    templateStyles: buildShopifyProductOrganizationStringOptions(templateStyles),
     warnings,
   };
 }

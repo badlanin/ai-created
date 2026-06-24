@@ -154,6 +154,7 @@ type ShopifyProductOrganizationOptionsState = {
   collections: ShopifyProductOrganizationOption[];
   commonTags: ShopifyProductOrganizationOption[];
   tags: ShopifyProductOrganizationOption[];
+  templateStyles: ShopifyProductOrganizationOption[];
 };
 
 type ProductOrganizationPickerKey =
@@ -509,6 +510,7 @@ const EMPTY_PRODUCT_ORGANIZATION_OPTIONS: ShopifyProductOrganizationOptionsState
   collections: [],
   commonTags: [],
   tags: [],
+  templateStyles: [],
 };
 
 function normalizeCountryCodeOfOrigin(value: string): string {
@@ -569,8 +571,8 @@ const FIXED_FULFILLMENT_DEFAULTS: Pick<
 const EMPTY_FORM: ProductForm = {
   title: "",
   description: "",
-  shopifyCategoryId: "gid://shopify/TaxonomyCategory/na",
-  shopifyCategoryName: "未分类",
+  shopifyCategoryId: "gid://shopify/TaxonomyCategory/aa-1-4",
+  shopifyCategoryName: "连衣裙",
   productType: "",
   vendor: "",
   templateStyle: "",
@@ -2268,6 +2270,14 @@ function optionLabelsForAi(
   return values;
 }
 
+function normalizeProductTemplateStyle(value: string): string {
+  const cleaned = value.trim();
+  if (/^(默认|默认产品|默认模板|default|default product|product)$/i.test(cleaned)) {
+    return "";
+  }
+  return cleaned.replace(/^product[.-]/i, "").trim();
+}
+
 function countryLabelsForAi(options: ShopifyCustomsOption[]): string[] {
   return options
     .map((option) => (option.label || option.value || "").trim())
@@ -2805,6 +2815,7 @@ export default function ProductListingPage() {
           collections: string[];
           commonTags: string[];
           tags: string[];
+          templateStyles: string[];
         }
       | undefined;
     let customsCandidates:
@@ -2850,6 +2861,10 @@ export default function ProductListingPage() {
               collections: optionLabelsForAi(data.collections || [], 120),
               commonTags: optionLabelsForAi(data.commonTags || [], 60),
               tags: optionLabelsForAi(data.tags || [], 160),
+              templateStyles: [
+                "默认产品",
+                ...optionLabelsForAi(data.templateStyles || [], 60),
+              ],
             };
             warnings.push(...(data.warnings || []).filter(Boolean));
           })
@@ -3000,8 +3015,14 @@ export default function ProductListingPage() {
     );
     const nextForm: ProductForm = {
       ...EMPTY_FORM,
+      shopifyCategoryId: form.shopifyCategoryId || EMPTY_FORM.shopifyCategoryId,
+      shopifyCategoryName:
+        form.shopifyCategoryName || EMPTY_FORM.shopifyCategoryName,
       ...parsed,
     };
+    nextForm.templateStyle = normalizeProductTemplateStyle(
+      nextForm.templateStyle,
+    );
     if (
       !parsed.shopifyCategoryId &&
       (!nextForm.shopifyCategoryId ||
@@ -10192,6 +10213,13 @@ function SyncPanel({
     setOrganizationOptionsError("");
     setActiveOrganizationPicker(null);
     setOrganizationSearch("");
+    if (
+      shopifyBindingKey &&
+      form.shopifyCategoryId &&
+      form.shopifyCategoryId !== SHOPIFY_UNCATEGORIZED_CATEGORY_ID
+    ) {
+      void loadProductOrganizationOptions(true);
+    }
   }, [shopifyBindingKey, form.shopifyCategoryId]);
 
   useEffect(() => {
@@ -10209,7 +10237,7 @@ function SyncPanel({
     return () => window.removeEventListener("pointerdown", handlePointerDown);
   }, [activeOrganizationPicker]);
 
-  async function loadProductOrganizationOptions() {
+  async function loadProductOrganizationOptions(force = false) {
     if (!shopifyBindingKey) {
       setOrganizationOptionsError("请先绑定 Shopify 店铺。");
       return;
@@ -10221,7 +10249,9 @@ function SyncPanel({
       setOrganizationOptionsError("请先选择 Shopify 类别。");
       return;
     }
-    if (organizationOptionsLoaded || loadingOrganizationOptions) return;
+    if (!force && (organizationOptionsLoaded || loadingOrganizationOptions)) {
+      return;
+    }
 
     organizationOptionsAbortRef.current?.abort();
     const controller = new AbortController();
@@ -10253,6 +10283,7 @@ function SyncPanel({
         collections: data.collections || [],
         commonTags: data.commonTags || [],
         tags: data.tags || [],
+        templateStyles: data.templateStyles || [],
       });
       setOrganizationOptionsLoaded(true);
       setOrganizationOptionsError(
@@ -10480,12 +10511,41 @@ function SyncPanel({
       <ShopifySection>
         <div className="space-y-3">
           <ShopifySectionHeader title="模板样式" action={<Eye size={14} />} />
-          <Input
-            label=""
+          <Select
             value={form.templateStyle}
-            placeholder="默认产品"
             onChange={(event) => onTemplateStyleChange(event.target.value)}
-          />
+            disabled={loadingOrganizationOptions}
+          >
+            <option value="">
+              {loadingOrganizationOptions ? "正在读取 Shopify 模板..." : "默认产品"}
+            </option>
+            {form.templateStyle &&
+            !organizationOptions.templateStyles.some(
+              (option) => option.value === form.templateStyle,
+            ) ? (
+              <option value={form.templateStyle}>{form.templateStyle}</option>
+            ) : null}
+            {organizationOptions.templateStyles.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </Select>
+          <p
+            className={`text-[11px] ${
+              organizationOptionsError ? "text-amber-600" : "text-fg-tertiary"
+            }`}
+          >
+            {organizationOptionsError
+              ? organizationOptionsError
+              : loadingOrganizationOptions
+                ? "正在按当前类别读取 Shopify 后台模板选项"
+                : organizationOptionsLoaded
+                  ? organizationOptions.templateStyles.length
+                    ? "已读取当前类别在 Shopify 后台使用的模板选项"
+                    : "当前类别暂无其他模板，使用默认产品"
+                  : "选择类别后自动读取 Shopify 后台模板选项"}
+          </p>
         </div>
       </ShopifySection>
 
