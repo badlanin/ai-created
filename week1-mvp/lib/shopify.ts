@@ -2343,18 +2343,28 @@ export async function getShopifyProductOrganizationOptions(
   const vendors: string[] = [];
   const templateStyles: string[] = [];
   const categoryTagCounts = new Map<string, number>();
+
+  let collections: ShopifyProductOrganizationOption[] = [];
+  let tags: ShopifyProductOrganizationOption[] = [];
+
   const collectionsPromise = readShopifyCollectionOptions(
     stored.shopDomain,
     stored.accessToken,
     warnings,
-  );
+  ).catch((err) => {
+    warnings.push(`读取 Shopify 集合失败：${err instanceof Error ? err.message : String(err)}`);
+    return [] as ShopifyProductOrganizationOption[];
+  });
   const tagsPromise = readShopifyStringConnectionOptions(
     stored.shopDomain,
     stored.accessToken,
     "productTags",
     "标记",
     warnings,
-  );
+  ).catch((err) => {
+    warnings.push(`读取 Shopify 标记失败：${err instanceof Error ? err.message : String(err)}`);
+    return [] as ShopifyProductOrganizationOption[];
+  });
   let after: string | null = null;
   let page = 0;
   const maxPages = 5;
@@ -2424,10 +2434,13 @@ export async function getShopifyProductOrganizationOptions(
     warnings.push("当前类别商品较多，本次只读取前 500 个商品来生成组织条目。");
   }
 
-  const [collections, tags] = await Promise.all([
+  const resolved = await Promise.all([
     collectionsPromise,
     tagsPromise,
   ]);
+
+  collections = resolved[0];
+  tags = resolved[1];
 
   console.log(`[Shopify] 类别 ${categorySearchId} 模板样式收集结果: ${templateStyles.length} 个原始值 -> ${buildShopifyProductOrganizationStringOptions(templateStyles).length} 个选项`);
 
