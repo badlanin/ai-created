@@ -4190,8 +4190,9 @@ async function shopifyGraphql<T>(
   });
   const text = await response.text();
   if (!response.ok) {
+    console.error(`[Shopify GraphQL] HTTP ${response.status} 错误响应:`, text.slice(0, 500));
     if (response.status === 401 || response.status === 403) {
-      throw new Error("Shopify 鉴权失败，请检查 Token 是否包含 write_products。");
+      throw new Error(`Shopify 鉴权失败 (HTTP ${response.status})，请检查 Token 权限。响应: ${text.slice(0, 200)}`);
     }
     throw new Error(`Shopify 请求失败：HTTP ${response.status} ${text.slice(0, 300)}`);
   }
