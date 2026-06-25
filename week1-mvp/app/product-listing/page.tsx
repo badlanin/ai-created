@@ -10293,9 +10293,7 @@ function SyncPanel({
         templateStyles: data.templateStyles || [],
       });
       setOrganizationOptionsLoaded(true);
-      setOrganizationOptionsError(
-        (data.warnings || []).filter(Boolean).join("；"),
-      );
+      setOrganizationOptionsError("");
     } catch (e) {
       if (controller.signal.aborted) return;
       setOrganizationOptions(EMPTY_PRODUCT_ORGANIZATION_OPTIONS);
