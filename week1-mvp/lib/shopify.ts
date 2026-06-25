@@ -276,6 +276,7 @@ type ShopifyCountryCodeEnumResponse = {
 type ShopifyProductMediaNode = {
   id: string;
   status?: string | null;
+  image?: { url?: string | null } | null;
 };
 
 type ShopifyProductOptionValueNode = {
@@ -704,6 +705,7 @@ type ShopifyMediaInputWithSource = {
   originalSource: string;
   alt?: string;
   sourceUrl: string;
+  filenameKey: string;
 };
 
 type ShopifyTaxonomySearchResponse = {
@@ -2631,10 +2633,15 @@ export async function syncShopifyProduct(
           title
           handle
           legacyResourceId
-          media(first: 20) {
+          media(first: 100) {
             nodes {
               id
               status
+              ... on MediaImage {
+                image {
+                  url
+                }
+              }
             }
           }
           variants(first: 1) {
@@ -2663,7 +2670,9 @@ export async function syncShopifyProduct(
     }`,
     {
       product: productInput,
-      media: mediaInput.map(({ sourceUrl: _sourceUrl, ...item }) => item),
+      media: mediaInput.map(
+        ({ sourceUrl: _sourceUrl, filenameKey: _filenameKey, ...item }) => item,
+      ),
     },
   );
 
@@ -2697,22 +2706,23 @@ export async function syncShopifyProduct(
   const firstVariant = product.variants?.nodes?.[0];
   const firstVariantDraft = variantDrafts[0];
   const inventoryTargets: InventorySyncTarget[] = [];
-  const fallbackMediaIds = mediaInput.length
-    ? await waitForShopifyReadyProductMediaIds(
+  const readyMediaNodes = mediaInput.length
+    ? await waitForShopifyReadyProductMediaNodes(
         stored.shopDomain,
         stored.accessToken,
         product.id,
         product.media?.nodes || [],
+        mediaInput.length,
         warnings,
       )
     : [];
+  const fallbackMediaIds = readyMediaNodes.map((node) => node.id);
   if (mediaInput.length && !fallbackMediaIds.length) {
     warnings.push("Shopify 商品图片仍在处理中，多属性图片本次未关联到变体；稍后重新同步即可。");
   }
   const mediaIdBySource = buildMediaIdBySource(
     mediaInput,
-    product.media?.nodes || [],
-    fallbackMediaIds,
+    readyMediaNodes,
   );
   const variantMediaTargets: VariantMediaSyncTarget[] = [];
   const firstInventoryQuantity = normalizeInventoryQuantity(
@@ -2944,18 +2954,21 @@ export async function syncShopifyProduct(
   };
 }
 
-async function waitForShopifyReadyProductMediaIds(
+async function waitForShopifyReadyProductMediaNodes(
   shopDomain: string,
   accessToken: string,
   productId: string,
   initialNodes: ShopifyProductMediaNode[],
+  expectedCount: number,
   warnings: string[],
-): Promise<string[]> {
+): Promise<ShopifyProductMediaNode[]> {
   let nodes = initialNodes;
   let lastStateText = describeShopifyMediaStates(nodes);
   for (let attempt = 0; attempt < 12; attempt += 1) {
-    const readyIds = readyShopifyMediaIds(nodes);
-    if (readyIds.length) return readyIds;
+    const readyNodes = nodes.filter(
+      (media) => media.id && media.status === "READY" && media.image?.url,
+    );
+    if (readyNodes.length >= expectedCount) return readyNodes;
     if (attempt > 0 || !nodes.length) {
       nodes = await fetchShopifyProductMediaNodes(
         shopDomain,
@@ -2964,8 +2977,10 @@ async function waitForShopifyReadyProductMediaIds(
         warnings,
       );
       lastStateText = describeShopifyMediaStates(nodes);
-      const fetchedReadyIds = readyShopifyMediaIds(nodes);
-      if (fetchedReadyIds.length) return fetchedReadyIds;
+      const fetchedReadyNodes = nodes.filter(
+        (media) => media.id && media.status === "READY" && media.image?.url,
+      );
+      if (fetchedReadyNodes.length >= expectedCount) return fetchedReadyNodes;
     }
     if (attempt < 11) {
       await delay(attempt === 0 ? 700 : 1_200);
@@ -2974,7 +2989,9 @@ async function waitForShopifyReadyProductMediaIds(
   if (lastStateText) {
     warnings.push(`Shopify 媒体状态：${lastStateText}`);
   }
-  return [];
+  return nodes.filter(
+    (media) => media.id && media.status === "READY" && media.image?.url,
+  );
 }
 
 async function fetchShopifyProductMediaNodes(
@@ -2988,10 +3005,15 @@ async function fetchShopifyProductMediaNodes(
       accessToken,
       `query BuqiqiProductMedia($id: ID!) {
         product(id: $id) {
-          media(first: 20) {
+          media(first: 100) {
             nodes {
               id
               status
+              ... on MediaImage {
+                image {
+                  url
+                }
+              }
             }
           }
         }
@@ -3004,12 +3026,6 @@ async function fetchShopifyProductMediaNodes(
       return [];
     }
     return mediaJson.data?.product?.media?.nodes || [];
-}
-
-function readyShopifyMediaIds(nodes: ShopifyProductMediaNode[]): string[] {
-  return nodes
-    .filter((media) => media.id && media.status === "READY")
-    .map((media) => media.id);
 }
 
 function describeShopifyMediaStates(nodes: ShopifyProductMediaNode[]): string {
@@ -3059,17 +3075,34 @@ function resolveVariantMediaId(
 function buildMediaIdBySource(
   mediaInput: ShopifyMediaInputWithSource[],
   nodes: ShopifyProductMediaNode[],
-  readyMediaIds: string[],
 ) {
   const result = new Map<string, string>();
+  const mediaIdByFilename = new Map<string, string>();
+  for (const node of nodes) {
+    const filenameKey = normalizeMediaFilenameKey(node.image?.url || "");
+    if (filenameKey && node.id) mediaIdByFilename.set(filenameKey, node.id);
+  }
   for (let index = 0; index < mediaInput.length; index += 1) {
-    const mediaId = nodes[index]?.id || readyMediaIds[index] || "";
-    if (!mediaId) continue;
     const item = mediaInput[index];
+    const mediaId = mediaIdByFilename.get(item.filenameKey) || "";
+    if (!mediaId) continue;
     result.set(normalizeMediaSourceKey(item.sourceUrl), mediaId);
     result.set(normalizeMediaSourceKey(item.originalSource), mediaId);
   }
   return result;
+}
+
+function normalizeMediaFilenameKey(value: string): string {
+  const cleanUrl = cleanField(value).split("?")[0] || "";
+  if (!cleanUrl) return "";
+  let filename = cleanUrl;
+  try {
+    filename = new URL(cleanUrl, "https://media.local").pathname.split("/").pop() || "";
+    filename = decodeURIComponent(filename);
+  } catch {
+    filename = cleanUrl.split("/").pop() || "";
+  }
+  return filename.toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
 function normalizeMediaSourceKey(value: string): string {
@@ -3979,18 +4012,22 @@ async function buildProductMediaInput(
     const url = cleanField(item.url);
     if (!url) continue;
     const localPath = resolveLocalAssetPath(url);
+    const uploadFilename = localPath
+      ? buildProductMediaFilename(productTitle, index, localPath)
+      : "";
     const originalSource = localPath
       ? await uploadLocalImageToShopify(
           shopDomain,
           accessToken,
           localPath,
-          buildProductMediaFilename(productTitle, index, localPath),
+          uploadFilename,
         )
       : url;
     result.push({
       mediaContentType: "IMAGE",
       originalSource,
       sourceUrl: url,
+      filenameKey: normalizeMediaFilenameKey(uploadFilename || url),
     });
   }
   return result;

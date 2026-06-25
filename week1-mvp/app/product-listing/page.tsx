@@ -10206,7 +10206,6 @@ function SyncPanel({
   }, [organizationOptions.commonTags, organizationOptions.tags]);
 
   useEffect(() => {
-    organizationOptionsAbortRef.current?.abort();
     setOrganizationOptions(EMPTY_PRODUCT_ORGANIZATION_OPTIONS);
     setOrganizationOptionsLoaded(false);
     setLoadingOrganizationOptions(false);
