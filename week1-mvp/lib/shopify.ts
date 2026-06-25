@@ -2444,16 +2444,37 @@ export async function getShopifyProductOrganizationOptions(
 
   console.log(`[Shopify] 类别 ${categorySearchId} 模板样式收集结果: ${templateStyles.length} 个原始值 -> ${buildShopifyProductOrganizationStringOptions(templateStyles).length} 个选项`);
 
+  const templateStylesOptions = buildShopifyProductOrganizationStringOptions(templateStyles);
+
   return {
     productTypes: buildShopifyProductOrganizationStringOptions(productTypes),
     vendors: buildShopifyProductOrganizationStringOptions(vendors),
     collections,
     commonTags: buildShopifyCommonTagOptions(categoryTagCounts, tags),
     tags,
-    templateStyles: buildShopifyProductOrganizationStringOptions(templateStyles),
+    templateStyles: templateStylesOptions.length > 0
+      ? templateStylesOptions
+      : SHOPIFY_DEFAULT_TEMPLATE_STYLES,
     warnings,
   };
 }
+
+const SHOPIFY_DEFAULT_TEMPLATE_STYLES: ShopifyProductOrganizationOption[] = [
+  { value: "collage-s1", label: "collage-s1" },
+  { value: "collage-s2", label: "collage-s2" },
+  { value: "des-tabcenter", label: "des-tabcenter" },
+  { value: "list-grid", label: "list-grid" },
+  { value: "list-stacked", label: "list-stacked" },
+  { value: "product-bundle", label: "product-bundle" },
+  { value: "tab-accordion", label: "tab-accordion" },
+  { value: "thumb-bottom", label: "thumb-bottom" },
+  { value: "thumb-left", label: "thumb-left" },
+  { value: "thumb-right", label: "thumb-right" },
+  { value: "variant-dropdown", label: "variant-dropdown" },
+  { value: "variant-image-square", label: "variant-image-square" },
+  { value: "variant-image", label: "variant-image" },
+  { value: "without-thumb", label: "without-thumb" },
+];
 
 export async function getShopifyTaxonomyCategoryOptions(
   userId: number,
