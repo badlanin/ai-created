@@ -2411,11 +2411,11 @@ export async function getShopifyProductOrganizationOptions(
       if (productType) productTypes.push(productType);
       const vendor = cleanField(product.vendor);
       if (vendor) vendors.push(vendor);
-      const rawTemplateSuffix = product.templateSuffix || "";
-      const templateStyle = normalizeShopifyTemplateSuffix(rawTemplateSuffix);
-      if (rawTemplateSuffix) {
-        console.log(`[Shopify] 原始 templateSuffix: "${rawTemplateSuffix}" -> 标准化: "${templateStyle}"`);
+      const rawTemplateSuffix = product.templateSuffix;
+      if (product.id && page === 0 && templateStyles.length === 0) {
+        console.log(`[Shopify] 前3个产品 templateSuffix:`, (json.data?.products?.nodes || []).slice(0, 3).map(p => `${p.id?.slice(-8)}: "${p.templateSuffix}"`));
       }
+      const templateStyle = normalizeShopifyTemplateSuffix(rawTemplateSuffix || "");
       if (templateStyle) templateStyles.push(templateStyle);
       for (const tag of product.tags || []) {
         const cleanedTag = cleanField(tag);
