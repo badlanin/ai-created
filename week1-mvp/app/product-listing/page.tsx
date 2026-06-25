@@ -10275,6 +10275,14 @@ function SyncPanel({
         warnings?: string[];
         error?: string;
       };
+      console.log("[产品上架] 收到产品组织选项:", {
+        ok: res.ok,
+        status: res.status,
+        templateStylesCount: data.templateStyles?.length || 0,
+        templateStyles: data.templateStyles,
+        warnings: data.warnings,
+        error: data.error,
+      });
       if (!res.ok) throw new Error(data.error || res.statusText);
       setOrganizationOptions({
         productTypes: data.productTypes || [],

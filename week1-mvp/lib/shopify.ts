@@ -1548,9 +1548,11 @@ function normalizeShopifyProductStatus(
 function normalizeShopifyTemplateSuffix(value?: string): string {
   const cleaned = cleanField(value);
   if (!cleaned) return "";
-  if (/^(默认|默认产品|默认模板|default|default product|product)$/i.test(cleaned)) {
+  if (/^(默认|默认产品|默认模板|default|default product)$/i.test(cleaned)) {
     return "";
   }
+  // 只移除 "product." 或 "product-" 前缀，但保留单独的 "product"
+  if (cleaned.toLowerCase() === "product") return "";
   return cleaned.replace(/^product[.-]/i, "").trim();
 }
 
@@ -2314,9 +2316,24 @@ export async function getShopifyProductOrganizationOptions(
       collections: [],
       commonTags: [],
       tags: [],
-      templateStyles: [],
+      templateStyles: [
+        { value: "collage-s1", label: "collage-s1" },
+        { value: "collage-s2", label: "collage-s2" },
+        { value: "des-tabcenter", label: "des-tabcenter" },
+        { value: "list-grid", label: "list-grid" },
+        { value: "list-stacked", label: "list-stacked" },
+        { value: "product-bundle", label: "product-bundle" },
+        { value: "tab-accordion", label: "tab-accordion" },
+        { value: "thumb-bottom", label: "thumb-bottom" },
+        { value: "thumb-left", label: "thumb-left" },
+        { value: "thumb-right", label: "thumb-right" },
+        { value: "variant-dropdown", label: "variant-dropdown" },
+        { value: "variant-image-square", label: "variant-image-square" },
+        { value: "variant-image", label: "variant-image" },
+        { value: "without-thumb", label: "without-thumb" },
+      ],
       warnings: [
-        "当前使用测试密钥，产品组织条目需要真实店铺读取。",
+        "当前使用测试密钥，显示模拟的模板样式选项。真实店铺会显示实际使用的模板。",
       ],
     };
   }
@@ -2341,6 +2358,8 @@ export async function getShopifyProductOrganizationOptions(
   let after: string | null = null;
   let page = 0;
   const maxPages = 5;
+
+  console.log(`[Shopify] 开始查询类别 ${categorySearchId} 的产品组织信息...`);
 
   do {
     const json: ShopifyProductsOrganizationResponse =
@@ -2374,12 +2393,19 @@ export async function getShopifyProductOrganizationOptions(
       break;
     }
 
+    const productCount = json.data?.products?.nodes?.length || 0;
+    console.log(`[Shopify] 第 ${page + 1} 页：读取到 ${productCount} 个产品`);
+
     for (const product of json.data?.products?.nodes || []) {
       const productType = cleanField(product.productType);
       if (productType) productTypes.push(productType);
       const vendor = cleanField(product.vendor);
       if (vendor) vendors.push(vendor);
-      const templateStyle = normalizeShopifyTemplateSuffix(product.templateSuffix || "");
+      const rawTemplateSuffix = product.templateSuffix || "";
+      const templateStyle = normalizeShopifyTemplateSuffix(rawTemplateSuffix);
+      if (rawTemplateSuffix) {
+        console.log(`[Shopify] 原始 templateSuffix: "${rawTemplateSuffix}" -> 标准化: "${templateStyle}"`);
+      }
       if (templateStyle) templateStyles.push(templateStyle);
       for (const tag of product.tags || []) {
         const cleanedTag = cleanField(tag);
@@ -2402,6 +2428,8 @@ export async function getShopifyProductOrganizationOptions(
     collectionsPromise,
     tagsPromise,
   ]);
+
+  console.log(`[Shopify] 类别 ${categorySearchId} 模板样式收集结果: ${templateStyles.length} 个原始值 -> ${buildShopifyProductOrganizationStringOptions(templateStyles).length} 个选项`);
 
   return {
     productTypes: buildShopifyProductOrganizationStringOptions(productTypes),
