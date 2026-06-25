@@ -10538,21 +10538,9 @@ function SyncPanel({
               </option>
             ))}
           </Select>
-          <p
-            className={`text-[11px] ${
-              organizationOptionsError ? "text-amber-600" : "text-fg-tertiary"
-            }`}
-          >
-            {organizationOptionsError
-              ? organizationOptionsError
-              : loadingOrganizationOptions
-                ? "正在按当前类别读取 Shopify 后台模板选项"
-                : organizationOptionsLoaded
-                  ? organizationOptions.templateStyles.length
-                    ? "已读取当前类别在 Shopify 后台使用的模板选项"
-                    : "当前类别暂无其他模板，使用默认产品"
-                  : "选择类别后自动读取 Shopify 后台模板选项"}
-          </p>
+          {organizationOptionsError ? (
+            <p className="text-[11px] text-amber-600">{organizationOptionsError}</p>
+          ) : null}
         </div>
       </ShopifySection>
 
