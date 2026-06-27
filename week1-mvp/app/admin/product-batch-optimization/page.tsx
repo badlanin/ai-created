@@ -70,6 +70,7 @@ type Snapshot = {
   metaDescription: string;
   tags: string[];
   faq: FaqItem[];
+  imageAltTexts?: Array<{ mediaId: string; altText: string }>;
 };
 
 type Proposal = {
@@ -117,6 +118,30 @@ type StatusData = {
   defaultPrompt: string;
 };
 
+type PreviewProgress = {
+  jobId: string;
+  phase:
+    | "idle"
+    | "starting"
+    | "fetching"
+    | "generating"
+    | "stopping"
+    | "stopped"
+    | "completed"
+    | "failed"
+    | "finished";
+  percent: number;
+  completed: number;
+  total: number;
+  message: string;
+  currentStore?: string | null;
+  currentProduct?: string | null;
+  done: boolean;
+  cancelled: boolean;
+  createdAt: number;
+  updatedAt: number;
+};
+
 const FALLBACK_PROMPT =
   "请根据现有商品资料优化 Shopify 商品标题、描述、SEO 标题、Meta 描述、标签、图片 Alt 和 FAQ。保持事实准确，不要编造材质、认证、折扣、物流或售后承诺。文案优先使用英文，适合礼服/婚纱独立站自然搜索和 AI 问答引用。";
 
@@ -128,6 +153,9 @@ export default function ProductBatchOptimizationPage() {
   const [selectedProposalKeys, setSelectedProposalKeys] = useState<Set<string>>(
     new Set(),
   );
+  const [expandedProposalKey, setExpandedProposalKey] = useState<string | null>(
+    null,
+  );
   const [storeMenuOpen, setStoreMenuOpen] = useState(false);
   const [addStoreOpen, setAddStoreOpen] = useState(false);
   const [credentialFile, setCredentialFile] = useState<File | null>(null);
@@ -137,6 +165,9 @@ export default function ProductBatchOptimizationPage() {
   const [applying, setApplying] = useState(false);
   const [exchanging, setExchanging] = useState(false);
   const [previewJobId, setPreviewJobId] = useState<string | null>(null);
+  const [previewProgress, setPreviewProgress] = useState<PreviewProgress | null>(
+    null,
+  );
   const [stopRequested, setStopRequested] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -187,6 +218,30 @@ export default function ProductBatchOptimizationPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (!previewJobId) return;
+    const jobId = previewJobId;
+    let disposed = false;
+    async function refreshProgress() {
+      try {
+        const data = await readJson<{ progress: PreviewProgress }>(
+          await fetch(
+            `/api/admin/product-batch-optimization/preview/progress?jobId=${encodeURIComponent(jobId)}`,
+          ),
+        );
+        if (!disposed) setPreviewProgress(data.progress);
+      } catch {
+        // Progress is helpful, but the preview request owns the final error.
+      }
+    }
+    void refreshProgress();
+    const timer = window.setInterval(() => void refreshProgress(), 900);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [previewJobId]);
+
   async function loadStatus(selectFirst = true) {
     setLoading(true);
     setError(null);
@@ -228,6 +283,7 @@ export default function ProductBatchOptimizationPage() {
     setSelectedProposalKeys(
       new Set(data.run.proposals.map((item) => proposalKey(item))),
     );
+    setExpandedProposalKey(null);
   }
 
   async function handlePreview(e: FormEvent) {
@@ -237,8 +293,26 @@ export default function ProductBatchOptimizationPage() {
       return;
     }
     const jobId = createPreviewJobId();
+    const estimatedTotal = Math.max(
+      1,
+      selectedStoreKeys.size * Math.max(1, Number(form.limit) || 1),
+    );
     setGenerating(true);
     setPreviewJobId(jobId);
+    setPreviewProgress({
+      jobId,
+      phase: "starting",
+      percent: 0,
+      completed: 0,
+      total: estimatedTotal,
+      message: `准备处理 ${selectedStoreKeys.size} 个店铺，预计最多 ${estimatedTotal} 个商品。`,
+      currentStore: null,
+      currentProduct: null,
+      done: false,
+      cancelled: false,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
     setStopRequested(false);
     setError(null);
     setNotice(null);
@@ -258,23 +332,58 @@ export default function ProductBatchOptimizationPage() {
       setSelectedProposalKeys(
         new Set(data.run.proposals.map((item) => proposalKey(item))),
       );
+      setExpandedProposalKey(null);
       setRuns((prev) => [
         toSummary(data.run),
         ...prev.filter((item) => item.id !== data.run.id),
       ]);
       if (data.run.stopped) {
+        setPreviewProgress((prev) => ({
+          ...(prev || createLocalProgress(jobId, estimatedTotal)),
+          phase: "stopped",
+          done: true,
+          cancelled: true,
+          message: `已强制停止。本次已生成 ${data.run.proposalCount} 条预览。`,
+          updatedAt: Date.now(),
+        }));
         setNotice(
           `已强制停止。本次已生成 ${data.run.proposalCount} 条预览，未继续处理后续商品。`,
         );
       } else if (data.run.failures.length) {
+        setPreviewProgress((prev) => ({
+          ...(prev || createLocalProgress(jobId, estimatedTotal)),
+          phase: "completed",
+          percent: 100,
+          completed: Math.max(prev?.completed || 0, data.run.proposalCount),
+          done: true,
+          message: `生成完成，有 ${data.run.failures.length} 个错误。`,
+          updatedAt: Date.now(),
+        }));
         setError(
           `生成预览完成，但有 ${data.run.failures.length} 个错误。请在预览记录上方查看错误明细。`,
         );
       } else {
+        setPreviewProgress((prev) => ({
+          ...(prev || createLocalProgress(jobId, estimatedTotal)),
+          phase: "completed",
+          percent: 100,
+          completed: Math.max(prev?.completed || 0, data.run.proposalCount),
+          done: true,
+          message: `任务完成，已生成 ${data.run.proposalCount} 条预览。`,
+          updatedAt: Date.now(),
+        }));
         setNotice(`已生成 ${data.run.proposalCount} 条优化预览。`);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      setPreviewProgress((prev) => ({
+        ...(prev || createLocalProgress(jobId, estimatedTotal)),
+        phase: "failed",
+        done: true,
+        message,
+        updatedAt: Date.now(),
+      }));
+      setError(message);
     } finally {
       setGenerating(false);
       setPreviewJobId(null);
@@ -854,6 +963,11 @@ export default function ProductBatchOptimizationPage() {
               )}
             </div>
           </div>
+
+          <PreviewProgressCard
+            progress={previewProgress}
+            generating={generating}
+          />
         </aside>
       </section>
 
@@ -997,18 +1111,28 @@ export default function ProductBatchOptimizationPage() {
           </div>
 
           <div className="space-y-4">
-            {activeRun.proposals.map((proposal) => (
-            <ProposalCard
-              key={`${proposal.store.key}:${proposal.product.id}`}
-              proposal={proposal}
-              selected={selectedProposalKeys.has(proposalKey(proposal))}
-              result={
-                applyResultByProposal.get(proposalKey(proposal)) ||
-                applyResultByProposal.get(proposal.product.id)
-              }
-              onToggle={() => toggleProduct(proposalKey(proposal))}
-            />
-            ))}
+            {activeRun.proposals.map((proposal, index) => {
+              const key = proposalKey(proposal);
+              return (
+                <ProposalCard
+                  key={key}
+                  index={index + 1}
+                  proposal={proposal}
+                  selected={selectedProposalKeys.has(key)}
+                  expanded={expandedProposalKey === key}
+                  result={
+                    applyResultByProposal.get(key) ||
+                    applyResultByProposal.get(proposal.product.id)
+                  }
+                  onToggle={() => toggleProduct(key)}
+                  onExpand={() =>
+                    setExpandedProposalKey((current) =>
+                      current === key ? null : key,
+                    )
+                  }
+                />
+              );
+            })}
           </div>
         </section>
       ) : (
@@ -1116,37 +1240,53 @@ SHOPIFY_CLIENT_SECRET=...`}</pre>
 }
 
 function ProposalCard({
+  index,
   proposal,
   selected,
+  expanded,
   result,
   onToggle,
+  onExpand,
 }: {
+  index: number;
   proposal: Proposal;
   selected: boolean;
+  expanded: boolean;
   result?: ApplyResult;
   onToggle: () => void;
+  onExpand: () => void;
 }) {
+  const proposedAltCount = proposal.proposed.imageAltTexts?.length ?? 0;
+
   return (
     <article
-      className={`card p-4 ${selected ? "ring-1 ring-[rgba(99,102,241,0.35)]" : ""}`}
+      className={`card overflow-hidden ${
+        selected ? "ring-1 ring-[rgba(99,102,241,0.35)]" : ""
+      }`}
     >
-      <header className="mb-4 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <label className="flex min-w-0 flex-1 items-start gap-3">
+      <header className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
           <input
             type="checkbox"
             checked={selected}
+            onClick={(event) => event.stopPropagation()}
             onChange={onToggle}
+            aria-label={`选择第 ${index} 个商品`}
             className="mt-1 h-4 w-4 flex-shrink-0"
           />
-          <span className="min-w-0">
+          <button
+            type="button"
+            onClick={onExpand}
+            className="min-w-0 flex-1 text-left"
+          >
             <span className="block truncate text-base font-semibold text-fg-primary">
-              {proposal.proposed.title || proposal.product.title}
+              {index}. {proposal.proposed.title || proposal.product.title}
             </span>
-            <span className="mt-1 block text-xs text-fg-tertiary">
+            <span className="mt-1 block truncate text-xs text-fg-tertiary">
               {proposal.store.name || proposal.store.shopDomain} · {proposal.product.status} · {proposal.current.handle}
             </span>
-          </span>
-        </label>
+          </button>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           {result ? (
             result.ok ? (
@@ -1167,91 +1307,198 @@ function ProposalCard({
           </span>
           <span className="chip chip-brand">
             <ImageIcon size={12} />
-            {proposal.proposed.imageAltTexts.length} Alt
+            {proposedAltCount} Alt
           </span>
+          <button
+            type="button"
+            onClick={onExpand}
+            className="icon-btn h-8 w-8"
+            title={expanded ? "收起详情" : "查看详情"}
+            aria-label={expanded ? "收起详情" : "查看详情"}
+          >
+            <ChevronDown
+              size={16}
+              className={`transition-transform ${expanded ? "rotate-180" : ""}`}
+            />
+          </button>
         </div>
       </header>
 
       {result?.error ? (
-        <div className="mb-4 rounded-md bg-[var(--danger-bg)] p-3 text-sm text-danger">
+        <div className="mx-4 mb-4 rounded-md bg-[var(--danger-bg)] p-3 text-sm text-danger">
           {result.error}
         </div>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <CompareField
-          label="商品标题"
-          current={proposal.current.title}
-          proposed={proposal.proposed.title}
-        />
-        <CompareField
-          label="URL handle"
-          current={proposal.current.handle}
-          proposed={proposal.proposed.handle}
-        />
-        <CompareField
-          label="SEO 标题"
-          current={proposal.current.seoTitle}
-          proposed={proposal.proposed.seoTitle}
-        />
-        <CompareField
-          label="Meta 描述"
-          current={proposal.current.metaDescription}
-          proposed={proposal.proposed.metaDescription}
-          multiline
-        />
-      </div>
-
-      <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <TextPanel title="当前描述" text={htmlToText(proposal.current.descriptionHtml)} />
-        <TextPanel title="优化描述" text={htmlToText(proposal.proposed.descriptionHtml)} />
-      </div>
-
-      <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <TagPanel title="当前标签" tags={proposal.current.tags} />
-        <TagPanel title="优化标签" tags={proposal.proposed.tags} />
-      </div>
-
-      <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <FaqPanel title="当前 FAQ" faq={proposal.current.faq} />
-        <FaqPanel title="优化 FAQ" faq={proposal.proposed.faq} />
-      </div>
-
-      {proposal.proposed.imageAltTexts.length ? (
-        <div className="mt-3 rounded-md bg-bg-tertiary p-3">
-          <div className="mb-2 text-xs font-semibold text-fg-secondary">
-            图片 Alt 更新
+      {expanded ? (
+        <div className="border-t border-border-subtle p-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div className="text-sm font-semibold text-fg-primary">
+              {index}. 详细信息
+            </div>
+            <div className="text-xs text-fg-tertiary">左侧旧内容，右侧新内容</div>
           </div>
-          <div className="space-y-2">
-            {proposal.proposed.imageAltTexts.map((item) => (
-              <div key={item.mediaId} className="text-xs text-fg-secondary">
-                <span className="text-fg-tertiary">{shortId(item.mediaId)}</span>
-                <span className="mx-2 text-fg-muted">→</span>
-                {item.altText}
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
 
-      {(proposal.rationale || proposal.warnings.length) ? (
-        <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-          {proposal.rationale ? (
-            <TextPanel title="优化理由" text={proposal.rationale} compact />
-          ) : null}
-          {proposal.warnings.length ? (
-            <div className="rounded-md bg-[var(--warn-bg)] p-3">
-              <div className="mb-2 text-xs font-semibold text-warn">注意事项</div>
-              <ul className="space-y-1 text-xs text-warn">
-                {proposal.warnings.map((item, index) => (
-                  <li key={`${item}-${index}`}>{item}</li>
-                ))}
-              </ul>
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            <SnapshotCompareColumn
+              title="旧内容"
+              snapshot={proposal.current}
+              tone="current"
+            />
+            <SnapshotCompareColumn
+              title="新内容"
+              snapshot={proposal.proposed}
+              tone="proposed"
+            />
+          </div>
+
+          {(proposal.rationale || proposal.warnings.length) ? (
+            <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+              {proposal.rationale ? (
+                <TextPanel title="优化理由" text={proposal.rationale} compact />
+              ) : null}
+              {proposal.warnings.length ? (
+                <div className="rounded-md bg-[var(--warn-bg)] p-3">
+                  <div className="mb-2 text-xs font-semibold text-warn">
+                    注意事项
+                  </div>
+                  <ul className="space-y-1 text-xs text-warn">
+                    {proposal.warnings.map((item, warningIndex) => (
+                      <li key={`${item}-${warningIndex}`}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>
       ) : null}
     </article>
+  );
+}
+
+function SnapshotCompareColumn({
+  title,
+  snapshot,
+  tone,
+}: {
+  title: string;
+  snapshot: Snapshot;
+  tone: "current" | "proposed";
+}) {
+  const highlight =
+    tone === "proposed"
+      ? "border-[rgba(34,197,94,0.35)] bg-[rgba(34,197,94,0.08)]"
+      : "border-border-subtle bg-bg-tertiary";
+  const titleColor = tone === "proposed" ? "text-success" : "text-fg-secondary";
+
+  return (
+    <section className={`rounded-lg border p-3 ${highlight}`}>
+      <div className={`mb-3 text-sm font-semibold ${titleColor}`}>{title}</div>
+      <div className="space-y-3">
+        <SnapshotField label="商品标题" value={snapshot.title} />
+        <SnapshotField label="URL handle" value={snapshot.handle} />
+        <SnapshotField label="SEO 标题" value={snapshot.seoTitle} />
+        <SnapshotField label="Meta 描述" value={snapshot.metaDescription} />
+        <SnapshotField
+          label="商品描述"
+          value={htmlToText(snapshot.descriptionHtml)}
+          tall
+        />
+        <SnapshotTagList tags={snapshot.tags} />
+        <SnapshotFaqList faq={snapshot.faq} />
+        <SnapshotImageAltList imageAltTexts={snapshot.imageAltTexts || []} />
+      </div>
+    </section>
+  );
+}
+
+function SnapshotField({
+  label,
+  value,
+  tall = false,
+}: {
+  label: string;
+  value: string;
+  tall?: boolean;
+}) {
+  return (
+    <div className="rounded-md border border-border-subtle bg-bg-secondary p-3">
+      <div className="mb-1.5 text-xs font-semibold text-fg-secondary">{label}</div>
+      <div
+        className={`whitespace-pre-wrap text-xs leading-relaxed text-fg-secondary ${
+          tall ? "max-h-48 overflow-y-auto" : ""
+        }`}
+      >
+        {value || "空"}
+      </div>
+    </div>
+  );
+}
+
+function SnapshotTagList({ tags }: { tags: string[] }) {
+  return (
+    <div className="rounded-md border border-border-subtle bg-bg-secondary p-3">
+      <div className="mb-2 text-xs font-semibold text-fg-secondary">标签</div>
+      <div className="flex flex-wrap gap-1.5">
+        {tags.length ? (
+          tags.map((tag) => (
+            <span key={tag} className="chip bg-bg-tertiary text-fg-secondary">
+              {tag}
+            </span>
+          ))
+        ) : (
+          <span className="text-xs text-fg-tertiary">空</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SnapshotFaqList({ faq }: { faq: FaqItem[] }) {
+  return (
+    <div className="rounded-md border border-border-subtle bg-bg-secondary p-3">
+      <div className="mb-2 text-xs font-semibold text-fg-secondary">FAQ</div>
+      {faq.length ? (
+        <div className="space-y-2">
+          {faq.map((item, index) => (
+            <div key={`${item.question}-${index}`} className="text-xs text-fg-secondary">
+              <div className="font-medium text-fg-primary">
+                {index + 1}. Q: {item.question}
+              </div>
+              <div className="mt-0.5">A: {item.answer}</div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <span className="text-xs text-fg-tertiary">空</span>
+      )}
+    </div>
+  );
+}
+
+function SnapshotImageAltList({
+  imageAltTexts,
+}: {
+  imageAltTexts: Array<{ mediaId: string; altText: string }>;
+}) {
+  return (
+    <div className="rounded-md border border-border-subtle bg-bg-secondary p-3">
+      <div className="mb-2 text-xs font-semibold text-fg-secondary">图片 Alt</div>
+      {imageAltTexts.length ? (
+        <div className="space-y-2">
+          {imageAltTexts.map((item, index) => (
+            <div key={`${item.mediaId}-${index}`} className="text-xs text-fg-secondary">
+              <span className="text-fg-tertiary">{shortId(item.mediaId)}</span>
+              <span className="mx-2 text-fg-muted">→</span>
+              {item.altText || "空"}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <span className="text-xs text-fg-tertiary">空</span>
+      )}
+    </div>
   );
 }
 
@@ -1366,6 +1613,78 @@ function FaqPanel({ title, faq }: { title: string; faq: FaqItem[] }) {
   );
 }
 
+function PreviewProgressCard({
+  progress,
+  generating,
+}: {
+  progress: PreviewProgress | null;
+  generating: boolean;
+}) {
+  const percent = clampPercent(progress?.percent ?? 0);
+  const message = progress?.message || "等待生成预览。";
+  const phaseLabel = progress ? progressPhaseLabel(progress.phase) : "未开始";
+  const isFailed = progress?.phase === "failed";
+  const isDone =
+    progress?.phase === "completed" ||
+    progress?.phase === "finished" ||
+    progress?.phase === "stopped";
+
+  return (
+    <div className="card p-4">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-sm font-semibold text-fg-primary">
+          {generating ? (
+            <Loader2 size={16} className="animate-spin text-brand-400" />
+          ) : isFailed ? (
+            <AlertTriangle size={16} className="text-danger" />
+          ) : isDone ? (
+            <CheckCircle2 size={16} className="text-success" />
+          ) : (
+            <Sparkles size={16} className="text-brand-400" />
+          )}
+          此次任务进度
+        </div>
+        <span
+          className={`text-lg font-semibold ${
+            isFailed ? "text-danger" : "text-brand-400"
+          }`}
+        >
+          {percent}%
+        </span>
+      </div>
+
+      <div className="h-2 overflow-hidden rounded-full bg-bg-tertiary">
+        <div
+          className={`h-full rounded-full transition-all duration-500 ${
+            isFailed ? "bg-[var(--danger)]" : "bg-[var(--brand-400)]"
+          }`}
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+
+      <div className="mt-3 flex items-center justify-between gap-3 text-xs">
+        <span className="chip chip-brand">{phaseLabel}</span>
+        <span className="text-fg-tertiary">
+          {progress?.total ? `${progress.completed}/${progress.total}` : "0/0"}
+        </span>
+      </div>
+      <div className="mt-2 text-xs leading-relaxed text-fg-secondary">
+        {message}
+      </div>
+      {progress?.currentStore ? (
+        <div className="mt-2 truncate text-[11px] text-fg-tertiary">
+          店铺：{progress.currentStore}
+        </div>
+      ) : null}
+      {progress?.currentProduct ? (
+        <div className="mt-1 truncate text-[11px] text-fg-tertiary">
+          商品：{progress.currentProduct}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 async function readJson<T = unknown>(response: Response): Promise<T> {
   const data = (await response.json().catch(() => ({}))) as {
     error?: string;
@@ -1374,6 +1693,44 @@ async function readJson<T = unknown>(response: Response): Promise<T> {
     throw new Error(data.error || response.statusText);
   }
   return data as T;
+}
+
+function createLocalProgress(jobId: string, total: number): PreviewProgress {
+  const now = Date.now();
+  return {
+    jobId,
+    phase: "starting",
+    percent: 0,
+    completed: 0,
+    total,
+    message: "正在准备任务...",
+    currentStore: null,
+    currentProduct: null,
+    done: false,
+    cancelled: false,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function progressPhaseLabel(phase: PreviewProgress["phase"]) {
+  const labels: Record<PreviewProgress["phase"], string> = {
+    idle: "未开始",
+    starting: "准备中",
+    fetching: "读取商品",
+    generating: "生成预览",
+    stopping: "停止中",
+    stopped: "已停止",
+    completed: "已完成",
+    failed: "出错",
+    finished: "已结束",
+  };
+  return labels[phase] || "处理中";
+}
+
+function clampPercent(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, Math.round(value)));
 }
 
 function parseShopifyCredentials(text: string) {

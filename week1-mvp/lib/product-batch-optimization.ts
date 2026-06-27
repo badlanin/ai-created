@@ -21,6 +21,7 @@ type PreviewJobState = {
   controller: AbortController;
   createdAt: number;
   reason: string | null;
+  progress: ProductBatchPreviewProgress;
 };
 
 const previewJobs = new Map<string, PreviewJobState>();
@@ -241,6 +242,30 @@ export type ProductBatchRunDocument = ProductBatchRunSummary & {
   proposals: ProductBatchProposal[];
   failures: Array<{ productId?: string; title?: string; error: string }>;
   applyResults?: ProductBatchApplyResult[];
+};
+
+export type ProductBatchPreviewProgress = {
+  jobId: string;
+  phase:
+    | "idle"
+    | "starting"
+    | "fetching"
+    | "generating"
+    | "stopping"
+    | "stopped"
+    | "completed"
+    | "failed"
+    | "finished";
+  percent: number;
+  completed: number;
+  total: number;
+  message: string;
+  currentStore?: string | null;
+  currentProduct?: string | null;
+  done: boolean;
+  cancelled: boolean;
+  createdAt: number;
+  updatedAt: number;
 };
 
 type ShopifyToken = {
@@ -591,10 +616,43 @@ export function cancelProductBatchPreview(jobId: string) {
   if (!job) {
     return { ok: false, cancelled: false, reason: "任务不存在或已经结束。" };
   }
+  if (job.progress.done) {
+    return { ok: false, cancelled: false, reason: "当前预览任务已经结束。" };
+  }
   job.cancelled = true;
   job.reason = "用户强制停止";
+  updatePreviewProgress(job, {
+    phase: "stopping",
+    cancelled: true,
+    message: "已收到强制停止指令，正在结束当前任务...",
+  });
   job.controller.abort(new Error(job.reason));
   return { ok: true, cancelled: true };
+}
+
+export function getProductBatchPreviewProgress(
+  jobId: string,
+): ProductBatchPreviewProgress {
+  const id = cleanJobId(jobId);
+  const job = previewJobs.get(id);
+  if (!job) {
+    const now = Date.now();
+    return {
+      jobId: id,
+      phase: "finished",
+      percent: 100,
+      completed: 0,
+      total: 0,
+      message: "任务已结束。",
+      currentStore: null,
+      currentProduct: null,
+      done: true,
+      cancelled: false,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+  return { ...job.progress, cancelled: job.cancelled || job.progress.cancelled };
 }
 
 export async function listProductBatchRuns(): Promise<ProductBatchRunSummary[]> {
@@ -657,19 +715,38 @@ export async function createProductBatchPreview(opts: {
   const model = resolveModelId("vision", opts.model || undefined);
 
   let fetchedCount = 0;
+  let progressCompleted = 0;
+  let progressTotal = Math.max(1, stores.length * limit);
   const proposals: ProductBatchProposal[] = [];
   const failures: ProductBatchRunDocument["failures"] = [];
   let stopped = false;
   let stopReason: string | null = null;
 
-  try {
-    for (const store of stores) {
+  updatePreviewProgress(previewJob, {
+    phase: "starting",
+    total: progressTotal,
+    completed: 0,
+    percent: 0,
+    message: `准备处理 ${stores.length} 个店铺，预计最多 ${progressTotal} 个商品。`,
+    currentStore: null,
+    currentProduct: null,
+  });
+
+  for (let storeIndex = 0; storeIndex < stores.length; storeIndex += 1) {
+    const store = stores[storeIndex];
       if (isPreviewJobCancelled(previewJob)) {
         stopped = true;
         stopReason = previewJob?.reason || "已强制停止";
         break;
       }
       let products: ShopifyProductNode[] = [];
+      const storeLabel = store.name || store.shopDomain;
+      updatePreviewProgress(previewJob, {
+        phase: "fetching",
+        message: `正在读取 ${storeLabel} 的 Shopify 商品...`,
+        currentStore: storeLabel,
+        currentProduct: null,
+      });
       try {
         products = await fetchProducts({
           connection: store,
@@ -680,14 +757,37 @@ export async function createProductBatchPreview(opts: {
           signal: previewJob?.controller.signal,
         });
         fetchedCount += products.length;
+        progressTotal = Math.max(
+          1,
+          progressCompleted + products.length + (stores.length - storeIndex - 1) * limit,
+        );
+        updatePreviewProgress(previewJob, {
+          phase: products.length ? "generating" : "fetching",
+          total: progressTotal,
+          percent: getProgressPercent(progressCompleted, progressTotal),
+          message: products.length
+            ? `${storeLabel} 已读取 ${products.length} 个商品，开始生成预览。`
+            : `${storeLabel} 没有可处理商品。`,
+          currentStore: storeLabel,
+          currentProduct: null,
+        });
       } catch (err) {
         if (isAbortLikeError(err) || isPreviewJobCancelled(previewJob)) {
           stopped = true;
           stopReason = previewJob?.reason || "已强制停止";
           break;
         }
+        progressCompleted = Math.min(progressTotal, progressCompleted + limit);
+        updatePreviewProgress(previewJob, {
+          phase: "fetching",
+          completed: progressCompleted,
+          percent: getProgressPercent(progressCompleted, progressTotal),
+          message: `${storeLabel} 商品拉取失败，继续处理后续店铺。`,
+          currentStore: storeLabel,
+          currentProduct: null,
+        });
         failures.push({
-          title: store.name || store.shopDomain,
+          title: storeLabel,
           error: `拉取店铺商品失败：${err instanceof Error ? err.message : String(err)}`,
         });
         continue;
@@ -698,6 +798,12 @@ export async function createProductBatchPreview(opts: {
           stopReason = previewJob?.reason || "已强制停止";
           break;
         }
+        updatePreviewProgress(previewJob, {
+          phase: "generating",
+          message: `正在生成 ${storeLabel} / ${product.title || product.id} 的优化预览...`,
+          currentStore: storeLabel,
+          currentProduct: product.title || product.id,
+        });
         try {
           proposals.push(
             await generateProductProposal({
@@ -718,18 +824,31 @@ export async function createProductBatchPreview(opts: {
           }
           failures.push({
             productId: product.id,
-            title: `${store.name || store.shopDomain} / ${product.title || ""}`,
+            title: `${storeLabel} / ${product.title || ""}`,
             error: err instanceof Error ? err.message : String(err),
           });
         }
+        progressCompleted = Math.min(progressTotal, progressCompleted + 1);
+        updatePreviewProgress(previewJob, {
+          phase: "generating",
+          completed: progressCompleted,
+          percent: getProgressPercent(progressCompleted, progressTotal),
+          message: `已处理 ${progressCompleted}/${progressTotal} 个商品。`,
+          currentStore: storeLabel,
+          currentProduct: null,
+        });
       }
       if (stopped) break;
-    }
-  } finally {
-    if (previewJob) previewJobs.delete(previewJob.id);
   }
 
   if (!fetchedCount && !stopped) {
+    updatePreviewProgress(previewJob, {
+      phase: "failed",
+      done: true,
+      message: "没有找到可优化的 Shopify 商品。",
+      currentStore: null,
+      currentProduct: null,
+    });
     throw new Error("没有找到可优化的 Shopify 商品。可以调整查询条件或勾选已优化商品。");
   }
 
@@ -765,6 +884,19 @@ export async function createProductBatchPreview(opts: {
     lastApplyAt: null,
   };
   await writeProductBatchRun(run);
+  updatePreviewProgress(previewJob, {
+    phase: stopped ? "stopped" : "completed",
+    done: true,
+    cancelled: stopped,
+    completed: stopped ? progressCompleted : Math.max(progressCompleted, progressTotal),
+    total: progressTotal,
+    percent: stopped ? getProgressPercent(progressCompleted, progressTotal) : 100,
+    message: stopped
+      ? `已强制停止，已生成 ${proposals.length} 条预览。`
+      : `任务完成，已生成 ${proposals.length} 条预览。`,
+    currentStore: null,
+    currentProduct: null,
+  });
   return run;
 }
 
@@ -1538,6 +1670,20 @@ function createPreviewJob(jobId?: string): PreviewJobState | null {
     controller: new AbortController(),
     createdAt: Date.now(),
     reason: null,
+    progress: {
+      jobId: id,
+      phase: "starting",
+      percent: 0,
+      completed: 0,
+      total: 0,
+      message: "正在准备任务...",
+      currentStore: null,
+      currentProduct: null,
+      done: false,
+      cancelled: false,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    },
   };
   previewJobs.set(id, job);
   cleanupOldPreviewJobs();
@@ -1561,6 +1707,39 @@ function cleanupOldPreviewJobs() {
 
 function isPreviewJobCancelled(job: PreviewJobState | null) {
   return Boolean(job?.cancelled || job?.controller.signal.aborted);
+}
+
+function updatePreviewProgress(
+  job: PreviewJobState | null,
+  patch: Partial<ProductBatchPreviewProgress>,
+) {
+  if (!job) return;
+  const next: ProductBatchPreviewProgress = {
+    ...job.progress,
+    ...patch,
+    jobId: job.id,
+    percent: clampInt(
+      Math.round(
+        patch.percent ?? job.progress.percent ?? getProgressPercent(
+          patch.completed ?? job.progress.completed,
+          patch.total ?? job.progress.total,
+        ),
+      ),
+      0,
+      100,
+    ),
+    completed: Math.max(0, patch.completed ?? job.progress.completed),
+    total: Math.max(0, patch.total ?? job.progress.total),
+    cancelled: Boolean(patch.cancelled ?? job.progress.cancelled),
+    done: Boolean(patch.done ?? job.progress.done),
+    updatedAt: Date.now(),
+  };
+  job.progress = next;
+}
+
+function getProgressPercent(completed: number, total: number) {
+  if (!total) return 0;
+  return clampInt(Math.round((completed / total) * 100), 0, 99);
 }
 
 function isAbortLikeError(error: unknown) {
