@@ -1,0 +1,39 @@
+import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/auth";
+import { applyProductBatchRun } from "@/lib/product-batch-optimization";
+
+export const runtime = "nodejs";
+export const maxDuration = 300;
+
+export async function POST(req: NextRequest) {
+  try {
+    const user = await requireAdmin();
+    const body = (await req.json()) as {
+      runId?: string;
+      selectedProductIds?: string[];
+      selectedProposalKeys?: string[];
+      skipImageAlt?: boolean;
+      applyFaq?: boolean;
+      setDraft?: boolean;
+    };
+    if (!body.runId) {
+      return NextResponse.json({ error: "runId 必填" }, { status: 400 });
+    }
+    const result = await applyProductBatchRun({
+      user,
+      runId: body.runId,
+      selectedProductIds: body.selectedProductIds,
+      selectedProposalKeys: body.selectedProposalKeys,
+      skipImageAlt: body.skipImageAlt,
+      applyFaq: body.applyFaq,
+      setDraft: body.setDraft,
+    });
+    return NextResponse.json({ ok: true, ...result });
+  } catch (e) {
+    const status = (e as { status?: number }).status || 500;
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : String(e) },
+      { status },
+    );
+  }
+}
