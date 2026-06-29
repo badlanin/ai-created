@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth";
-import { createProductBatchPreview } from "@/lib/product-batch-optimization";
+import {
+  createProductBatchPreview,
+  failProductBatchPreview,
+} from "@/lib/product-batch-optimization";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -18,8 +21,9 @@ export async function POST(req: NextRequest) {
       includeImages?: boolean;
       includeApplied?: boolean;
       model?: string | null;
+      background?: boolean;
     };
-    const run = await createProductBatchPreview({
+    const input = {
       user,
       jobId: body.jobId,
       storeKeys: body.storeKeys,
@@ -30,7 +34,14 @@ export async function POST(req: NextRequest) {
       includeImages: body.includeImages,
       includeApplied: body.includeApplied,
       model: body.model,
-    });
+    };
+    if (body.background && body.jobId) {
+      void createProductBatchPreview(input).catch((error) => {
+        failProductBatchPreview(body.jobId || "", error);
+      });
+      return NextResponse.json({ ok: true, queued: true, jobId: body.jobId });
+    }
+    const run = await createProductBatchPreview(input);
     return NextResponse.json({ ok: true, run });
   } catch (e) {
     const status = (e as { status?: number }).status || 500;

@@ -278,6 +278,8 @@ export type ProductBatchPreviewProgress = {
   cancelled: boolean;
   createdAt: number;
   updatedAt: number;
+  runId?: string | null;
+  error?: string | null;
 };
 
 type ShopifyToken = {
@@ -666,9 +668,25 @@ export function getProductBatchPreviewProgress(
       cancelled: false,
       createdAt: now,
       updatedAt: now,
+      runId: null,
+      error: null,
     };
   }
   return { ...job.progress, cancelled: job.cancelled || job.progress.cancelled };
+}
+
+export function failProductBatchPreview(jobId: string, error: unknown) {
+  const job = previewJobs.get(cleanJobId(jobId));
+  if (!job || job.progress.done) return;
+  const message = error instanceof Error ? error.message : String(error);
+  updatePreviewProgress(job, {
+    phase: "failed",
+    done: true,
+    message,
+    error: message,
+    currentStore: null,
+    currentProduct: null,
+  });
 }
 
 export async function listProductBatchRuns(): Promise<ProductBatchRunSummary[]> {
@@ -907,6 +925,8 @@ export async function createProductBatchPreview(opts: {
     completed: stopped ? progressCompleted : Math.max(progressCompleted, progressTotal),
     total: progressTotal,
     percent: stopped ? getProgressPercent(progressCompleted, progressTotal) : 100,
+    runId: run.id,
+    error: null,
     message: stopped
       ? `已强制停止，已生成 ${proposals.length} 条预览。`
       : `任务完成，已生成 ${proposals.length} 条预览。`,

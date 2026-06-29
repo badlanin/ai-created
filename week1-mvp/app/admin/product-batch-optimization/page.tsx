@@ -142,6 +142,8 @@ type PreviewProgress = {
   cancelled: boolean;
   createdAt: number;
   updatedAt: number;
+  runId?: string | null;
+  error?: string | null;
 };
 
 type ProductBatchPromptPreset = {
@@ -248,7 +250,43 @@ export default function ProductBatchOptimizationPage() {
             `/api/admin/product-batch-optimization/preview/progress?jobId=${encodeURIComponent(jobId)}`,
           ),
         );
-        if (!disposed) setPreviewProgress(data.progress);
+        if (disposed) return;
+        setPreviewProgress(data.progress);
+        if (data.progress.done) {
+          if (data.progress.runId) {
+            const runData = await readJson<{ run: RunDocument }>(
+              await fetch(
+                `/api/admin/product-batch-optimization/runs/${encodeURIComponent(data.progress.runId)}`,
+              ),
+            );
+            if (disposed) return;
+            setActiveRun(runData.run);
+            setSelectedProposalKeys(
+              new Set(runData.run.proposals.map((item) => proposalKey(item))),
+            );
+            setExpandedProposalKey(null);
+            setRuns((prev) => [
+              toSummary(runData.run),
+              ...prev.filter((item) => item.id !== runData.run.id),
+            ]);
+            if (runData.run.stopped) {
+              setNotice(
+                `已强制停止。本次已生成 ${runData.run.proposalCount} 条预览，未继续处理后续商品。`,
+              );
+            } else if (runData.run.failures.length) {
+              setError(
+                `生成预览完成，但有 ${runData.run.failures.length} 个错误。请在预览记录上方查看错误明细。`,
+              );
+            } else {
+              setNotice(`已生成 ${runData.run.proposalCount} 条优化预览。`);
+            }
+          } else if (data.progress.error || data.progress.phase === "failed") {
+            setError(data.progress.error || data.progress.message);
+          }
+          setGenerating(false);
+          setPreviewJobId(null);
+          setStopRequested(false);
+        }
       } catch {
         // Progress is helpful, but the preview request owns the final error.
       }
@@ -336,7 +374,7 @@ export default function ProductBatchOptimizationPage() {
     setError(null);
     setNotice(null);
     try {
-      const data = await readJson<{ run: RunDocument }>(
+      await readJson<{ jobId: string; queued: boolean }>(
         await fetch("/api/admin/product-batch-optimization/preview", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -344,55 +382,11 @@ export default function ProductBatchOptimizationPage() {
             ...form,
             jobId,
             storeKeys: Array.from(selectedStoreKeys),
+            background: true,
           }),
         }),
       );
-      setActiveRun(data.run);
-      setSelectedProposalKeys(
-        new Set(data.run.proposals.map((item) => proposalKey(item))),
-      );
-      setExpandedProposalKey(null);
-      setRuns((prev) => [
-        toSummary(data.run),
-        ...prev.filter((item) => item.id !== data.run.id),
-      ]);
-      if (data.run.stopped) {
-        setPreviewProgress((prev) => ({
-          ...(prev || createLocalProgress(jobId, estimatedTotal)),
-          phase: "stopped",
-          done: true,
-          cancelled: true,
-          message: `已强制停止。本次已生成 ${data.run.proposalCount} 条预览。`,
-          updatedAt: Date.now(),
-        }));
-        setNotice(
-          `已强制停止。本次已生成 ${data.run.proposalCount} 条预览，未继续处理后续商品。`,
-        );
-      } else if (data.run.failures.length) {
-        setPreviewProgress((prev) => ({
-          ...(prev || createLocalProgress(jobId, estimatedTotal)),
-          phase: "completed",
-          percent: 100,
-          completed: Math.max(prev?.completed || 0, data.run.proposalCount),
-          done: true,
-          message: `生成完成，有 ${data.run.failures.length} 个错误。`,
-          updatedAt: Date.now(),
-        }));
-        setError(
-          `生成预览完成，但有 ${data.run.failures.length} 个错误。请在预览记录上方查看错误明细。`,
-        );
-      } else {
-        setPreviewProgress((prev) => ({
-          ...(prev || createLocalProgress(jobId, estimatedTotal)),
-          phase: "completed",
-          percent: 100,
-          completed: Math.max(prev?.completed || 0, data.run.proposalCount),
-          done: true,
-          message: `任务完成，已生成 ${data.run.proposalCount} 条预览。`,
-          updatedAt: Date.now(),
-        }));
-        setNotice(`已生成 ${data.run.proposalCount} 条优化预览。`);
-      }
+      setNotice("预览任务已开始，正在后台生成。");
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       setPreviewProgress((prev) => ({
@@ -403,7 +397,6 @@ export default function ProductBatchOptimizationPage() {
         updatedAt: Date.now(),
       }));
       setError(message);
-    } finally {
       setGenerating(false);
       setPreviewJobId(null);
       setStopRequested(false);
