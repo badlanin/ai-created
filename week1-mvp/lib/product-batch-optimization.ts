@@ -15,6 +15,7 @@ const SHOPIFY_API_VERSION =
   process.env.SHOPIFY_API_VERSION?.trim() || "2026-04";
 const APPLIED_TAG = "ai-seo-geo-applied";
 const MAX_PREVIEW_LIMIT = 50;
+const SHOPIFY_PRODUCT_FETCH_BATCH_SIZE = 10;
 const RUNS_DIR_NAME = "product-batch-optimization";
 const PRODUCT_BATCH_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -776,16 +777,24 @@ export async function createProductBatchPreview(opts: {
 
   for (let storeIndex = 0; storeIndex < stores.length; storeIndex += 1) {
     const store = stores[storeIndex];
+    const storeLabel = store.name || store.shopDomain;
+    let storeProcessed = 0;
+
+    while (storeProcessed < limit) {
       if (isPreviewJobCancelled(previewJob)) {
         stopped = true;
         stopReason = previewJob?.reason || "已强制停止";
         break;
       }
+
+      const batchLimit = Math.min(
+        SHOPIFY_PRODUCT_FETCH_BATCH_SIZE,
+        limit - storeProcessed,
+      );
       let products: ShopifyProductNode[] = [];
-      const storeLabel = store.name || store.shopDomain;
       updatePreviewProgress(previewJob, {
         phase: "fetching",
-        message: `正在读取 ${storeLabel} 的 Shopify 商品...`,
+        message: `正在读取 ${storeLabel} 的 Shopify 商品 ${storeProcessed + 1}-${storeProcessed + batchLimit}...`,
         currentStore: storeLabel,
         currentProduct: null,
       });
@@ -793,25 +802,10 @@ export async function createProductBatchPreview(opts: {
         products = await fetchProducts({
           connection: store,
           query,
-          start,
-          limit,
+          start: start + storeProcessed,
+          limit: batchLimit,
           includeApplied,
           signal: previewJob?.controller.signal,
-        });
-        fetchedCount += products.length;
-        progressTotal = Math.max(
-          1,
-          progressCompleted + products.length + (stores.length - storeIndex - 1) * limit,
-        );
-        updatePreviewProgress(previewJob, {
-          phase: products.length ? "generating" : "fetching",
-          total: progressTotal,
-          percent: getProgressPercent(progressCompleted, progressTotal),
-          message: products.length
-            ? `${storeLabel} 已读取 ${products.length} 个商品，开始生成预览。`
-            : `${storeLabel} 没有可处理商品。`,
-          currentStore: storeLabel,
-          currentProduct: null,
         });
       } catch (err) {
         if (isAbortLikeError(err) || isPreviewJobCancelled(previewJob)) {
@@ -819,7 +813,8 @@ export async function createProductBatchPreview(opts: {
           stopReason = previewJob?.reason || "已强制停止";
           break;
         }
-        progressCompleted = Math.min(progressTotal, progressCompleted + limit);
+        const remainingForStore = limit - storeProcessed;
+        progressCompleted = Math.min(progressTotal, progressCompleted + remainingForStore);
         updatePreviewProgress(previewJob, {
           phase: "fetching",
           completed: progressCompleted,
@@ -832,8 +827,35 @@ export async function createProductBatchPreview(opts: {
           title: storeLabel,
           error: `拉取店铺商品失败：${err instanceof Error ? err.message : String(err)}`,
         });
-        continue;
+        break;
       }
+
+      fetchedCount += products.length;
+      if (!products.length) {
+        progressTotal = Math.max(
+          1,
+          progressCompleted + (stores.length - storeIndex - 1) * limit,
+        );
+        updatePreviewProgress(previewJob, {
+          phase: "fetching",
+          total: progressTotal,
+          percent: getProgressPercent(progressCompleted, progressTotal),
+          message: `${storeLabel} 没有更多可处理商品。`,
+          currentStore: storeLabel,
+          currentProduct: null,
+        });
+        break;
+      }
+
+      updatePreviewProgress(previewJob, {
+        phase: "generating",
+        total: progressTotal,
+        percent: getProgressPercent(progressCompleted, progressTotal),
+        message: `${storeLabel} 已读取 ${products.length} 个商品，开始生成预览。`,
+        currentStore: storeLabel,
+        currentProduct: null,
+      });
+
       for (const product of products) {
         if (isPreviewJobCancelled(previewJob)) {
           stopped = true;
@@ -880,6 +902,21 @@ export async function createProductBatchPreview(opts: {
           currentProduct: null,
         });
       }
+      storeProcessed += products.length;
+      if (stopped) break;
+      if (products.length < batchLimit) {
+        progressTotal = Math.max(
+          1,
+          progressCompleted + (stores.length - storeIndex - 1) * limit,
+        );
+        updatePreviewProgress(previewJob, {
+          total: progressTotal,
+          completed: Math.min(progressCompleted, progressTotal),
+          percent: getProgressPercent(progressCompleted, progressTotal),
+        });
+        break;
+      }
+    }
       if (stopped) break;
   }
 
@@ -1088,12 +1125,19 @@ async function fetchProducts(opts: {
   let skipped = 0;
   let after: string | null = null;
   let page = 0;
-  while (products.length < opts.limit && page < 12) {
+  const maxPages = Math.max(
+    12,
+    Math.ceil((opts.start + opts.limit) / SHOPIFY_PRODUCT_FETCH_BATCH_SIZE) + 2,
+  );
+  while (products.length < opts.limit && page < maxPages) {
     if (opts.signal?.aborted) throw new Error("已强制停止");
     page += 1;
     const pageData: ShopifyProductsQueryData =
       await shopifyGraphql<ShopifyProductsQueryData>(opts.connection, PRODUCTS_QUERY, {
-      first: Math.min(50, Math.max(10, opts.limit - products.length)),
+      first: Math.min(
+        SHOPIFY_PRODUCT_FETCH_BATCH_SIZE,
+        Math.max(1, opts.limit - products.length),
+      ),
       after,
       query: opts.query || null,
     }, opts.signal);

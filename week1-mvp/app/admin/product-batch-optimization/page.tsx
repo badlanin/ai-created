@@ -189,6 +189,8 @@ export default function ProductBatchOptimizationPage() {
   const [previewProgress, setPreviewProgress] = useState<PreviewProgress | null>(
     null,
   );
+  const [previewFilterDate, setPreviewFilterDate] = useState("");
+  const [previewFilterStoreKey, setPreviewFilterStoreKey] = useState("__all__");
   const [stopRequested, setStopRequested] = useState(false);
   const [savePresetOpen, setSavePresetOpen] = useState(false);
   const [presetName, setPresetName] = useState("");
@@ -225,6 +227,51 @@ export default function ProductBatchOptimizationPage() {
     return map;
   }, [activeRun]);
 
+  const previewStoreOptions = useMemo(() => {
+    const map = new Map<string, { key: string; label: string; count: number }>();
+    for (const run of runs) {
+      for (const store of run.stores || []) {
+        const key = store.key;
+        if (!key) continue;
+        const current = map.get(key);
+        if (current) {
+          current.count += isRunOnDate(run.createdAt, previewFilterDate) ? 1 : 0;
+          continue;
+        }
+        map.set(key, {
+          key,
+          label: store.name || store.shopDomain || key,
+          count: isRunOnDate(run.createdAt, previewFilterDate) ? 1 : 0,
+        });
+      }
+    }
+    return Array.from(map.values());
+  }, [runs, previewFilterDate]);
+
+  const filteredRuns = useMemo(
+    () =>
+      runs.filter(
+        (run) =>
+          isRunOnDate(run.createdAt, previewFilterDate) &&
+          (previewFilterStoreKey === "__all__" ||
+            run.stores?.some((store) => store.key === previewFilterStoreKey)),
+      ),
+    [runs, previewFilterDate, previewFilterStoreKey],
+  );
+  const dateFilteredRunCount = useMemo(
+    () => runs.filter((run) => isRunOnDate(run.createdAt, previewFilterDate)).length,
+    [runs, previewFilterDate],
+  );
+
+  const filteredProposals = useMemo(() => {
+    if (!activeRun || !isRunOnDate(activeRun.createdAt, previewFilterDate)) return [];
+    return activeRun.proposals.filter(
+      (proposal) =>
+        previewFilterStoreKey === "__all__" ||
+        proposal.store.key === previewFilterStoreKey,
+    );
+  }, [activeRun, previewFilterDate, previewFilterStoreKey]);
+
   useEffect(() => {
     function handleClick(event: MouseEvent) {
       if (!storeMenuRef.current?.contains(event.target as Node)) {
@@ -236,9 +283,21 @@ export default function ProductBatchOptimizationPage() {
   }, []);
 
   useEffect(() => {
-    void loadStatus();
+    void loadStatus(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!activeRun) return;
+    setPreviewFilterDate(formatDateInput(activeRun.createdAt));
+    const runStores = activeRun.stores || [];
+    setPreviewFilterStoreKey((current) => {
+      if (current !== "__all__" && runStores.some((store) => store.key === current)) {
+        return current;
+      }
+      return runStores.length === 1 ? runStores[0].key : "__all__";
+    });
+  }, [activeRun?.id]);
 
   useEffect(() => {
     if (!previewJobId) return;
@@ -349,6 +408,16 @@ export default function ProductBatchOptimizationPage() {
       new Set(data.run.proposals.map((item) => proposalKey(item))),
     );
     setExpandedProposalKey(null);
+  }
+
+  async function toggleRun(id: string) {
+    if (activeRun?.id === id) {
+      setActiveRun(null);
+      setSelectedProposalKeys(new Set());
+      setExpandedProposalKey(null);
+      return;
+    }
+    await loadRun(id);
   }
 
   async function handlePreview(e: FormEvent) {
@@ -638,7 +707,7 @@ export default function ProductBatchOptimizationPage() {
   function selectAllProducts() {
     if (!activeRun) return;
     setSelectedProposalKeys(
-      new Set(activeRun.proposals.map((item) => proposalKey(item))),
+      new Set(filteredProposals.map((item) => proposalKey(item))),
     );
   }
 
@@ -649,7 +718,9 @@ export default function ProductBatchOptimizationPage() {
   function currentStoreProposalKeys() {
     if (!activeRun) return [];
     const currentStoreKey =
-      selectedStores[0]?.key || activeRun.storeKeys?.[0] || activeRun.stores?.[0]?.key || "";
+      previewFilterStoreKey !== "__all__"
+        ? previewFilterStoreKey
+        : selectedStores[0]?.key || activeRun.storeKeys?.[0] || activeRun.stores?.[0]?.key || "";
     return activeRun.proposals
       .filter((proposal) => !currentStoreKey || proposal.store.key === currentStoreKey)
       .map((proposal) => proposalKey(proposal));
@@ -975,56 +1046,98 @@ export default function ProductBatchOptimizationPage() {
             )}
           </div>
 
-          <div className="card p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <div className="flex items-center gap-2 text-sm font-semibold text-fg-primary">
-                <FileText size={16} className="text-brand-400" />
-                预览记录
-              </div>
-              <span className="text-xs text-fg-tertiary">{runs.length} 条</span>
-            </div>
-            <div className="max-h-[360px] space-y-2 overflow-y-auto pr-1">
-              {runs.length ? (
-                runs.map((run) => (
-                  <button
-                    key={run.id}
-                    type="button"
-                    onClick={() => void loadRun(run.id)}
-                    className={`w-full rounded-md border p-3 text-left transition-colors ${
-                      activeRun?.id === run.id
-                        ? "border-brand-400 bg-[var(--brand-50-bg)]"
-                        : "border-border-subtle bg-bg-secondary hover:bg-bg-tertiary"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium text-fg-primary">
-                          {runStoreLabel(run)}
-                        </div>
-                        <div className="mt-1 text-xs text-fg-tertiary">
-                          {formatTime(run.createdAt)}
-                        </div>
-                      </div>
-                      <span className="chip chip-brand">{run.proposalCount}</span>
-                    </div>
-                    <div className="mt-2 truncate text-xs text-fg-tertiary">
-                      {run.query || "无查询条件"}
-                    </div>
-                  </button>
-                ))
-              ) : (
-                <div className="rounded-md bg-bg-tertiary p-3 text-sm text-fg-tertiary">
-                  暂无预览记录。
-                </div>
-              )}
-            </div>
-          </div>
-
           <PreviewProgressCard
             progress={previewProgress}
             generating={generating}
           />
         </aside>
+      </section>
+
+      <section className="mb-4 card p-4">
+        <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-fg-primary">
+              预览记录与优化结果
+            </h2>
+            <p className="mt-1 text-xs text-fg-tertiary">
+              点击记录展开优化预览结果，再次点击收起。
+            </p>
+          </div>
+          <span className="text-xs text-fg-tertiary">
+            {filteredRuns.length}/{runs.length} 条
+          </span>
+        </div>
+
+        <div className="mb-3 rounded-lg border border-border-subtle bg-bg-secondary p-3">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-[220px_1fr] md:items-end">
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-fg-secondary">
+                记录日期
+              </span>
+              <input
+                type="date"
+                value={previewFilterDate}
+                onChange={(e) => setPreviewFilterDate(e.target.value)}
+                className="w-full rounded-md border border-border-subtle bg-bg-primary px-3 py-2 text-sm text-fg-primary outline-none focus:border-brand-400"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-fg-secondary">
+                查看店铺
+              </span>
+              <select
+                value={previewFilterStoreKey}
+                onChange={(e) => setPreviewFilterStoreKey(e.target.value)}
+                className="w-full rounded-md border border-border-subtle bg-bg-primary px-3 py-2 text-sm text-fg-primary outline-none focus:border-brand-400"
+              >
+                <option value="__all__">
+                  全部店铺（{dateFilteredRunCount} 条记录）
+                </option>
+                {previewStoreOptions.map((store) => (
+                  <option key={store.key} value={store.key}>
+                    {store.label}（{store.count} 条记录）
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          {filteredRuns.length ? (
+            filteredRuns.map((run) => (
+              <button
+                key={run.id}
+                type="button"
+                onClick={() => void toggleRun(run.id)}
+                className={`w-full rounded-lg border p-3 text-left transition-colors ${
+                  activeRun?.id === run.id
+                    ? "border-brand-400 bg-[var(--brand-50-bg)]"
+                    : "border-border-subtle bg-bg-secondary hover:bg-bg-tertiary"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-fg-primary">
+                      {runStoreLabel(run)}
+                    </div>
+                    <div className="mt-1 text-xs text-fg-tertiary">
+                      {formatTime(run.createdAt)}
+                    </div>
+                    <div className="mt-1 truncate text-xs text-fg-tertiary">
+                      {run.query || "无查询条件"}
+                    </div>
+                  </div>
+                  <span className="chip chip-brand shrink-0">{run.proposalCount}</span>
+                </div>
+              </button>
+            ))
+          ) : (
+            <div className="rounded-md bg-bg-tertiary p-3 text-sm text-fg-tertiary">
+              当前日期和店铺下暂无预览记录。
+            </div>
+          )}
+        </div>
       </section>
 
       {activeRun ? (
@@ -1153,7 +1266,8 @@ export default function ProductBatchOptimizationPage() {
           </div>
 
           <div className="space-y-4">
-            {activeRun.proposals.map((proposal, index) => {
+            {filteredProposals.length ? (
+              filteredProposals.map((proposal, index) => {
               const key = proposalKey(proposal);
               return (
                 <ProposalCard
@@ -1174,7 +1288,12 @@ export default function ProductBatchOptimizationPage() {
                   }
                 />
               );
-            })}
+              })
+            ) : (
+              <div className="rounded-lg border border-border-subtle bg-bg-secondary p-6 text-center text-sm text-fg-tertiary">
+                当前日期和店铺下没有匹配的预览。
+              </div>
+            )}
           </div>
         </section>
       ) : (
@@ -1976,6 +2095,21 @@ function formatTime(ts: number) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function formatDateInput(ts: number) {
+  if (!ts) return "";
+  const date = new Date(ts);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function isRunOnDate(ts: number | undefined, dateValue: string) {
+  if (!dateValue) return true;
+  if (!ts) return false;
+  return formatDateInput(ts) === dateValue;
 }
 
 function htmlToText(value: string) {
