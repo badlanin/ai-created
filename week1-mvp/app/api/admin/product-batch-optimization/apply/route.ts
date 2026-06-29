@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
       runId: body.runId,
       selectedProductIds: body.selectedProductIds,
       selectedProposalKeys: body.selectedProposalKeys,
-      skipImageAlt: body.skipImageAlt,
+      skipImageAlt: body.skipImageAlt !== false,
       applyFaq: body.applyFaq,
       setDraft: body.setDraft,
     });

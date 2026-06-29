@@ -4423,6 +4423,30 @@ async function syncShopifyCategoryMetafields(
   }
 }
 
+export async function syncShopifyProductCategorySizeMetafield(opts: {
+  shopDomain: string;
+  accessToken: string;
+  productId: string;
+  categoryId: string | null;
+  categorySize: string;
+}) {
+  const warnings: string[] = [];
+  await syncShopifyCategoryMetafields(
+    opts.shopDomain,
+    opts.accessToken,
+    opts.productId,
+    opts.categoryId,
+    {
+      title: "",
+      description: "",
+      categorySize: opts.categorySize,
+    },
+    [],
+    warnings,
+  );
+  return { ok: true, warnings };
+}
+
 async function ensureShopifyCategoryMetafieldDefinitions(
   shopDomain: string,
   accessToken: string,

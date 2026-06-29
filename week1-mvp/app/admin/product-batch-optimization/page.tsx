@@ -68,6 +68,7 @@ type Snapshot = {
   descriptionHtml: string;
   seoTitle: string;
   metaDescription: string;
+  categorySize: string;
   tags: string[];
   faq: FaqItem[];
   imageAltTexts?: Array<{ mediaId: string; altText: string }>;
@@ -98,6 +99,7 @@ type ApplyResult = {
   productId: string;
   title: string;
   ok: boolean;
+  categorySizeUpdate?: unknown;
   error?: string;
 };
 
@@ -181,7 +183,6 @@ export default function ProductBatchOptimizationPage() {
     includeApplied: false,
   });
   const [applyOptions, setApplyOptions] = useState({
-    skipImageAlt: false,
     setDraft: false,
   });
 
@@ -437,7 +438,7 @@ export default function ProductBatchOptimizationPage() {
             runId: activeRun.id,
             selectedProposalKeys: keys,
             applyFaq: true,
-            skipImageAlt: applyOptions.skipImageAlt,
+            skipImageAlt: true,
             setDraft: applyOptions.setDraft,
           }),
         }),
@@ -1027,20 +1028,6 @@ export default function ProductBatchOptimizationPage() {
               <label className="inline-flex items-center gap-2">
                 <input
                   type="checkbox"
-                  checked={applyOptions.skipImageAlt}
-                  onChange={(e) =>
-                    setApplyOptions((prev) => ({
-                      ...prev,
-                      skipImageAlt: e.target.checked,
-                    }))
-                  }
-                  className="h-4 w-4"
-                />
-                跳过图片 Alt
-              </label>
-              <label className="inline-flex items-center gap-2">
-                <input
-                  type="checkbox"
                   checked={applyOptions.setDraft}
                   onChange={(e) =>
                     setApplyOptions((prev) => ({
@@ -1352,11 +1339,11 @@ function ProposalCard({
             />
           </div>
 
-          {(proposal.rationale || proposal.warnings.length) ? (
-            <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-              {proposal.rationale ? (
-                <TextPanel title="优化理由" text={proposal.rationale} compact />
-              ) : null}
+        {(proposal.rationale || proposal.warnings.length) ? (
+          <div className="mt-3 space-y-3">
+            {proposal.rationale ? (
+              <TextPanel title="优化理由" text={proposal.rationale} compact />
+            ) : null}
               {proposal.warnings.length ? (
                 <div className="rounded-md bg-[var(--warn-bg)] p-3">
                   <div className="mb-2 text-xs font-semibold text-warn">
@@ -1398,19 +1385,19 @@ function SnapshotCompareColumn({
       <div className="space-y-3">
         <SnapshotField label="商品标题" value={snapshot.title} />
         <SnapshotField label="URL handle" value={snapshot.handle} />
-        <SnapshotField label="SEO 标题" value={snapshot.seoTitle} />
-        <SnapshotField label="Meta 描述" value={snapshot.metaDescription} />
-        <SnapshotField
-          label="商品描述"
+      <SnapshotField label="SEO 标题" value={snapshot.seoTitle} />
+      <SnapshotField label="Meta 描述" value={snapshot.metaDescription} />
+      <SnapshotField label="类别元字段尺寸" value={snapshot.categorySize} />
+      <SnapshotField
+        label="商品描述"
           value={htmlToText(snapshot.descriptionHtml)}
           tall
-        />
-        <SnapshotTagList tags={snapshot.tags} />
-        <SnapshotFaqList faq={snapshot.faq} />
-        <SnapshotImageAltList imageAltTexts={snapshot.imageAltTexts || []} />
-      </div>
-    </section>
-  );
+      />
+      <SnapshotTagList tags={snapshot.tags} />
+      <SnapshotFaqList faq={snapshot.faq} />
+    </div>
+  </section>
+);
 }
 
 function SnapshotField({
@@ -1467,31 +1454,6 @@ function SnapshotFaqList({ faq }: { faq: FaqItem[] }) {
                 {index + 1}. Q: {item.question}
               </div>
               <div className="mt-0.5">A: {item.answer}</div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <span className="text-xs text-fg-tertiary">空</span>
-      )}
-    </div>
-  );
-}
-
-function SnapshotImageAltList({
-  imageAltTexts,
-}: {
-  imageAltTexts: Array<{ mediaId: string; altText: string }>;
-}) {
-  return (
-    <div className="rounded-md border border-border-subtle bg-bg-secondary p-3">
-      <div className="mb-2 text-xs font-semibold text-fg-secondary">图片 Alt</div>
-      {imageAltTexts.length ? (
-        <div className="space-y-2">
-          {imageAltTexts.map((item, index) => (
-            <div key={`${item.mediaId}-${index}`} className="text-xs text-fg-secondary">
-              <span className="text-fg-tertiary">{shortId(item.mediaId)}</span>
-              <span className="mx-2 text-fg-muted">→</span>
-              {item.altText || "空"}
             </div>
           ))}
         </div>
@@ -1837,9 +1799,4 @@ function htmlToText(value: string) {
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-}
-
-function shortId(value: string) {
-  const tail = value.split("/").filter(Boolean).pop() || value;
-  return tail.length > 18 ? `...${tail.slice(-18)}` : tail;
 }

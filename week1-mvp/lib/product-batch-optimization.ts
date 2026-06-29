@@ -7,6 +7,7 @@ import { DATA_DIR_PATH } from "./db";
 import { buildGenaiClient } from "./genai-client";
 import { assertWithinBudget } from "./pricing";
 import { recordUsage } from "./usage";
+import { syncShopifyProductCategorySizeMetafield } from "./shopify";
 
 const SHOPIFY_API_VERSION =
   process.env.SHOPIFY_API_VERSION?.trim() || "2026-04";
@@ -91,10 +92,12 @@ const PRODUCT_BATCH_SYSTEM_PROMPT = `
 4. 描述 HTML 只能使用 p、strong、em、br 标签，不要把 FAQ 写进描述正文。
 5. SEO 标题控制在 70 字符以内，Meta 描述控制在 160 字符以内。
 6. 图片 Alt 简洁描述可见商品，不要重复 "image of"，不要堆砌关键词。
+7. categorySize 表示 Shopify 类别元字段中的尺寸；不要写固定默认值，只能根据用户输入、现有商品资料或可确认的商品信息生成。
 
 输出规则：
 1. 只返回合法 JSON，不要 Markdown、代码块、解释或 JSON 之外的文字。
 2. JSON 必须匹配 schema。warnings 用来提示资料不足、疑似风险或需要人工确认的点。
+3. rationale 必须使用中文，简洁说明本次优化了哪些内容以及为什么这样改。
 `.trim();
 
 const PRODUCT_BATCH_OUTPUT_SCHEMA = {
@@ -117,6 +120,7 @@ const PRODUCT_BATCH_OUTPUT_SCHEMA = {
         required: ["mediaId", "altText"],
       },
     },
+    categorySize: { type: "string" },
     faq: {
       type: "array",
       items: {
@@ -139,6 +143,7 @@ const PRODUCT_BATCH_OUTPUT_SCHEMA = {
     "metaDescription",
     "tags",
     "imageAltTexts",
+    "categorySize",
     "faq",
     "rationale",
     "warnings",
@@ -164,6 +169,7 @@ export type ProductBatchSnapshot = {
   descriptionHtml: string;
   seoTitle: string;
   metaDescription: string;
+  categorySize: string;
   tags: string[];
   faq: ProductBatchFaqItem[];
   imageAltTexts: ProductBatchImageSnapshot[];
@@ -175,6 +181,7 @@ export type ProductBatchProposed = {
   descriptionHtml: string;
   seoTitle: string;
   metaDescription: string;
+  categorySize: string;
   tags: string[];
   imageAltTexts: Array<{ mediaId: string; altText: string }>;
   faq: ProductBatchFaqItem[];
@@ -194,6 +201,7 @@ export type ProductBatchProposal = {
     handle: string;
     title: string;
     status: string;
+    categoryId?: string;
   };
   current: ProductBatchSnapshot;
   proposed: ProductBatchProposed;
@@ -230,6 +238,7 @@ export type ProductBatchApplyResult = {
   productUpdate?: unknown;
   faqUpdate?: unknown;
   imageAltUpdate?: unknown;
+  categorySizeUpdate?: unknown;
   draftUpdate?: unknown;
   appliedTagUpdate?: unknown;
   error?: string;
@@ -351,6 +360,7 @@ type ShopifyProductNode = {
   vendor?: string | null;
   productType?: string | null;
   status?: string | null;
+  category?: { id?: string | null } | null;
   tags?: string[] | null;
   descriptionHtml?: string | null;
   seo?: { title?: string | null; description?: string | null } | null;
@@ -383,6 +393,9 @@ query Products($first: Int!, $after: String, $query: String) {
         vendor
         productType
         status
+        category {
+          id
+        }
         tags
         descriptionHtml
         seo {
@@ -946,10 +959,16 @@ export async function applyProductBatchRun(opts: {
           proposal.proposed.faq,
         );
       }
-      if (!opts.skipImageAlt && proposal.proposed.imageAltTexts.length) {
+      if (opts.skipImageAlt === false && proposal.proposed.imageAltTexts.length) {
         result.imageAltUpdate = await updateImageAltTexts(
           connection,
           proposal.proposed.imageAltTexts,
+        );
+      }
+      if (proposal.proposed.categorySize) {
+        result.categorySizeUpdate = await updateCategorySizeMetafield(
+          connection,
+          proposal,
         );
       }
       if (opts.setDraft) {
@@ -1072,9 +1091,13 @@ async function generateProductProposal(opts: {
       vendor: opts.product.vendor,
       productType: opts.product.productType,
       status: opts.product.status,
+      categoryId: opts.product.category?.id || "",
       tags: opts.product.tags || [],
       seo: opts.product.seo || {},
       faq: getProductFaq(opts.product),
+      categoryMetafields: {
+        categorySize: getProductCategorySize(opts.product),
+      },
       descriptionHtml: truncate(opts.product.descriptionHtml || "", 7000),
       images: images.map((image) => ({
         mediaId: image.mediaId,
@@ -1168,6 +1191,7 @@ async function generateProductProposal(opts: {
       handle: opts.product.handle || "",
       title: opts.product.title || "",
       status: opts.product.status || "",
+      categoryId: opts.product.category?.id || "",
     },
     current,
     proposed,
@@ -1187,6 +1211,7 @@ function getCurrentSnapshot(
     descriptionHtml: product.descriptionHtml || "",
     seoTitle: product.seo?.title || "",
     metaDescription: product.seo?.description || "",
+    categorySize: getProductCategorySize(product),
     tags: product.tags || [],
     faq: getProductFaq(product),
     imageAltTexts: images,
@@ -1240,6 +1265,9 @@ function normalizeGeneratedProposal(
       String(raw.metaDescription || ""),
       limits.metaDescriptionMaxChars,
     ),
+    categorySize: cleanInlineText(
+      String(raw.categorySize || getProductCategorySize(product) || ""),
+    ),
     tags: stripAppliedTag(normalizeTags(raw.tags, product.tags || [])),
     imageAltTexts,
     faq,
@@ -1256,6 +1284,7 @@ function summarizeChanges(
     descriptionChanged: current.descriptionHtml !== proposed.descriptionHtml,
     seoTitleChanged: current.seoTitle !== proposed.seoTitle,
     metaDescriptionChanged: current.metaDescription !== proposed.metaDescription,
+    categorySizeChanged: current.categorySize !== proposed.categorySize,
     tagsChanged: JSON.stringify(current.tags) !== JSON.stringify(proposed.tags),
     faqChanged: JSON.stringify(current.faq) !== JSON.stringify(proposed.faq),
     imageAltTextUpdates: proposed.imageAltTexts.length,
@@ -1342,6 +1371,25 @@ async function updateImageAltTexts(
   const errors = normalizeUserErrors(data.fileUpdate?.userErrors);
   if (errors.length) throw new Error(errors.join("；"));
   return { ok: true, updatedCount: data.fileUpdate?.files?.length || 0 };
+}
+
+async function updateCategorySizeMetafield(
+  connection: ShopifyToken,
+  proposal: ProductBatchProposal,
+) {
+  const categorySize = cleanInlineText(proposal.proposed.categorySize || "");
+  if (!categorySize) return { skipped: true, reason: "no category size" };
+  const categoryId = proposal.product.categoryId || "";
+  if (!categoryId) {
+    return { skipped: true, reason: "product has no Shopify category" };
+  }
+  return syncShopifyProductCategorySizeMetafield({
+    shopDomain: connection.shopDomain,
+    accessToken: connection.accessToken,
+    productId: proposal.product.id,
+    categoryId,
+    categorySize,
+  });
 }
 
 async function updateFaqMetafields(
@@ -1533,6 +1581,48 @@ function getProductFaq(product: ShopifyProductNode): ProductBatchFaqItem[] {
     if (question || answer) faq.push({ question, answer });
   }
   return faq;
+}
+
+function getProductCategorySize(product: ShopifyProductNode): string {
+  const nodes = product.metafields?.nodes || [];
+  for (const item of nodes) {
+    if (!isCategorySizeMetafield(item)) continue;
+    return extractCategoryMetafieldText(item);
+  }
+  return "";
+}
+
+function isCategorySizeMetafield(item: ShopifyMetafieldNode) {
+  const namespace = String(item.namespace || "").toLowerCase();
+  if (namespace !== "shopify") return false;
+  const key = normalizeLabel(item.key || "");
+  const name = normalizeLabel(item.definition?.name || "");
+  const combined = `${key} ${name}`;
+  if (/sleeve|length|neckline|color|fabric|material|gender|occasion/.test(combined)) {
+    return false;
+  }
+  return key === "size" || key.includes("clothingsize") || name === "size";
+}
+
+function extractCategoryMetafieldText(item: ShopifyMetafieldNode): string {
+  const referenceValues = [
+    ...(item.reference ? [item.reference] : []),
+    ...(item.references?.nodes || []),
+  ]
+    .map(formatMetaobjectValue)
+    .filter(Boolean);
+  if (referenceValues.length) return referenceValues.join(", ");
+  return extractMetafieldText(String(item.value || ""));
+}
+
+function formatMetaobjectValue(node: ShopifyMetaobjectNode): string {
+  return (
+    cleanInlineText(node.displayName || "") ||
+    cleanInlineText(node.fields?.find((field) => field.key === "label")?.value || "") ||
+    cleanInlineText(node.fields?.find((field) => field.key === "name")?.value || "") ||
+    cleanInlineText(node.handle || "") ||
+    cleanInlineText(node.id || "")
+  );
 }
 
 function extractMetafieldText(raw: string) {
