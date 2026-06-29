@@ -93,6 +93,7 @@ const PRODUCT_BATCH_SYSTEM_PROMPT = `
 5. SEO 标题控制在 70 字符以内，Meta 描述控制在 160 字符以内。
 6. 图片 Alt 简洁描述可见商品，不要重复 "image of"，不要堆砌关键词。
 7. categorySize 表示 Shopify 类别元字段中的尺寸；不要写固定默认值，只能根据用户输入、现有商品资料或可确认的商品信息生成。
+8. 如果 customInstructions 明确列出 categorySize/类别元字段尺寸的固定尺寸，categorySize 必须逐项复制这些值，不得新增、猜测或扩展未列出的尺寸。
 
 输出规则：
 1. 只返回合法 JSON，不要 Markdown、代码块、解释或 JSON 之外的文字。
@@ -1172,7 +1173,7 @@ async function generateProductProposal(opts: {
 
   const rawText = response.text || "";
   const raw = parseJsonObject(rawText);
-  const proposed = normalizeGeneratedProposal(raw, opts.product, images);
+  const proposed = normalizeGeneratedProposal(raw, opts.product, images, opts.prompt);
   const current = getCurrentSnapshot(opts.product, images);
 
   return {
@@ -1222,6 +1223,7 @@ function normalizeGeneratedProposal(
   raw: Record<string, unknown>,
   product: ShopifyProductNode,
   images: ProductBatchImageSnapshot[],
+  prompt: string,
 ): ProductBatchProposed {
   const limits = PRODUCT_BATCH_RULES.contentRules;
   const imageIds = new Set(images.map((image) => image.mediaId));
@@ -1254,6 +1256,18 @@ function normalizeGeneratedProposal(
     limits.descriptionHtmlAllowedTags,
   );
 
+  const currentCategorySize = getProductCategorySize(product);
+  const promptCategorySizeOptions = extractPromptCategorySizeOptions(prompt);
+  const currentCategorySizeOptions = parseSizeOptions(currentCategorySize);
+  const categorySize = normalizeCategorySize(
+    String(raw.categorySize || currentCategorySize || ""),
+    {
+      promptOptions: promptCategorySizeOptions,
+      currentOptions: currentCategorySizeOptions,
+      fallback: currentCategorySize,
+    },
+  );
+
   return {
     title: clampText(String(raw.title || product.title || ""), limits.productTitleMaxChars),
     handle:
@@ -1265,13 +1279,55 @@ function normalizeGeneratedProposal(
       String(raw.metaDescription || ""),
       limits.metaDescriptionMaxChars,
     ),
-    categorySize: cleanInlineText(
-      String(raw.categorySize || getProductCategorySize(product) || ""),
-    ),
+    categorySize,
     tags: stripAppliedTag(normalizeTags(raw.tags, product.tags || [])),
     imageAltTexts,
     faq,
   };
+}
+
+function extractPromptCategorySizeOptions(prompt: string): string[] {
+  const text = cleanInlineText(prompt || "");
+  if (!text) return [];
+  const match = text.match(
+    /(?:category\s*size|类别元字段尺寸|类别元字段中的尺寸|尺寸)\s*(?:为|是|=|：|:)?\s*([0-9\s,，、/.-]{1,180})/i,
+  );
+  if (!match) return [];
+  return parseSizeOptions(match[1]);
+}
+
+function parseSizeOptions(value: string): string[] {
+  const seen = new Set<string>();
+  const options: string[] = [];
+  const matches = cleanInlineText(value || "").match(/\d+(?:\.\d+)?/g) || [];
+  for (const match of matches) {
+    const option = match.replace(/\.0+$/, "");
+    if (!seen.has(option)) {
+      seen.add(option);
+      options.push(option);
+    }
+  }
+  return options;
+}
+
+function normalizeCategorySize(
+  value: string,
+  opts: {
+    promptOptions: string[];
+    currentOptions: string[];
+    fallback: string;
+  },
+) {
+  if (opts.promptOptions.length) {
+    return opts.promptOptions.join(", ");
+  }
+
+  const cleaned = cleanInlineText(value || opts.fallback || "");
+  if (!opts.currentOptions.length) return cleaned;
+
+  const allowed = new Set(opts.currentOptions);
+  const kept = parseSizeOptions(cleaned).filter((size) => allowed.has(size));
+  return kept.length ? kept.join(", ") : cleanInlineText(opts.fallback || "");
 }
 
 function summarizeChanges(

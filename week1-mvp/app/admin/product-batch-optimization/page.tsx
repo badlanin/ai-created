@@ -144,8 +144,24 @@ type PreviewProgress = {
   updatedAt: number;
 };
 
+type ProductBatchPromptPreset = {
+  id: string;
+  name: string;
+  createdAt: number;
+  form: {
+    query: string;
+    limit: number;
+    start: number;
+    prompt: string;
+    includeImages: boolean;
+    includeApplied: boolean;
+  };
+};
+
 const FALLBACK_PROMPT =
   "请根据现有商品资料优化 Shopify 商品标题、描述、SEO 标题、Meta 描述、标签、图片 Alt 和 FAQ。保持事实准确，不要编造材质、认证、折扣、物流或售后承诺。文案优先使用英文，适合礼服/婚纱独立站自然搜索和 AI 问答引用。";
+const PRODUCT_BATCH_PROMPT_PRESETS_STORAGE_KEY =
+  "buqiqi_product_batch_optimization_prompt_presets_v1";
 
 export default function ProductBatchOptimizationPage() {
   const [status, setStatus] = useState<StatusData | null>(null);
@@ -171,6 +187,8 @@ export default function ProductBatchOptimizationPage() {
     null,
   );
   const [stopRequested, setStopRequested] = useState(false);
+  const [savePresetOpen, setSavePresetOpen] = useState(false);
+  const [presetName, setPresetName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const storeMenuRef = useRef<HTMLDivElement | null>(null);
@@ -412,6 +430,46 @@ export default function ProductBatchOptimizationPage() {
       setError(e instanceof Error ? e.message : String(e));
       setStopRequested(false);
     }
+  }
+
+  function openSavePresetDialog() {
+    setError(null);
+    setPresetName("");
+    setSavePresetOpen(true);
+  }
+
+  function handleSavePreset(e: FormEvent) {
+    e.preventDefault();
+    const name = presetName.trim();
+    if (!name) {
+      setError("请输入预设自定义名。");
+      return;
+    }
+    if (!form.prompt.trim()) {
+      setError("优化提示词为空，无法保存预设。");
+      return;
+    }
+    const preset: ProductBatchPromptPreset = {
+      id: `batch_prompt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      name,
+      createdAt: Date.now(),
+      form: {
+        query: form.query,
+        limit: Number(form.limit) || 1,
+        start: Math.max(0, Number(form.start) || 0),
+        prompt: form.prompt,
+        includeImages: form.includeImages,
+        includeApplied: form.includeApplied,
+      },
+    };
+    const presets = readProductBatchPromptPresets();
+    window.localStorage.setItem(
+      PRODUCT_BATCH_PROMPT_PRESETS_STORAGE_KEY,
+      JSON.stringify({ version: 1, presets: [preset, ...presets] }),
+    );
+    setSavePresetOpen(false);
+    setPresetName("");
+    setNotice(`已保存预设：${name}`);
   }
 
   async function handleApply(proposalKeys?: string[], label = "选中商品") {
@@ -851,6 +909,14 @@ export default function ProductBatchOptimizationPage() {
                 <X size={15} />
                 {stopRequested ? "停止中" : "强制停止"}
               </button>
+              <button
+                type="button"
+                onClick={openSavePresetDialog}
+                className="btn btn-outline btn-md"
+              >
+                <FileText size={15} />
+                保存预设
+              </button>
               {stores.length === 0 ? (
                 <button
                   type="button"
@@ -1128,6 +1194,58 @@ export default function ProductBatchOptimizationPage() {
         </section>
       )}
 
+      {savePresetOpen ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[rgba(15,23,42,0.42)] p-4">
+          <form
+            onSubmit={handleSavePreset}
+            className="w-full max-w-md rounded-xl border border-border-subtle bg-bg-secondary p-5 shadow-xl"
+          >
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold text-fg-primary">
+                  保存优化预设
+                </h2>
+                <p className="mt-1 text-xs text-fg-tertiary">
+                  保存当前查询条件、优化提示词和勾选项。
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSavePresetOpen(false)}
+                className="icon-btn"
+                title="关闭"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <label className="block text-xs font-medium text-fg-secondary">
+              自定义名
+              <input
+                className="input mt-1"
+                value={presetName}
+                onChange={(e) => setPresetName(e.target.value)}
+                placeholder="例如：礼服 SEO 尺寸预设"
+                autoFocus
+              />
+            </label>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setSavePresetOpen(false)}
+                className="btn btn-secondary btn-md"
+              >
+                取消
+              </button>
+              <button type="submit" className="btn btn-primary btn-md">
+                保存
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
       {addStoreOpen ? (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[rgba(15,23,42,0.42)] p-4">
           <form
@@ -1224,6 +1342,37 @@ SHOPIFY_CLIENT_SECRET=...`}</pre>
       ) : null}
     </main>
   );
+}
+
+function readProductBatchPromptPresets(): ProductBatchPromptPreset[] {
+  try {
+    const raw = window.localStorage.getItem(
+      PRODUCT_BATCH_PROMPT_PRESETS_STORAGE_KEY,
+    );
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as
+      | ProductBatchPromptPreset[]
+      | { presets?: ProductBatchPromptPreset[] };
+    const presets = Array.isArray(parsed) ? parsed : parsed.presets;
+    if (!Array.isArray(presets)) return [];
+    return presets
+      .filter((preset) => preset?.id && preset?.name && preset?.form?.prompt)
+      .map((preset) => ({
+        id: String(preset.id),
+        name: String(preset.name),
+        createdAt: Number(preset.createdAt) || 0,
+        form: {
+          query: String(preset.form.query || "status:active"),
+          limit: Number(preset.form.limit) || 1,
+          start: Math.max(0, Number(preset.form.start) || 0),
+          prompt: String(preset.form.prompt || ""),
+          includeImages: preset.form.includeImages !== false,
+          includeApplied: Boolean(preset.form.includeApplied),
+        },
+      }));
+  } catch {
+    return [];
+  }
 }
 
 function ProposalCard({
