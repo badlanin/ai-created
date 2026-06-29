@@ -1326,24 +1326,16 @@ function ProposalCard({
             <div className="text-xs text-fg-tertiary">左侧旧内容，右侧新内容</div>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-            <SnapshotCompareColumn
-              title="旧内容"
-              snapshot={proposal.current}
-              tone="current"
-            />
-            <SnapshotCompareColumn
-              title="新内容"
-              snapshot={proposal.proposed}
-              tone="proposed"
-            />
-          </div>
+          <SnapshotCompareGrid
+            current={proposal.current}
+            proposed={proposal.proposed}
+          />
 
-        {(proposal.rationale || proposal.warnings.length) ? (
-          <div className="mt-3 space-y-3">
-            {proposal.rationale ? (
-              <TextPanel title="优化理由" text={proposal.rationale} compact />
-            ) : null}
+          {(proposal.rationale || proposal.warnings.length) ? (
+            <div className="mt-3 space-y-3">
+              {proposal.rationale ? (
+                <TextPanel title="优化理由" text={proposal.rationale} compact />
+              ) : null}
               {proposal.warnings.length ? (
                 <div className="rounded-md bg-[var(--warn-bg)] p-3">
                   <div className="mb-2 text-xs font-semibold text-warn">
@@ -1364,13 +1356,42 @@ function ProposalCard({
   );
 }
 
-function SnapshotCompareColumn({
+function SnapshotCompareGrid({
+  current,
+  proposed,
+}: {
+  current: Snapshot;
+  proposed: Snapshot;
+}) {
+  return (
+    <section className="grid grid-cols-1 items-stretch gap-3 lg:grid-cols-2">
+      <SnapshotCompareHeader title="旧内容" tone="current" />
+      <SnapshotCompareHeader title="新内容" tone="proposed" />
+      <SnapshotField label="商品标题" value={current.title} />
+      <SnapshotField label="商品标题" value={proposed.title} />
+      <SnapshotField label="URL handle" value={current.handle} />
+      <SnapshotField label="URL handle" value={proposed.handle} />
+      <SnapshotField label="SEO 标题" value={current.seoTitle} />
+      <SnapshotField label="SEO 标题" value={proposed.seoTitle} />
+      <SnapshotField label="Meta 描述" value={current.metaDescription} />
+      <SnapshotField label="Meta 描述" value={proposed.metaDescription} />
+      <SnapshotField label="类别元字段尺寸" value={current.categorySize} />
+      <SnapshotField label="类别元字段尺寸" value={proposed.categorySize} />
+      <SnapshotField label="商品描述" value={htmlToText(current.descriptionHtml)} tall />
+      <SnapshotField label="商品描述" value={htmlToText(proposed.descriptionHtml)} tall />
+      <SnapshotTagList tags={current.tags} />
+      <SnapshotTagList tags={proposed.tags} />
+      <SnapshotFaqList faq={current.faq} />
+      <SnapshotFaqList faq={proposed.faq} />
+    </section>
+  );
+}
+
+function SnapshotCompareHeader({
   title,
-  snapshot,
   tone,
 }: {
   title: string;
-  snapshot: Snapshot;
   tone: "current" | "proposed";
 }) {
   const highlight =
@@ -1380,24 +1401,10 @@ function SnapshotCompareColumn({
   const titleColor = tone === "proposed" ? "text-success" : "text-fg-secondary";
 
   return (
-    <section className={`rounded-lg border p-3 ${highlight}`}>
-      <div className={`mb-3 text-sm font-semibold ${titleColor}`}>{title}</div>
-      <div className="space-y-3">
-        <SnapshotField label="商品标题" value={snapshot.title} />
-        <SnapshotField label="URL handle" value={snapshot.handle} />
-      <SnapshotField label="SEO 标题" value={snapshot.seoTitle} />
-      <SnapshotField label="Meta 描述" value={snapshot.metaDescription} />
-      <SnapshotField label="类别元字段尺寸" value={snapshot.categorySize} />
-      <SnapshotField
-        label="商品描述"
-          value={htmlToText(snapshot.descriptionHtml)}
-          tall
-      />
-      <SnapshotTagList tags={snapshot.tags} />
-      <SnapshotFaqList faq={snapshot.faq} />
+    <div className={`rounded-lg border p-3 text-sm font-semibold ${highlight} ${titleColor}`}>
+      {title}
     </div>
-  </section>
-);
+  );
 }
 
 function SnapshotField({
@@ -1410,7 +1417,7 @@ function SnapshotField({
   tall?: boolean;
 }) {
   return (
-    <div className="rounded-md border border-border-subtle bg-bg-secondary p-3">
+    <div className="h-full rounded-md border border-border-subtle bg-bg-secondary p-3">
       <div className="mb-1.5 text-xs font-semibold text-fg-secondary">{label}</div>
       <div
         className={`whitespace-pre-wrap text-xs leading-relaxed text-fg-secondary ${
@@ -1425,7 +1432,7 @@ function SnapshotField({
 
 function SnapshotTagList({ tags }: { tags: string[] }) {
   return (
-    <div className="rounded-md border border-border-subtle bg-bg-secondary p-3">
+    <div className="h-full rounded-md border border-border-subtle bg-bg-secondary p-3">
       <div className="mb-2 text-xs font-semibold text-fg-secondary">标签</div>
       <div className="flex flex-wrap gap-1.5">
         {tags.length ? (
@@ -1444,7 +1451,7 @@ function SnapshotTagList({ tags }: { tags: string[] }) {
 
 function SnapshotFaqList({ faq }: { faq: FaqItem[] }) {
   return (
-    <div className="rounded-md border border-border-subtle bg-bg-secondary p-3">
+    <div className="h-full rounded-md border border-border-subtle bg-bg-secondary p-3">
       <div className="mb-2 text-xs font-semibold text-fg-secondary">FAQ</div>
       {faq.length ? (
         <div className="space-y-2">
