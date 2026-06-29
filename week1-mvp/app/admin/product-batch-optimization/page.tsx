@@ -261,6 +261,30 @@ export default function ProductBatchOptimizationPage() {
       ),
     [runs, previewFilterDate, previewFilterStoreKey],
   );
+  const filteredPreviewRuns = useMemo(
+    () => filteredRuns.filter((run) => !isRunSubmitted(run)),
+    [filteredRuns],
+  );
+  const filteredSubmittedRuns = useMemo(
+    () => filteredRuns.filter((run) => isRunSubmitted(run)),
+    [filteredRuns],
+  );
+  const previewRunTotal = useMemo(
+    () => runs.filter((run) => !isRunSubmitted(run)).length,
+    [runs],
+  );
+  const submittedRunTotal = useMemo(
+    () => runs.filter((run) => isRunSubmitted(run)).length,
+    [runs],
+  );
+  const previewRunLabels = useMemo(
+    () => buildRunDisplayLabels(filteredPreviewRuns, previewFilterStoreKey),
+    [filteredPreviewRuns, previewFilterStoreKey],
+  );
+  const submittedRunLabels = useMemo(
+    () => buildRunDisplayLabels(filteredSubmittedRuns, previewFilterStoreKey),
+    [filteredSubmittedRuns, previewFilterStoreKey],
+  );
   const dateFilteredRunCount = useMemo(
     () => runs.filter((run) => isRunOnDate(run.createdAt, previewFilterDate)).length,
     [runs, previewFilterDate],
@@ -415,9 +439,6 @@ export default function ProductBatchOptimizationPage() {
 
   async function toggleRun(id: string) {
     if (activeRun?.id === id) {
-      setActiveRun(null);
-      setSelectedProposalKeys(new Set());
-      setExpandedProposalKey(null);
       return;
     }
     await loadRun(id);
@@ -602,6 +623,60 @@ export default function ProductBatchOptimizationPage() {
     }
   }
 
+  async function handleReapplyRun(id: string) {
+    setError(null);
+    setNotice(null);
+    try {
+      const source =
+        activeRun?.id === id
+          ? activeRun
+          : (
+              await readJson<{ run: RunDocument }>(
+                await fetch(
+                  `/api/admin/product-batch-optimization/runs/${encodeURIComponent(id)}`,
+                ),
+              )
+            ).run;
+      const keys = source.proposals.map((proposal) => proposalKey(proposal));
+      if (!keys.length) {
+        setError("这条提交记录里没有可重新提交的商品。");
+        return;
+      }
+      const confirmed = window.confirm(
+        `确定重新提交这条提交记录？本次会应用 ${keys.length} 个商品。`,
+      );
+      if (!confirmed) return;
+
+      setApplying(true);
+      const data = await readJson<{ run: RunDocument; results: ApplyResult[] }>(
+        await fetch("/api/admin/product-batch-optimization/apply", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            runId: source.id,
+            selectedProposalKeys: keys,
+            applyFaq: true,
+            skipImageAlt: true,
+            setDraft: false,
+          }),
+        }),
+      );
+      setActiveRun(data.run);
+      setRuns((prev) => [
+        toSummary(data.run),
+        ...prev.filter((item) => item.id !== data.run.id),
+      ]);
+      const okCount = data.results.filter((item) => item.ok).length;
+      setNotice(
+        `重新提交完成：成功 ${okCount} 个，失败 ${data.results.length - okCount} 个。`,
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setApplying(false);
+    }
+  }
+
   async function handleExchangeStore(e: FormEvent) {
     e.preventDefault();
     if (!credentialFile) {
@@ -673,8 +748,8 @@ export default function ProductBatchOptimizationPage() {
     }
   }
 
-  async function handleDeleteRun(id: string) {
-    if (!window.confirm("确定删除这条预览记录？")) return;
+  async function handleDeleteRun(id: string, skipConfirm = false) {
+    if (!skipConfirm && !window.confirm("确定删除这条预览记录？")) return;
     setError(null);
     try {
       await readJson(
@@ -683,11 +758,11 @@ export default function ProductBatchOptimizationPage() {
           { method: "DELETE" },
         ),
       );
-    setRuns((prev) => prev.filter((item) => item.id !== id));
-    if (activeRun?.id === id) {
-      setActiveRun(null);
-      setSelectedProposalKeys(new Set());
-    }
+      setRuns((prev) => prev.filter((item) => item.id !== id));
+      if (activeRun?.id === id) {
+        setActiveRun(null);
+        setSelectedProposalKeys(new Set());
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -1094,11 +1169,11 @@ export default function ProductBatchOptimizationPage() {
               预览记录与优化结果
             </h2>
             <p className="mt-1 text-xs text-fg-tertiary">
-              点击记录展开优化预览结果，再次点击收起。
+              点击记录在该记录下方查看优化预览结果。
             </p>
           </div>
           <span className="text-xs text-fg-tertiary">
-            {filteredRuns.length}/{runs.length} 条
+            {filteredPreviewRuns.length}/{previewRunTotal} 条
           </span>
         </div>
 
@@ -1137,9 +1212,33 @@ export default function ProductBatchOptimizationPage() {
           </div>
         </div>
 
+        {activeRun && !isRunSubmitted(activeRun) ? (
+          <ActiveRunPreviewControls
+            activeRun={activeRun}
+            applying={applying}
+            selectedProductCount={selectedProductCount}
+            applyOptions={applyOptions}
+            currentStoreProposalCount={currentStoreProposalKeys().length}
+            allPreviewProposalCount={allPreviewProposalKeys().length}
+            onSelectAll={selectAllProducts}
+            onClear={clearProducts}
+            onDelete={() => void handleDeleteRun(activeRun.id)}
+            onApplySelected={() => void handleApply()}
+            onApplyCurrentStore={() =>
+              void handleApply(currentStoreProposalKeys(), "当前店铺全部预览")
+            }
+            onApplyAll={() =>
+              void handleApply(allPreviewProposalKeys(), "预览中的全部店铺")
+            }
+            onSetDraft={(checked) =>
+              setApplyOptions((prev) => ({ ...prev, setDraft: checked }))
+            }
+          />
+        ) : null}
+
         <div className="space-y-2">
-          {filteredRuns.length ? (
-            filteredRuns.map((run) => {
+          {filteredPreviewRuns.length ? (
+            filteredPreviewRuns.map((run) => {
               const isOpen = activeRun?.id === run.id;
               return (
                 <div key={run.id} className="space-y-3">
@@ -1155,7 +1254,7 @@ export default function ProductBatchOptimizationPage() {
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="truncate text-sm font-semibold text-fg-primary">
-                          {runStoreLabel(run)}
+                          {previewRunLabels.get(run.id) || runStoreLabel(run)}
                         </div>
                         <div className="mt-1 text-xs text-fg-tertiary">
                           {formatTime(run.createdAt)}
@@ -1171,13 +1270,13 @@ export default function ProductBatchOptimizationPage() {
                       tabIndex={0}
                       onClick={(event) => {
                         event.stopPropagation();
-                        void handleDeleteRun(run.id);
+                        void handleDeleteRun(run.id, true);
                       }}
                       onKeyDown={(event) => {
                         if (event.key !== "Enter" && event.key !== " ") return;
                         event.preventDefault();
                         event.stopPropagation();
-                        void handleDeleteRun(run.id);
+                        void handleDeleteRun(run.id, true);
                       }}
                       className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-md border border-[rgba(239,68,68,0.28)] bg-bg-primary px-2 py-1 text-xs text-danger transition-colors hover:bg-[var(--danger-bg)]"
                     >
@@ -1188,29 +1287,10 @@ export default function ProductBatchOptimizationPage() {
                   {isOpen && activeRun ? (
                     <div className="rounded-lg border border-brand-200 bg-bg-primary p-3">
                       <ActiveRunPreviewResults
-                        activeRun={activeRun}
-                        applying={applying}
-                        selectedProductCount={selectedProductCount}
-                        applyOptions={applyOptions}
                         filteredProposals={filteredProposals}
                         selectedProposalKeys={selectedProposalKeys}
                         expandedProposalKey={expandedProposalKey}
                         applyResultByProposal={applyResultByProposal}
-                        currentStoreProposalCount={currentStoreProposalKeys().length}
-                        allPreviewProposalCount={allPreviewProposalKeys().length}
-                        onSelectAll={selectAllProducts}
-                        onClear={clearProducts}
-                        onDelete={() => void handleDeleteRun(activeRun.id)}
-                        onApplySelected={() => void handleApply()}
-                        onApplyCurrentStore={() =>
-                          void handleApply(currentStoreProposalKeys(), "当前店铺全部预览")
-                        }
-                        onApplyAll={() =>
-                          void handleApply(allPreviewProposalKeys(), "预览中的全部店铺")
-                        }
-                        onSetDraft={(checked) =>
-                          setApplyOptions((prev) => ({ ...prev, setDraft: checked }))
-                        }
                         onToggleProduct={toggleProduct}
                         onExpandProduct={(key) =>
                           setExpandedProposalKey((current) =>
@@ -1228,6 +1308,115 @@ export default function ProductBatchOptimizationPage() {
               当前日期和店铺下暂无预览记录。
             </div>
           )}
+        </div>
+
+        <div className="mt-5 border-t border-border-subtle pt-4">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-fg-primary">提交记录</h3>
+              <p className="mt-1 text-xs text-fg-tertiary">
+                已提交的预览记录会显示在这里，可展开查看并重新提交。
+              </p>
+            </div>
+            <span className="text-xs text-fg-tertiary">
+              {filteredSubmittedRuns.length}/{submittedRunTotal} 条
+            </span>
+          </div>
+
+          <div className="space-y-2">
+            {filteredSubmittedRuns.length ? (
+              filteredSubmittedRuns.map((run) => {
+                const isOpen = activeRun?.id === run.id;
+                return (
+                  <div key={run.id} className="space-y-3">
+                    <button
+                      type="button"
+                      onClick={() => void toggleRun(run.id)}
+                      className={`relative w-full rounded-lg border p-3 pb-9 text-left transition-colors ${
+                        isOpen
+                          ? "border-brand-400 bg-[var(--brand-50-bg)]"
+                          : "border-border-subtle bg-bg-secondary hover:bg-bg-tertiary"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-semibold text-fg-primary">
+                            {submittedRunLabels.get(run.id) || runStoreLabel(run)}
+                          </div>
+                          <div className="mt-1 text-xs text-fg-tertiary">
+                            {formatTime(run.createdAt)}
+                            {run.lastApplyAt ? ` · 已提交 ${formatTime(run.lastApplyAt)}` : ""}
+                          </div>
+                          <div className="mt-1 truncate text-xs text-fg-tertiary">
+                            {run.query || "无查询条件"}
+                          </div>
+                        </div>
+                        <span className="chip chip-brand shrink-0">{run.proposalCount}</span>
+                      </div>
+                      <span className="absolute bottom-2 right-2 inline-flex items-center gap-2">
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (!applying) void handleReapplyRun(run.id);
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key !== "Enter" && event.key !== " ") return;
+                            event.preventDefault();
+                            event.stopPropagation();
+                            if (!applying) void handleReapplyRun(run.id);
+                          }}
+                          className="inline-flex items-center gap-1 rounded-md border border-[rgba(99,102,241,0.28)] bg-bg-primary px-2 py-1 text-xs text-brand-400 transition-colors hover:bg-[var(--brand-50-bg)]"
+                        >
+                          <RefreshCw size={12} />
+                          重新提交
+                        </span>
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void handleDeleteRun(run.id);
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key !== "Enter" && event.key !== " ") return;
+                            event.preventDefault();
+                            event.stopPropagation();
+                            void handleDeleteRun(run.id);
+                          }}
+                          className="inline-flex items-center gap-1 rounded-md border border-[rgba(239,68,68,0.28)] bg-bg-primary px-2 py-1 text-xs text-danger transition-colors hover:bg-[var(--danger-bg)]"
+                        >
+                          <Trash2 size={12} />
+                          删除
+                        </span>
+                      </span>
+                    </button>
+                    {isOpen && activeRun ? (
+                      <div className="rounded-lg border border-brand-200 bg-bg-primary p-3">
+                        <ActiveRunPreviewResults
+                          filteredProposals={filteredProposals}
+                          selectedProposalKeys={selectedProposalKeys}
+                          expandedProposalKey={expandedProposalKey}
+                          applyResultByProposal={applyResultByProposal}
+                          onToggleProduct={toggleProduct}
+                          onExpandProduct={(key) =>
+                            setExpandedProposalKey((current) =>
+                              current === key ? null : key,
+                            )
+                          }
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })
+            ) : (
+              <div className="rounded-md bg-bg-tertiary p-3 text-sm text-fg-tertiary">
+                当前日期和店铺下暂无提交记录。
+              </div>
+            )}
+          </div>
         </div>
       </section>
 
@@ -1412,15 +1601,11 @@ function readProductBatchPromptPresets(): ProductBatchPromptPreset[] {
   }
 }
 
-function ActiveRunPreviewResults({
+function ActiveRunPreviewControls({
   activeRun,
   applying,
   selectedProductCount,
   applyOptions,
-  filteredProposals,
-  selectedProposalKeys,
-  expandedProposalKey,
-  applyResultByProposal,
   currentStoreProposalCount,
   allPreviewProposalCount,
   onSelectAll,
@@ -1430,17 +1615,11 @@ function ActiveRunPreviewResults({
   onApplyCurrentStore,
   onApplyAll,
   onSetDraft,
-  onToggleProduct,
-  onExpandProduct,
 }: {
   activeRun: RunDocument;
   applying: boolean;
   selectedProductCount: number;
   applyOptions: { setDraft: boolean };
-  filteredProposals: Proposal[];
-  selectedProposalKeys: Set<string>;
-  expandedProposalKey: string | null;
-  applyResultByProposal: Map<string, ApplyResult>;
   currentStoreProposalCount: number;
   allPreviewProposalCount: number;
   onSelectAll: () => void;
@@ -1450,12 +1629,9 @@ function ActiveRunPreviewResults({
   onApplyCurrentStore: () => void;
   onApplyAll: () => void;
   onSetDraft: (checked: boolean) => void;
-  onToggleProduct: (key: string) => void;
-  onExpandProduct: (key: string) => void;
 }) {
   return (
-    <section className="space-y-3">
-      <div className="rounded-lg border border-border-subtle bg-bg-secondary p-3">
+      <div className="mb-3 rounded-lg border border-border-subtle bg-bg-secondary p-3">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h3 className="text-sm font-semibold text-fg-primary">
@@ -1560,34 +1736,51 @@ function ActiveRunPreviewResults({
           </div>
         ) : null}
       </div>
+  );
+}
 
-      <div className="space-y-3">
-        {filteredProposals.length ? (
-          filteredProposals.map((proposal, index) => {
-            const key = proposalKey(proposal);
-            return (
-              <ProposalCard
-                key={key}
-                index={index + 1}
-                proposal={proposal}
-                selected={selectedProposalKeys.has(key)}
-                expanded={expandedProposalKey === key}
-                result={
-                  applyResultByProposal.get(key) ||
-                  applyResultByProposal.get(proposal.product.id)
-                }
-                onToggle={() => onToggleProduct(key)}
-                onExpand={() => onExpandProduct(key)}
-              />
-            );
-          })
-        ) : (
-          <div className="rounded-lg border border-border-subtle bg-bg-secondary p-6 text-center text-sm text-fg-tertiary">
-            当前日期和店铺下没有匹配的预览。
-          </div>
-        )}
-      </div>
-    </section>
+function ActiveRunPreviewResults({
+  filteredProposals,
+  selectedProposalKeys,
+  expandedProposalKey,
+  applyResultByProposal,
+  onToggleProduct,
+  onExpandProduct,
+}: {
+  filteredProposals: Proposal[];
+  selectedProposalKeys: Set<string>;
+  expandedProposalKey: string | null;
+  applyResultByProposal: Map<string, ApplyResult>;
+  onToggleProduct: (key: string) => void;
+  onExpandProduct: (key: string) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      {filteredProposals.length ? (
+        filteredProposals.map((proposal, index) => {
+          const key = proposalKey(proposal);
+          return (
+            <ProposalCard
+              key={key}
+              index={index + 1}
+              proposal={proposal}
+              selected={selectedProposalKeys.has(key)}
+              expanded={expandedProposalKey === key}
+              result={
+                applyResultByProposal.get(key) ||
+                applyResultByProposal.get(proposal.product.id)
+              }
+              onToggle={() => onToggleProduct(key)}
+              onExpand={() => onExpandProduct(key)}
+            />
+          );
+        })
+      ) : (
+        <div className="rounded-lg border border-border-subtle bg-bg-secondary p-6 text-center text-sm text-fg-tertiary">
+          当前日期和店铺下没有匹配的预览。
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -2162,6 +2355,10 @@ function toSummary(run: RunDocument): RunSummary {
   };
 }
 
+function isRunSubmitted(run: Pick<RunSummary, "lastApplyAt">) {
+  return Boolean(run.lastApplyAt);
+}
+
 function proposalKey(proposal: Pick<Proposal, "store" | "product">) {
   return `${proposal.store.key}::${proposal.product.id}`;
 }
@@ -2183,6 +2380,32 @@ function runStoreLabel(run: Pick<RunSummary, "stores" | "shopName" | "shopDomain
   if (stores.length > 1) return `${stores.length} 个店铺`;
   if (stores.length === 1) return stores[0].name || stores[0].shopDomain;
   return run.shopName || run.shopDomain || "未知店铺";
+}
+
+function buildRunDisplayLabels(runs: RunSummary[], storeKey: string) {
+  const labels = new Map<string, string>();
+  const counts = new Map<string, number>();
+  const sortedRuns = [...runs].sort(
+    (a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id),
+  );
+  for (const run of sortedRuns) {
+    const storeName = runDisplayStoreName(run, storeKey);
+    const next = (counts.get(storeName) || 0) + 1;
+    counts.set(storeName, next);
+    labels.set(run.id, `${storeName}${next}`);
+  }
+  return labels;
+}
+
+function runDisplayStoreName(
+  run: Pick<RunSummary, "stores" | "shopName" | "shopDomain">,
+  storeKey: string,
+) {
+  const stores = run.stores || [];
+  const matchedStore =
+    storeKey !== "__all__" ? stores.find((store) => store.key === storeKey) : null;
+  const store = matchedStore || stores[0];
+  return store?.name || store?.shopDomain || run.shopName || run.shopDomain || "未知店铺";
 }
 
 function tokenCountdown(store: StoreSafe) {
