@@ -287,8 +287,7 @@ export default function ProductBatchOptimizationPage() {
             }
           } else if (
             nextProgress.error ||
-            nextProgress.phase === "failed" ||
-            nextProgress.phase === "lost"
+            nextProgress.phase === "failed"
           ) {
             setError(nextProgress.error || nextProgress.message);
           }
@@ -364,7 +363,6 @@ export default function ProductBatchOptimizationPage() {
       selectedStoreKeys.size * Math.max(1, Number(form.limit) || 1),
     );
     setGenerating(true);
-    setPreviewJobId(jobId);
     setPreviewProgress({
       jobId,
       phase: "starting",
@@ -395,7 +393,7 @@ export default function ProductBatchOptimizationPage() {
           }),
         }),
       );
-      setNotice("预览任务已开始，正在后台生成。");
+      setPreviewJobId(jobId);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       setPreviewProgress((prev) => ({
@@ -415,7 +413,6 @@ export default function ProductBatchOptimizationPage() {
   async function handleForceStopPreview() {
     if (!previewJobId) return;
     setStopRequested(true);
-    setNotice("已发送强制停止指令，正在结束当前生成预览任务...");
     try {
       const result = await readJson<{ cancelled?: boolean; reason?: string }>(
         await fetch("/api/admin/product-batch-optimization/preview/cancel", {
@@ -1863,10 +1860,8 @@ function mergePreviewProgress(
   return {
     ...incoming,
     total,
-    completed:
-      incoming.percent >= 100 && total > 0
-        ? Math.max(current.completed, total)
-        : current.completed,
+    completed: current.completed,
+    percent: incoming.phase === "lost" ? current.percent : incoming.percent,
   };
 }
 
