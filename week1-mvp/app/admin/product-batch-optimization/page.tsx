@@ -189,11 +189,14 @@ export default function ProductBatchOptimizationPage() {
   const [previewProgress, setPreviewProgress] = useState<PreviewProgress | null>(
     null,
   );
-  const [previewFilterDate, setPreviewFilterDate] = useState("");
+  const [previewFilterDate, setPreviewFilterDate] = useState(() =>
+    formatDateInput(Date.now()),
+  );
   const [previewFilterStoreKey, setPreviewFilterStoreKey] = useState("__all__");
   const [stopRequested, setStopRequested] = useState(false);
   const [savePresetOpen, setSavePresetOpen] = useState(false);
   const [presetName, setPresetName] = useState("");
+  const [promptPresets, setPromptPresets] = useState<ProductBatchPromptPreset[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const storeMenuRef = useRef<HTMLDivElement | null>(null);
@@ -283,13 +286,13 @@ export default function ProductBatchOptimizationPage() {
   }, []);
 
   useEffect(() => {
+    setPromptPresets(readProductBatchPromptPresets());
     void loadStatus(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     if (!activeRun) return;
-    setPreviewFilterDate(formatDateInput(activeRun.createdAt));
     const runStores = activeRun.stores || [];
     setPreviewFilterStoreKey((current) => {
       if (current !== "__all__" && runStores.some((store) => store.key === current)) {
@@ -535,9 +538,25 @@ export default function ProductBatchOptimizationPage() {
       PRODUCT_BATCH_PROMPT_PRESETS_STORAGE_KEY,
       JSON.stringify({ version: 1, presets: [preset, ...presets] }),
     );
+    setPromptPresets([preset, ...presets]);
     setSavePresetOpen(false);
     setPresetName("");
     setNotice(`已保存预设：${name}`);
+  }
+
+  function applyPromptPreset(presetId: string) {
+    const preset = promptPresets.find((item) => item.id === presetId);
+    if (!preset) return;
+    setForm((prev) => ({
+      ...prev,
+      query: preset.form.query,
+      limit: preset.form.limit,
+      start: preset.form.start,
+      prompt: preset.form.prompt,
+      includeImages: preset.form.includeImages,
+      includeApplied: preset.form.includeApplied,
+    }));
+    setNotice(`已应用预设：${preset.name}`);
   }
 
   async function handleApply(proposalKeys?: string[], label = "选中商品") {
@@ -958,6 +977,21 @@ export default function ProductBatchOptimizationPage() {
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
+              <select
+                value=""
+                onChange={(e) => applyPromptPreset(e.target.value)}
+                className="h-10 min-w-[180px] rounded-md border border-border-subtle bg-bg-primary px-3 text-sm text-fg-primary outline-none focus:border-brand-400"
+                disabled={!promptPresets.length || generating}
+              >
+                <option value="">
+                  {promptPresets.length ? "选择预设" : "暂无预设"}
+                </option>
+                {promptPresets.map((preset) => (
+                  <option key={preset.id} value={preset.id}>
+                    {preset.name}
+                  </option>
+                ))}
+              </select>
               <button
                 type="submit"
                 className="btn btn-primary btn-md"
@@ -1105,33 +1139,90 @@ export default function ProductBatchOptimizationPage() {
 
         <div className="space-y-2">
           {filteredRuns.length ? (
-            filteredRuns.map((run) => (
-              <button
-                key={run.id}
-                type="button"
-                onClick={() => void toggleRun(run.id)}
-                className={`w-full rounded-lg border p-3 text-left transition-colors ${
-                  activeRun?.id === run.id
-                    ? "border-brand-400 bg-[var(--brand-50-bg)]"
-                    : "border-border-subtle bg-bg-secondary hover:bg-bg-tertiary"
-                }`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold text-fg-primary">
-                      {runStoreLabel(run)}
+            filteredRuns.map((run) => {
+              const isOpen = activeRun?.id === run.id;
+              return (
+                <div key={run.id} className="space-y-3">
+                  <button
+                    type="button"
+                    onClick={() => void toggleRun(run.id)}
+                    className={`relative w-full rounded-lg border p-3 pb-9 text-left transition-colors ${
+                      isOpen
+                        ? "border-brand-400 bg-[var(--brand-50-bg)]"
+                        : "border-border-subtle bg-bg-secondary hover:bg-bg-tertiary"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold text-fg-primary">
+                          {runStoreLabel(run)}
+                        </div>
+                        <div className="mt-1 text-xs text-fg-tertiary">
+                          {formatTime(run.createdAt)}
+                        </div>
+                        <div className="mt-1 truncate text-xs text-fg-tertiary">
+                          {run.query || "无查询条件"}
+                        </div>
+                      </div>
+                      <span className="chip chip-brand shrink-0">{run.proposalCount}</span>
                     </div>
-                    <div className="mt-1 text-xs text-fg-tertiary">
-                      {formatTime(run.createdAt)}
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void handleDeleteRun(run.id);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" && event.key !== " ") return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        void handleDeleteRun(run.id);
+                      }}
+                      className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-md border border-[rgba(239,68,68,0.28)] bg-bg-primary px-2 py-1 text-xs text-danger transition-colors hover:bg-[var(--danger-bg)]"
+                    >
+                      <Trash2 size={12} />
+                      删除
+                    </span>
+                  </button>
+                  {isOpen && activeRun ? (
+                    <div className="rounded-lg border border-brand-200 bg-bg-primary p-3">
+                      <ActiveRunPreviewResults
+                        activeRun={activeRun}
+                        applying={applying}
+                        selectedProductCount={selectedProductCount}
+                        applyOptions={applyOptions}
+                        filteredProposals={filteredProposals}
+                        selectedProposalKeys={selectedProposalKeys}
+                        expandedProposalKey={expandedProposalKey}
+                        applyResultByProposal={applyResultByProposal}
+                        currentStoreProposalCount={currentStoreProposalKeys().length}
+                        allPreviewProposalCount={allPreviewProposalKeys().length}
+                        onSelectAll={selectAllProducts}
+                        onClear={clearProducts}
+                        onDelete={() => void handleDeleteRun(activeRun.id)}
+                        onApplySelected={() => void handleApply()}
+                        onApplyCurrentStore={() =>
+                          void handleApply(currentStoreProposalKeys(), "当前店铺全部预览")
+                        }
+                        onApplyAll={() =>
+                          void handleApply(allPreviewProposalKeys(), "预览中的全部店铺")
+                        }
+                        onSetDraft={(checked) =>
+                          setApplyOptions((prev) => ({ ...prev, setDraft: checked }))
+                        }
+                        onToggleProduct={toggleProduct}
+                        onExpandProduct={(key) =>
+                          setExpandedProposalKey((current) =>
+                            current === key ? null : key,
+                          )
+                        }
+                      />
                     </div>
-                    <div className="mt-1 truncate text-xs text-fg-tertiary">
-                      {run.query || "无查询条件"}
-                    </div>
-                  </div>
-                  <span className="chip chip-brand shrink-0">{run.proposalCount}</span>
+                  ) : null}
                 </div>
-              </button>
-            ))
+              );
+            })
           ) : (
             <div className="rounded-md bg-bg-tertiary p-3 text-sm text-fg-tertiary">
               当前日期和店铺下暂无预览记录。
@@ -1139,168 +1230,6 @@ export default function ProductBatchOptimizationPage() {
           )}
         </div>
       </section>
-
-      {activeRun ? (
-        <section className="space-y-4">
-          <div className="card p-4">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <h2 className="text-base font-semibold text-fg-primary">
-                  {activeRun.proposalCount} 条优化预览
-                </h2>
-                <p className="mt-1 text-xs text-fg-tertiary">
-                  {runStoreLabel(activeRun)} · {formatTime(activeRun.createdAt)} ·{" "}
-                  {activeRun.model}
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={selectAllProducts}
-                  className="btn btn-outline btn-sm"
-                >
-                  全选
-                </button>
-                <button
-                  type="button"
-                  onClick={clearProducts}
-                  className="btn btn-outline btn-sm"
-                >
-                  清空
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleDeleteRun(activeRun.id)}
-                  className="btn btn-danger-outline btn-sm"
-                >
-                  <Trash2 size={14} />
-                  删除记录
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleApply()}
-                  className="btn btn-primary btn-sm"
-                  disabled={applying || selectedProductCount === 0}
-                >
-                  {applying ? (
-                    <Loader2 size={14} className="animate-spin" />
-                  ) : (
-                    <CheckCircle2 size={14} />
-                  )}
-                  应用 {selectedProductCount} 个
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-4 flex flex-wrap gap-4 text-sm text-fg-secondary">
-              <label className="inline-flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={applyOptions.setDraft}
-                  onChange={(e) =>
-                    setApplyOptions((prev) => ({
-                      ...prev,
-                      setDraft: e.target.checked,
-                    }))
-                  }
-                  className="h-4 w-4"
-                />
-                应用后设为草稿
-              </label>
-            </div>
-
-            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
-              <button
-                type="button"
-                onClick={() =>
-                  void handleApply(currentStoreProposalKeys(), "当前店铺全部预览")
-                }
-                className="btn btn-danger btn-sm justify-center"
-                disabled={applying || currentStoreProposalKeys().length === 0}
-              >
-                自动提交当前店铺全部
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  void handleApply(allPreviewProposalKeys(), "预览中的全部店铺")
-                }
-                className="btn btn-danger-outline btn-sm justify-center"
-                disabled={applying || allPreviewProposalKeys().length === 0}
-              >
-                提交预览中的全部店铺
-              </button>
-              <button
-                type="button"
-                onClick={clearProducts}
-                className="btn btn-outline btn-sm justify-center"
-                disabled={applying || selectedProductCount === 0}
-              >
-                取消
-              </button>
-            </div>
-
-            {activeRun.stopped ? (
-              <div className="mt-4 rounded-md bg-[var(--warn-bg)] p-3 text-sm text-warn">
-                本次生成预览已强制停止，已保留停止前生成的结果。
-              </div>
-            ) : null}
-
-            {activeRun.failures.length ? (
-              <div className="mt-4 rounded-md bg-[var(--warn-bg)] p-3 text-sm text-warn">
-                <div className="font-semibold">
-                  {activeRun.failures.length} 个商品生成失败。
-                </div>
-                <div className="mt-2 max-h-36 space-y-1 overflow-y-auto text-xs">
-                  {activeRun.failures.slice(0, 8).map((failure, index) => (
-                    <div key={`${failure.productId || failure.title || "failure"}-${index}`}>
-                      {failure.title || failure.productId || "未知商品"}：{failure.error}
-                    </div>
-                  ))}
-                  {activeRun.failures.length > 8 ? (
-                    <div>还有 {activeRun.failures.length - 8} 个错误未展开。</div>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
-          </div>
-
-          <div className="space-y-4">
-            {filteredProposals.length ? (
-              filteredProposals.map((proposal, index) => {
-              const key = proposalKey(proposal);
-              return (
-                <ProposalCard
-                  key={key}
-                  index={index + 1}
-                  proposal={proposal}
-                  selected={selectedProposalKeys.has(key)}
-                  expanded={expandedProposalKey === key}
-                  result={
-                    applyResultByProposal.get(key) ||
-                    applyResultByProposal.get(proposal.product.id)
-                  }
-                  onToggle={() => toggleProduct(key)}
-                  onExpand={() =>
-                    setExpandedProposalKey((current) =>
-                      current === key ? null : key,
-                    )
-                  }
-                />
-              );
-              })
-            ) : (
-              <div className="rounded-lg border border-border-subtle bg-bg-secondary p-6 text-center text-sm text-fg-tertiary">
-                当前日期和店铺下没有匹配的预览。
-              </div>
-            )}
-          </div>
-        </section>
-      ) : (
-        <section className="card p-8 text-center text-sm text-fg-tertiary">
-          生成一次预览后，商品对比会显示在这里。
-        </section>
-      )}
 
       {savePresetOpen ? (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[rgba(15,23,42,0.42)] p-4">
@@ -1483,6 +1412,185 @@ function readProductBatchPromptPresets(): ProductBatchPromptPreset[] {
   }
 }
 
+function ActiveRunPreviewResults({
+  activeRun,
+  applying,
+  selectedProductCount,
+  applyOptions,
+  filteredProposals,
+  selectedProposalKeys,
+  expandedProposalKey,
+  applyResultByProposal,
+  currentStoreProposalCount,
+  allPreviewProposalCount,
+  onSelectAll,
+  onClear,
+  onDelete,
+  onApplySelected,
+  onApplyCurrentStore,
+  onApplyAll,
+  onSetDraft,
+  onToggleProduct,
+  onExpandProduct,
+}: {
+  activeRun: RunDocument;
+  applying: boolean;
+  selectedProductCount: number;
+  applyOptions: { setDraft: boolean };
+  filteredProposals: Proposal[];
+  selectedProposalKeys: Set<string>;
+  expandedProposalKey: string | null;
+  applyResultByProposal: Map<string, ApplyResult>;
+  currentStoreProposalCount: number;
+  allPreviewProposalCount: number;
+  onSelectAll: () => void;
+  onClear: () => void;
+  onDelete: () => void;
+  onApplySelected: () => void;
+  onApplyCurrentStore: () => void;
+  onApplyAll: () => void;
+  onSetDraft: (checked: boolean) => void;
+  onToggleProduct: (key: string) => void;
+  onExpandProduct: (key: string) => void;
+}) {
+  return (
+    <section className="space-y-3">
+      <div className="rounded-lg border border-border-subtle bg-bg-secondary p-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-fg-primary">
+              {activeRun.proposalCount} 条优化预览
+            </h3>
+            <p className="mt-1 text-xs text-fg-tertiary">
+              {runStoreLabel(activeRun)} · {formatTime(activeRun.createdAt)} ·{" "}
+              {activeRun.model}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={onSelectAll} className="btn btn-outline btn-sm">
+              全选
+            </button>
+            <button type="button" onClick={onClear} className="btn btn-outline btn-sm">
+              清空
+            </button>
+            <button
+              type="button"
+              onClick={onDelete}
+              className="btn btn-danger-outline btn-sm"
+            >
+              <Trash2 size={14} />
+              删除记录
+            </button>
+            <button
+              type="button"
+              onClick={onApplySelected}
+              className="btn btn-primary btn-sm"
+              disabled={applying || selectedProductCount === 0}
+            >
+              {applying ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <CheckCircle2 size={14} />
+              )}
+              应用 {selectedProductCount} 个
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-3 flex flex-wrap gap-4 text-sm text-fg-secondary">
+          <label className="inline-flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={applyOptions.setDraft}
+              onChange={(e) => onSetDraft(e.target.checked)}
+              className="h-4 w-4"
+            />
+            应用后设为草稿
+          </label>
+        </div>
+
+        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+          <button
+            type="button"
+            onClick={onApplyCurrentStore}
+            className="btn btn-danger btn-sm justify-center"
+            disabled={applying || currentStoreProposalCount === 0}
+          >
+            自动提交当前店铺全部
+          </button>
+          <button
+            type="button"
+            onClick={onApplyAll}
+            className="btn btn-danger-outline btn-sm justify-center"
+            disabled={applying || allPreviewProposalCount === 0}
+          >
+            提交预览中的全部店铺
+          </button>
+          <button
+            type="button"
+            onClick={onClear}
+            className="btn btn-outline btn-sm justify-center"
+            disabled={applying || selectedProductCount === 0}
+          >
+            取消
+          </button>
+        </div>
+
+        {activeRun.stopped ? (
+          <div className="mt-3 rounded-md bg-[var(--warn-bg)] p-3 text-sm text-warn">
+            本次生成预览已强制停止，已保留停止前生成的结果。
+          </div>
+        ) : null}
+
+        {activeRun.failures.length ? (
+          <div className="mt-3 rounded-md bg-[var(--warn-bg)] p-3 text-sm text-warn">
+            <div className="font-semibold">
+              {activeRun.failures.length} 个商品生成失败。
+            </div>
+            <div className="mt-2 max-h-36 space-y-1 overflow-y-auto text-xs">
+              {activeRun.failures.slice(0, 8).map((failure, index) => (
+                <div key={`${failure.productId || failure.title || "failure"}-${index}`}>
+                  {failure.title || failure.productId || "未知商品"}：{failure.error}
+                </div>
+              ))}
+              {activeRun.failures.length > 8 ? (
+                <div>还有 {activeRun.failures.length - 8} 个错误未展开。</div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="space-y-3">
+        {filteredProposals.length ? (
+          filteredProposals.map((proposal, index) => {
+            const key = proposalKey(proposal);
+            return (
+              <ProposalCard
+                key={key}
+                index={index + 1}
+                proposal={proposal}
+                selected={selectedProposalKeys.has(key)}
+                expanded={expandedProposalKey === key}
+                result={
+                  applyResultByProposal.get(key) ||
+                  applyResultByProposal.get(proposal.product.id)
+                }
+                onToggle={() => onToggleProduct(key)}
+                onExpand={() => onExpandProduct(key)}
+              />
+            );
+          })
+        ) : (
+          <div className="rounded-lg border border-border-subtle bg-bg-secondary p-6 text-center text-sm text-fg-tertiary">
+            当前日期和店铺下没有匹配的预览。
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function ProposalCard({
   index,
   proposal,
@@ -1626,14 +1734,6 @@ function SnapshotCompareGrid({
       <SnapshotCompareHeader title="新内容" tone="proposed" />
       <SnapshotField label="商品标题" value={current.title} tone="current" />
       <SnapshotField label="商品标题" value={proposed.title} tone="proposed" />
-      <SnapshotField label="URL handle" value={current.handle} tone="current" />
-      <SnapshotField label="URL handle" value={proposed.handle} tone="proposed" />
-      <SnapshotField label="SEO 标题" value={current.seoTitle} tone="current" />
-      <SnapshotField label="SEO 标题" value={proposed.seoTitle} tone="proposed" />
-      <SnapshotField label="Meta 描述" value={current.metaDescription} tone="current" />
-      <SnapshotField label="Meta 描述" value={proposed.metaDescription} tone="proposed" />
-      <SnapshotField label="类别元字段尺寸" value={current.categorySize} tone="current" />
-      <SnapshotField label="类别元字段尺寸" value={proposed.categorySize} tone="proposed" />
       <SnapshotField
         label="商品描述"
         value={htmlToText(current.descriptionHtml)}
@@ -1648,8 +1748,16 @@ function SnapshotCompareGrid({
       />
       <SnapshotTagList tags={current.tags} tone="current" />
       <SnapshotTagList tags={proposed.tags} tone="proposed" />
+      <SnapshotField label="类别元字段尺寸" value={current.categorySize} tone="current" />
+      <SnapshotField label="类别元字段尺寸" value={proposed.categorySize} tone="proposed" />
       <SnapshotFaqList faq={current.faq} tone="current" />
       <SnapshotFaqList faq={proposed.faq} tone="proposed" />
+      <SnapshotField label="SEO 标题" value={current.seoTitle} tone="current" />
+      <SnapshotField label="SEO 标题" value={proposed.seoTitle} tone="proposed" />
+      <SnapshotField label="Meta 描述" value={current.metaDescription} tone="current" />
+      <SnapshotField label="Meta 描述" value={proposed.metaDescription} tone="proposed" />
+      <SnapshotField label="URL handle" value={current.handle} tone="current" />
+      <SnapshotField label="URL handle" value={proposed.handle} tone="proposed" />
     </section>
   );
 }

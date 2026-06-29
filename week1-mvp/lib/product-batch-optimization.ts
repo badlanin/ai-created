@@ -779,8 +779,11 @@ export async function createProductBatchPreview(opts: {
     const store = stores[storeIndex];
     const storeLabel = store.name || store.shopDomain;
     let storeProcessed = 0;
+    let storeAfter: string | null = null;
+    let storeSkip = start;
+    let storeHasNextPage = true;
 
-    while (storeProcessed < limit) {
+    while (storeProcessed < limit && storeHasNextPage) {
       if (isPreviewJobCancelled(previewJob)) {
         stopped = true;
         stopReason = previewJob?.reason || "已强制停止";
@@ -799,14 +802,19 @@ export async function createProductBatchPreview(opts: {
         currentProduct: null,
       });
       try {
-        products = await fetchProducts({
+        const batch = await fetchProducts({
           connection: store,
           query,
-          start: start + storeProcessed,
+          start: storeSkip,
           limit: batchLimit,
+          after: storeAfter,
           includeApplied,
           signal: previewJob?.controller.signal,
         });
+        products = batch.products;
+        storeAfter = batch.endCursor;
+        storeHasNextPage = batch.hasNextPage;
+        storeSkip = 0;
       } catch (err) {
         if (isAbortLikeError(err) || isPreviewJobCancelled(previewJob)) {
           stopped = true;
@@ -831,7 +839,7 @@ export async function createProductBatchPreview(opts: {
       }
 
       fetchedCount += products.length;
-      if (!products.length) {
+      if (!products.length && !storeHasNextPage) {
         progressTotal = Math.max(
           1,
           progressCompleted + (stores.length - storeIndex - 1) * limit,
@@ -846,6 +854,7 @@ export async function createProductBatchPreview(opts: {
         });
         break;
       }
+      if (!products.length) continue;
 
       updatePreviewProgress(previewJob, {
         phase: "generating",
@@ -904,7 +913,7 @@ export async function createProductBatchPreview(opts: {
       }
       storeProcessed += products.length;
       if (stopped) break;
-      if (products.length < batchLimit) {
+      if (products.length < batchLimit && !storeHasNextPage) {
         progressTotal = Math.max(
           1,
           progressCompleted + (stores.length - storeIndex - 1) * limit,
@@ -1118,13 +1127,19 @@ async function fetchProducts(opts: {
   query: string;
   start: number;
   limit: number;
+  after?: string | null;
   includeApplied: boolean;
   signal?: AbortSignal;
-}): Promise<ShopifyProductNode[]> {
+}): Promise<{
+  products: ShopifyProductNode[];
+  endCursor: string | null;
+  hasNextPage: boolean;
+}> {
   const products: ShopifyProductNode[] = [];
   let skipped = 0;
-  let after: string | null = null;
+  let after: string | null = opts.after || null;
   let page = 0;
+  let hasNextPage = true;
   const maxPages = Math.max(
     12,
     Math.ceil((opts.start + opts.limit) / SHOPIFY_PRODUCT_FETCH_BATCH_SIZE) + 2,
@@ -1153,9 +1168,14 @@ async function fetchProducts(opts: {
       if (products.length >= opts.limit) break;
     }
     after = productsConnection.pageInfo?.endCursor || null;
-    if (!productsConnection.pageInfo?.hasNextPage || !after) break;
+    hasNextPage = Boolean(productsConnection.pageInfo?.hasNextPage && after);
+    if (!hasNextPage) break;
   }
-  return products;
+  return {
+    products,
+    endCursor: after,
+    hasNextPage,
+  };
 }
 
 async function generateProductProposal(opts: {
