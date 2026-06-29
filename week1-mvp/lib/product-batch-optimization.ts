@@ -267,7 +267,8 @@ export type ProductBatchPreviewProgress = {
     | "stopped"
     | "completed"
     | "failed"
-    | "finished";
+    | "finished"
+    | "lost";
   percent: number;
   completed: number;
   total: number;
@@ -664,11 +665,11 @@ export function getProductBatchPreviewProgress(
     const now = Date.now();
     return {
       jobId: id,
-      phase: "finished",
+      phase: "lost",
       percent: 100,
       completed: 0,
       total: 0,
-      message: "任务已结束。",
+      message: "任务进度连接已丢失，请查看预览记录或重新生成。",
       currentStore: null,
       currentProduct: null,
       done: true,

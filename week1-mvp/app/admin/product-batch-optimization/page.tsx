@@ -131,7 +131,8 @@ type PreviewProgress = {
     | "stopped"
     | "completed"
     | "failed"
-    | "finished";
+    | "finished"
+    | "lost";
   percent: number;
   completed: number;
   total: number;
@@ -251,12 +252,16 @@ export default function ProductBatchOptimizationPage() {
           ),
         );
         if (disposed) return;
-        setPreviewProgress(data.progress);
-        if (data.progress.done) {
-          if (data.progress.runId) {
+        let nextProgress = data.progress;
+        setPreviewProgress((prev) => {
+          nextProgress = mergePreviewProgress(prev, data.progress);
+          return nextProgress;
+        });
+        if (nextProgress.done) {
+          if (nextProgress.runId) {
             const runData = await readJson<{ run: RunDocument }>(
               await fetch(
-                `/api/admin/product-batch-optimization/runs/${encodeURIComponent(data.progress.runId)}`,
+                `/api/admin/product-batch-optimization/runs/${encodeURIComponent(nextProgress.runId)}`,
               ),
             );
             if (disposed) return;
@@ -280,8 +285,12 @@ export default function ProductBatchOptimizationPage() {
             } else {
               setNotice(`已生成 ${runData.run.proposalCount} 条优化预览。`);
             }
-          } else if (data.progress.error || data.progress.phase === "failed") {
-            setError(data.progress.error || data.progress.message);
+          } else if (
+            nextProgress.error ||
+            nextProgress.phase === "failed" ||
+            nextProgress.phase === "lost"
+          ) {
+            setError(nextProgress.error || nextProgress.message);
           }
           setGenerating(false);
           setPreviewJobId(null);
@@ -1844,6 +1853,23 @@ function createLocalProgress(jobId: string, total: number): PreviewProgress {
   };
 }
 
+function mergePreviewProgress(
+  current: PreviewProgress | null,
+  incoming: PreviewProgress,
+): PreviewProgress {
+  if (!current || incoming.total > 0) return incoming;
+  if (incoming.phase !== "lost" && incoming.phase !== "finished") return incoming;
+  const total = current.total || 0;
+  return {
+    ...incoming,
+    total,
+    completed:
+      incoming.percent >= 100 && total > 0
+        ? Math.max(current.completed, total)
+        : current.completed,
+  };
+}
+
 function progressPhaseLabel(phase: PreviewProgress["phase"]) {
   const labels: Record<PreviewProgress["phase"], string> = {
     idle: "未开始",
@@ -1855,6 +1881,7 @@ function progressPhaseLabel(phase: PreviewProgress["phase"]) {
     completed: "已完成",
     failed: "出错",
     finished: "已结束",
+    lost: "进度丢失",
   };
   return labels[phase] || "处理中";
 }
