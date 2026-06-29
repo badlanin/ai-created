@@ -6,6 +6,8 @@ import type { User } from "./auth";
 import { DATA_DIR_PATH } from "./db";
 import { buildGenaiClient } from "./genai-client";
 import { assertWithinBudget } from "./pricing";
+import { acquireToken } from "./rate-limiter";
+import { retryWithBackoff } from "./retry";
 import { recordUsage } from "./usage";
 import { syncShopifyProductCategorySizeMetafield } from "./shopify";
 
@@ -1116,27 +1118,42 @@ async function generateProductProposal(opts: {
   let response: Awaited<ReturnType<typeof client.models.generateContent>>;
   try {
     response = await abortable(
-      client.models.generateContent({
-        model: opts.model,
-        contents: [
-          {
-            role: "user",
-            parts: [
+      retryWithBackoff(
+        async () => {
+          await acquireToken(opts.model);
+          return client.models.generateContent({
+            model: opts.model,
+            contents: [
               {
-                text:
-                  "Rewrite this Shopify product for SEO and GEO. Return only JSON that matches the schema.\n\n" +
-                  JSON.stringify(promptData, null, 2),
+                role: "user",
+                parts: [
+                  {
+                    text:
+                      "Rewrite this Shopify product for SEO and GEO. Return only JSON that matches the schema.\n\n" +
+                      JSON.stringify(promptData, null, 2),
+                  },
+                ],
               },
             ],
-          },
-        ],
-        config: {
-          systemInstruction: PRODUCT_BATCH_SYSTEM_PROMPT,
-          responseMimeType: "application/json",
-          responseSchema: PRODUCT_BATCH_OUTPUT_SCHEMA,
-          temperature: 0.25,
+            config: {
+              systemInstruction: PRODUCT_BATCH_SYSTEM_PROMPT,
+              responseMimeType: "application/json",
+              responseSchema: PRODUCT_BATCH_OUTPUT_SCHEMA,
+              temperature: 0.25,
+            },
+          });
         },
-      }),
+        {
+          maxRetries: 3,
+          initialDelayMs: 2500,
+          maxDelayMs: 20_000,
+          onRetry: (err, attempt, delayMs) => {
+            console.warn(
+              `[product-batch] model retry ${attempt} in ${Math.round(delayMs)}ms: ${formatModelError(err)}`,
+            );
+          },
+        },
+      ),
       opts.signal,
       "已强制停止",
     );
@@ -1161,14 +1178,14 @@ async function generateProductProposal(opts: {
       model: opts.model,
       feature: "other",
       success: false,
-      error: err instanceof Error ? err.message : String(err),
+      error: formatModelError(err),
       notes: {
         kind: "product-batch-optimization",
         shopDomain: opts.connection.shopDomain,
         productId: opts.product.id,
       },
     });
-    throw err;
+    throw new Error(formatModelError(err));
   }
 
   const rawText = response.text || "";
@@ -1801,6 +1818,17 @@ function parseJsonObject(text: string): Record<string, unknown> {
     }
   }
   throw new Error(`模型返回的 JSON 无法解析：${truncate(text, 500)}`);
+}
+
+function formatModelError(error: unknown) {
+  const raw = error instanceof Error ? error.message : String(error);
+  if (/429|RESOURCE_EXHAUSTED|quota|exhausted/i.test(raw)) {
+    return "大模型额度或调用频率已达到上限。已自动重试仍未恢复，请稍后再试，或减少本次店铺/商品数量后重新生成。";
+  }
+  if (/503|UNAVAILABLE/i.test(raw)) {
+    return "大模型服务暂时不可用。已自动重试仍未恢复，请稍后再试。";
+  }
+  return raw;
 }
 
 function createPreviewJob(jobId?: string): PreviewJobState | null {
