@@ -917,16 +917,6 @@ export default function ProductBatchOptimizationPage() {
                 <FileText size={15} />
                 保存预设
               </button>
-              {stores.length === 0 ? (
-                <button
-                  type="button"
-                  onClick={() => setAddStoreOpen(true)}
-                  className="btn btn-outline btn-md"
-                >
-                  <Plus size={15} />
-                  添加 Shopify 店铺
-                </button>
-              ) : null}
             </div>
           </form>
         </div>
