@@ -1367,22 +1367,32 @@ function SnapshotCompareGrid({
     <section className="grid grid-cols-1 items-stretch gap-3 lg:grid-cols-2">
       <SnapshotCompareHeader title="旧内容" tone="current" />
       <SnapshotCompareHeader title="新内容" tone="proposed" />
-      <SnapshotField label="商品标题" value={current.title} />
-      <SnapshotField label="商品标题" value={proposed.title} />
-      <SnapshotField label="URL handle" value={current.handle} />
-      <SnapshotField label="URL handle" value={proposed.handle} />
-      <SnapshotField label="SEO 标题" value={current.seoTitle} />
-      <SnapshotField label="SEO 标题" value={proposed.seoTitle} />
-      <SnapshotField label="Meta 描述" value={current.metaDescription} />
-      <SnapshotField label="Meta 描述" value={proposed.metaDescription} />
-      <SnapshotField label="类别元字段尺寸" value={current.categorySize} />
-      <SnapshotField label="类别元字段尺寸" value={proposed.categorySize} />
-      <SnapshotField label="商品描述" value={htmlToText(current.descriptionHtml)} tall />
-      <SnapshotField label="商品描述" value={htmlToText(proposed.descriptionHtml)} tall />
-      <SnapshotTagList tags={current.tags} />
-      <SnapshotTagList tags={proposed.tags} />
-      <SnapshotFaqList faq={current.faq} />
-      <SnapshotFaqList faq={proposed.faq} />
+      <SnapshotField label="商品标题" value={current.title} tone="current" />
+      <SnapshotField label="商品标题" value={proposed.title} tone="proposed" />
+      <SnapshotField label="URL handle" value={current.handle} tone="current" />
+      <SnapshotField label="URL handle" value={proposed.handle} tone="proposed" />
+      <SnapshotField label="SEO 标题" value={current.seoTitle} tone="current" />
+      <SnapshotField label="SEO 标题" value={proposed.seoTitle} tone="proposed" />
+      <SnapshotField label="Meta 描述" value={current.metaDescription} tone="current" />
+      <SnapshotField label="Meta 描述" value={proposed.metaDescription} tone="proposed" />
+      <SnapshotField label="类别元字段尺寸" value={current.categorySize} tone="current" />
+      <SnapshotField label="类别元字段尺寸" value={proposed.categorySize} tone="proposed" />
+      <SnapshotField
+        label="商品描述"
+        value={htmlToText(current.descriptionHtml)}
+        tone="current"
+        tall
+      />
+      <SnapshotField
+        label="商品描述"
+        value={htmlToText(proposed.descriptionHtml)}
+        tone="proposed"
+        tall
+      />
+      <SnapshotTagList tags={current.tags} tone="current" />
+      <SnapshotTagList tags={proposed.tags} tone="proposed" />
+      <SnapshotFaqList faq={current.faq} tone="current" />
+      <SnapshotFaqList faq={proposed.faq} tone="proposed" />
     </section>
   );
 }
@@ -1407,17 +1417,25 @@ function SnapshotCompareHeader({
   );
 }
 
+function snapshotToneClass(tone: "current" | "proposed") {
+  return tone === "proposed"
+    ? "border-[rgba(34,197,94,0.28)] bg-[rgba(34,197,94,0.045)]"
+    : "border-[rgba(100,116,139,0.28)] bg-[rgba(148,163,184,0.09)]";
+}
+
 function SnapshotField({
   label,
   value,
+  tone,
   tall = false,
 }: {
   label: string;
   value: string;
+  tone: "current" | "proposed";
   tall?: boolean;
 }) {
   return (
-    <div className="h-full rounded-md border border-border-subtle bg-bg-secondary p-3">
+    <div className={`h-full rounded-md border p-3 ${snapshotToneClass(tone)}`}>
       <div className="mb-1.5 text-xs font-semibold text-fg-secondary">{label}</div>
       <div
         className={`whitespace-pre-wrap text-xs leading-relaxed text-fg-secondary ${
@@ -1430,9 +1448,15 @@ function SnapshotField({
   );
 }
 
-function SnapshotTagList({ tags }: { tags: string[] }) {
+function SnapshotTagList({
+  tags,
+  tone,
+}: {
+  tags: string[];
+  tone: "current" | "proposed";
+}) {
   return (
-    <div className="h-full rounded-md border border-border-subtle bg-bg-secondary p-3">
+    <div className={`h-full rounded-md border p-3 ${snapshotToneClass(tone)}`}>
       <div className="mb-2 text-xs font-semibold text-fg-secondary">标签</div>
       <div className="flex flex-wrap gap-1.5">
         {tags.length ? (
@@ -1449,9 +1473,15 @@ function SnapshotTagList({ tags }: { tags: string[] }) {
   );
 }
 
-function SnapshotFaqList({ faq }: { faq: FaqItem[] }) {
+function SnapshotFaqList({
+  faq,
+  tone,
+}: {
+  faq: FaqItem[];
+  tone: "current" | "proposed";
+}) {
   return (
-    <div className="h-full rounded-md border border-border-subtle bg-bg-secondary p-3">
+    <div className={`h-full rounded-md border p-3 ${snapshotToneClass(tone)}`}>
       <div className="mb-2 text-xs font-semibold text-fg-secondary">FAQ</div>
       {faq.length ? (
         <div className="space-y-2">
@@ -1530,8 +1560,8 @@ function TextPanel({
   compact?: boolean;
 }) {
   return (
-    <div className="rounded-md bg-bg-tertiary p-3">
-      <div className="mb-2 text-xs font-semibold text-fg-secondary">{title}</div>
+    <div className="rounded-md border border-[rgba(245,158,11,0.28)] bg-[rgba(245,158,11,0.08)] p-3">
+      <div className="mb-2 text-xs font-semibold text-warn">{title}</div>
       <div
         className={`whitespace-pre-wrap text-xs leading-relaxed text-fg-secondary ${
           compact ? "" : "max-h-52 overflow-y-auto"
