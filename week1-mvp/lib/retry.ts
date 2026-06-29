@@ -34,6 +34,8 @@ export function defaultShouldRetry(error: unknown): boolean {
     /\bINTERNAL\b/.test(msg) ||
     /Internal error encountered/i.test(msg) ||
     /fetch failed/i.test(msg) ||
+    /privoxy/i.test(msg) ||
+    /proxy/i.test(msg) ||
     /ECONNRESET/i.test(msg) ||
     /ETIMEDOUT/i.test(msg) ||
     /socket hang up/i.test(msg) ||

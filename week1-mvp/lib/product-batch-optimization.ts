@@ -319,6 +319,7 @@ type ProductBatchStoreRecord = {
   brandVoice: string;
   defaultProductQuery: string;
   tokenIssuedAt: string;
+  tokenExpiresAt?: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -596,7 +597,12 @@ export async function exchangeAndSaveProductBatchStore(input: {
     clientId,
     clientSecret,
   });
-  const now = new Date().toISOString();
+  const nowMs = Date.now();
+  const now = new Date(nowMs).toISOString();
+  const expiresAt =
+    token.expiresIn && token.expiresIn > 0
+      ? new Date(nowMs + token.expiresIn * 1000).toISOString()
+      : new Date(nowMs + PRODUCT_BATCH_TOKEN_TTL_MS).toISOString();
   const store: ProductBatchStoreRecord = {
     key: nextStoreKey(doc.stores),
     name: shopDomain.replace(/\.myshopify\.com$/i, ""),
@@ -608,6 +614,7 @@ export async function exchangeAndSaveProductBatchStore(input: {
     brandVoice: "Clear, trustworthy, product-focused, and conversion-oriented.",
     defaultProductQuery: "status:active",
     tokenIssuedAt: now,
+    tokenExpiresAt: expiresAt,
     createdAt: now,
     updatedAt: now,
   };
@@ -876,14 +883,23 @@ export async function createProductBatchPreview(opts: {
   }
 
   if (!fetchedCount && !stopped) {
+    const fetchFailures = failures.filter((item) =>
+      item.error.startsWith("拉取店铺商品失败："),
+    );
+    const message = fetchFailures.length
+      ? fetchFailures
+          .map((item) => `${item.title || "店铺"}：${item.error}`)
+          .join("；")
+      : "没有找到可优化的 Shopify 商品。可以调整查询条件或勾选已优化商品。";
     updatePreviewProgress(previewJob, {
       phase: "failed",
       done: true,
-      message: "没有找到可优化的 Shopify 商品。",
+      message,
+      error: message,
       currentStore: null,
       currentProduct: null,
     });
-    throw new Error("没有找到可优化的 Shopify 商品。可以调整查询条件或勾选已优化商品。");
+    throw new Error(message);
   }
 
   const now = Date.now();
@@ -1035,7 +1051,7 @@ async function requireStoreTokens(storeKeys?: string[]): Promise<ShopifyToken[]>
     key: store.key,
     name: store.name,
     shopDomain: store.shopDomain,
-    accessToken: decryptSecret(store.accessTokenEnc),
+    accessToken: getValidStoreAccessToken(store),
     apiVersion: store.apiVersion || SHOPIFY_API_VERSION,
     language: store.language || "en",
     market: store.market || "",
@@ -1043,6 +1059,20 @@ async function requireStoreTokens(storeKeys?: string[]): Promise<ShopifyToken[]>
       store.brandVoice ||
       "Clear, trustworthy, product-focused, and conversion-oriented.",
   }));
+}
+
+function getValidStoreAccessToken(store: ProductBatchStoreRecord) {
+  const expiresAtMs = store.tokenExpiresAt
+    ? new Date(store.tokenExpiresAt).getTime()
+    : store.tokenIssuedAt
+      ? new Date(store.tokenIssuedAt).getTime() + PRODUCT_BATCH_TOKEN_TTL_MS
+      : 0;
+  if (!expiresAtMs || expiresAtMs <= Date.now()) {
+    throw new Error(
+      `店铺 ${store.name || store.shopDomain} 的 Shopify Token 已过期，请重新兑换后再读取商品。`,
+    );
+  }
+  return decryptSecret(store.accessTokenEnc);
 }
 
 async function fetchProducts(opts: {
@@ -1848,6 +1878,9 @@ function formatModelError(error: unknown) {
   if (/503|UNAVAILABLE/i.test(raw)) {
     return "大模型服务暂时不可用。已自动重试仍未恢复，请稍后再试。";
   }
+  if (/privoxy|proxy/i.test(raw)) {
+    return "本机代理或网络连接临时异常。已自动重试仍未恢复，请稍后再试；如果连续出现，请检查代理/VPN 后再重新生成。";
+  }
   return raw;
 }
 
@@ -2058,6 +2091,7 @@ function normalizeStoreRecord(
       "Clear, trustworthy, product-focused, and conversion-oriented.",
     defaultProductQuery: store.defaultProductQuery || "status:active",
     tokenIssuedAt: store.tokenIssuedAt || "",
+    tokenExpiresAt: store.tokenExpiresAt || null,
     createdAt: store.createdAt || store.tokenIssuedAt || "",
     updatedAt: store.updatedAt || store.tokenIssuedAt || "",
   };
@@ -2067,9 +2101,14 @@ function toSafeStore(store: ProductBatchStoreRecord): ProductBatchStoreSafe {
   const issuedAtMs = store.tokenIssuedAt
     ? new Date(store.tokenIssuedAt).getTime()
     : NaN;
-  const expiresAtMs = Number.isFinite(issuedAtMs)
-    ? issuedAtMs + PRODUCT_BATCH_TOKEN_TTL_MS
-    : 0;
+  const savedExpiresAtMs = store.tokenExpiresAt
+    ? new Date(store.tokenExpiresAt).getTime()
+    : NaN;
+  const expiresAtMs = Number.isFinite(savedExpiresAtMs)
+    ? savedExpiresAtMs
+    : Number.isFinite(issuedAtMs)
+      ? issuedAtMs + PRODUCT_BATCH_TOKEN_TTL_MS
+      : 0;
   const remaining = expiresAtMs ? Math.max(0, expiresAtMs - Date.now()) : 0;
   return {
     key: store.key,
@@ -2118,7 +2157,11 @@ async function requestShopifyAccessToken(input: {
     ).slice(0, 240);
     throw new Error(`Shopify Token 兑换失败（HTTP ${response.status}）：${detail}`);
   }
-  return { accessToken: String(json.access_token) };
+  const expiresIn =
+    typeof json.expires_in === "number" && Number.isFinite(json.expires_in)
+      ? Math.max(1, Math.floor(json.expires_in))
+      : null;
+  return { accessToken: String(json.access_token), expiresIn };
 }
 
 function normalizeShopDomainInput(value: unknown) {
