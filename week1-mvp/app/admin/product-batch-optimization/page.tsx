@@ -1165,6 +1165,30 @@ export default function ProductBatchOptimizationPage() {
         </aside>
       </section>
 
+      {activeRun && !isRunSubmitted(activeRun) ? (
+        <ActiveRunPreviewControls
+          activeRun={activeRun}
+          applying={applying}
+          selectedProductCount={selectedProductCount}
+          applyOptions={applyOptions}
+          currentStoreProposalCount={currentStoreProposalKeys().length}
+          allPreviewProposalCount={allPreviewProposalKeys().length}
+          onSelectAll={selectAllProducts}
+          onClear={clearProducts}
+          onDelete={() => void handleDeleteRun(activeRun.id)}
+          onApplySelected={() => void handleApply()}
+          onApplyCurrentStore={() =>
+            void handleApply(currentStoreProposalKeys(), "当前店铺全部预览")
+          }
+          onApplyAll={() =>
+            void handleApply(allPreviewProposalKeys(), "预览中的全部店铺")
+          }
+          onSetDraft={(checked) =>
+            setApplyOptions((prev) => ({ ...prev, setDraft: checked }))
+          }
+        />
+      ) : null}
+
       <section className="mb-4 card p-4">
         <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
@@ -1172,7 +1196,7 @@ export default function ProductBatchOptimizationPage() {
               预览记录与优化结果
             </h2>
             <p className="mt-1 text-xs text-fg-tertiary">
-              点击记录在该记录下方查看优化预览结果。
+              点击同一条记录可展开或收起优化预览结果。
             </p>
           </div>
           <span className="text-xs text-fg-tertiary">
@@ -1214,30 +1238,6 @@ export default function ProductBatchOptimizationPage() {
             </label>
           </div>
         </div>
-
-        {activeRun && !isRunSubmitted(activeRun) ? (
-          <ActiveRunPreviewControls
-            activeRun={activeRun}
-            applying={applying}
-            selectedProductCount={selectedProductCount}
-            applyOptions={applyOptions}
-            currentStoreProposalCount={currentStoreProposalKeys().length}
-            allPreviewProposalCount={allPreviewProposalKeys().length}
-            onSelectAll={selectAllProducts}
-            onClear={clearProducts}
-            onDelete={() => void handleDeleteRun(activeRun.id)}
-            onApplySelected={() => void handleApply()}
-            onApplyCurrentStore={() =>
-              void handleApply(currentStoreProposalKeys(), "当前店铺全部预览")
-            }
-            onApplyAll={() =>
-              void handleApply(allPreviewProposalKeys(), "预览中的全部店铺")
-            }
-            onSetDraft={(checked) =>
-              setApplyOptions((prev) => ({ ...prev, setDraft: checked }))
-            }
-          />
-        ) : null}
 
         <div className="space-y-2">
           {filteredPreviewRuns.length ? (
