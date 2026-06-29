@@ -439,6 +439,9 @@ export default function ProductBatchOptimizationPage() {
 
   async function toggleRun(id: string) {
     if (activeRun?.id === id) {
+      setActiveRun(null);
+      setSelectedProposalKeys(new Set());
+      setExpandedProposalKey(null);
       return;
     }
     await loadRun(id);
