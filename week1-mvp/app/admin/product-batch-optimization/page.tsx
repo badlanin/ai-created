@@ -197,10 +197,12 @@ export default function ProductBatchOptimizationPage() {
   const [stopRequested, setStopRequested] = useState(false);
   const [savePresetOpen, setSavePresetOpen] = useState(false);
   const [presetName, setPresetName] = useState("");
+  const [presetMenuOpen, setPresetMenuOpen] = useState(false);
   const [promptPresets, setPromptPresets] = useState<ProductBatchPromptPreset[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const storeMenuRef = useRef<HTMLDivElement | null>(null);
+  const presetMenuRef = useRef<HTMLDivElement | null>(null);
   const [form, setForm] = useState({
     query: "status:active",
     limit: 10,
@@ -209,6 +211,7 @@ export default function ProductBatchOptimizationPage() {
     includeImages: true,
     includeApplied: false,
   });
+  const [limitInput, setLimitInput] = useState("10");
   const [applyOptions, setApplyOptions] = useState({
     setDraft: false,
   });
@@ -304,6 +307,9 @@ export default function ProductBatchOptimizationPage() {
     function handleClick(event: MouseEvent) {
       if (!storeMenuRef.current?.contains(event.target as Node)) {
         setStoreMenuOpen(false);
+      }
+      if (!presetMenuRef.current?.contains(event.target as Node)) {
+        setPresetMenuOpen(false);
       }
     }
     document.addEventListener("mousedown", handleClick);
@@ -463,11 +469,14 @@ export default function ProductBatchOptimizationPage() {
       setError("请先选择生成店铺。");
       return;
     }
+    const normalizedLimit = normalizeLimitInput(limitInput, form.limit);
     const jobId = createPreviewJobId();
     const estimatedTotal = Math.max(
       1,
-      selectedStoreKeys.size * Math.max(1, Number(form.limit) || 1),
+      selectedStoreKeys.size * normalizedLimit,
     );
+    setForm((prev) => ({ ...prev, limit: normalizedLimit }));
+    setLimitInput(String(normalizedLimit));
     setGenerating(true);
     setPreviewProgress({
       jobId,
@@ -493,6 +502,7 @@ export default function ProductBatchOptimizationPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             ...form,
+            limit: normalizedLimit,
             jobId,
             storeKeys: Array.from(selectedStoreKeys),
             background: true,
@@ -560,7 +570,7 @@ export default function ProductBatchOptimizationPage() {
       createdAt: Date.now(),
       form: {
         query: form.query,
-        limit: Number(form.limit) || 1,
+        limit: normalizeLimitInput(limitInput, form.limit),
         start: Math.max(0, Number(form.start) || 0),
         prompt: form.prompt,
         includeImages: form.includeImages,
@@ -581,16 +591,34 @@ export default function ProductBatchOptimizationPage() {
   function applyPromptPreset(presetId: string) {
     const preset = promptPresets.find((item) => item.id === presetId);
     if (!preset) return;
+    const nextLimit = Number(preset.form.limit) || 1;
     setForm((prev) => ({
       ...prev,
       query: preset.form.query,
-      limit: preset.form.limit,
+      limit: nextLimit,
       start: preset.form.start,
       prompt: preset.form.prompt,
       includeImages: preset.form.includeImages,
       includeApplied: preset.form.includeApplied,
     }));
+    setLimitInput(String(nextLimit));
+    setPresetMenuOpen(false);
     setNotice(`已应用预设：${preset.name}`);
+  }
+
+  function deletePromptPreset(presetId: string) {
+    const preset = promptPresets.find((item) => item.id === presetId);
+    if (!preset) return;
+    if (!window.confirm(`确定删除预设「${preset.name}」？`)) return;
+
+    const nextPresets = promptPresets.filter((item) => item.id !== presetId);
+    window.localStorage.setItem(
+      PRODUCT_BATCH_PROMPT_PRESETS_STORAGE_KEY,
+      JSON.stringify({ version: 1, presets: nextPresets }),
+    );
+    setPromptPresets(nextPresets);
+    if (!nextPresets.length) setPresetMenuOpen(false);
+    setNotice(`已删除预设：${preset.name}`);
   }
 
   async function handleApply(proposalKeys?: string[], label = "选中商品") {
@@ -981,17 +1009,19 @@ export default function ProductBatchOptimizationPage() {
               <label className="text-xs font-medium text-fg-secondary">
                 数量
                 <input
-                  type="number"
-                  min={1}
-                  max={50}
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   className="input mt-1"
-                  value={form.limit}
-                  onChange={(e) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      limit: Number(e.target.value) || 1,
-                    }))
-                  }
+                  value={limitInput}
+                  onChange={(e) => {
+                    const value = e.target.value.replace(/[^\d]/g, "");
+                    setLimitInput(value);
+                    const next = Number(value);
+                    if (Number.isFinite(next) && next > 0) {
+                      setForm((prev) => ({ ...prev, limit: next }));
+                    }
+                  }}
                 />
               </label>
               <label className="text-xs font-medium text-fg-secondary">
@@ -1066,21 +1096,37 @@ export default function ProductBatchOptimizationPage() {
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
-              <select
-                value=""
-                onChange={(e) => applyPromptPreset(e.target.value)}
-                className="h-10 min-w-[180px] rounded-md border border-border-subtle bg-bg-primary px-3 text-sm text-fg-primary outline-none focus:border-brand-400"
-                disabled={!promptPresets.length || generating}
-              >
-                <option value="">
-                  {promptPresets.length ? "选择预设" : "暂无预设"}
-                </option>
-                {promptPresets.map((preset) => (
-                  <option key={preset.id} value={preset.id}>
-                    {preset.name}
-                  </option>
-                ))}
-              </select>
+              <div ref={presetMenuRef} className="relative min-w-[180px]">
+                <button
+                  type="button"
+                  onClick={() => setPresetMenuOpen((open) => !open)}
+                  className="flex h-10 w-full items-center justify-between gap-2 rounded-md border border-border-subtle bg-bg-primary px-3 text-sm text-fg-primary outline-none transition-colors hover:bg-bg-secondary focus:border-brand-400 disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={!promptPresets.length || generating}
+                >
+                  <span>{promptPresets.length ? "选择预设" : "暂无预设"}</span>
+                  <ChevronDown size={14} />
+                </button>
+                {presetMenuOpen && promptPresets.length ? (
+                  <div className="absolute left-0 top-[calc(100%+4px)] z-30 max-h-56 w-full overflow-y-auto rounded-md border border-border-subtle bg-bg-primary py-1 shadow-lg">
+                    {promptPresets.map((preset) => (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() => applyPromptPreset(preset.id)}
+                        onContextMenu={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          deletePromptPreset(preset.id);
+                        }}
+                        className="block w-full px-3 py-2 text-left text-sm text-fg-primary hover:bg-bg-secondary"
+                        title="右键删除预设"
+                      >
+                        {preset.name}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
               <button
                 type="submit"
                 className="btn btn-primary btn-md"
@@ -1328,7 +1374,7 @@ export default function ProductBatchOptimizationPage() {
         <div className="mt-5 border-t border-border-subtle pt-4">
           <div className="mb-3 flex items-center justify-between gap-3">
             <div>
-              <h3 className="text-sm font-semibold text-fg-primary">提交记录</h3>
+              <h3 className="text-base font-semibold text-fg-primary">提交记录</h3>
               <p className="mt-1 text-xs text-fg-tertiary">
                 已提交的预览记录会显示在这里，可展开查看并重新提交。
               </p>
@@ -1584,6 +1630,15 @@ SHOPIFY_CLIENT_SECRET=...`}</pre>
       ) : null}
     </main>
   );
+}
+
+function normalizeLimitInput(value: string, fallback: number) {
+  const parsed = Number(value);
+  if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+  const fallbackValue = Number(fallback);
+  return Number.isFinite(fallbackValue) && fallbackValue > 0
+    ? Math.floor(fallbackValue)
+    : 1;
 }
 
 function readProductBatchPromptPresets(): ProductBatchPromptPreset[] {

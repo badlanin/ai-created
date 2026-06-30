@@ -1243,20 +1243,23 @@ export function getStoredShopifyToken(userId: number, deviceId: string): {
 export async function getStoredShopifyAccessToken(
   userId: number,
   deviceId: string,
+  shopDomain?: string,
 ): Promise<{
   shopDomain: string;
   accessToken: string;
 } | null> {
   const db = getDb();
+  const requestedDomain = shopDomain ? normalizeShopDomain(shopDomain) : null;
   const row = db
     .prepare(
       `SELECT shop_domain, access_token_enc, auth_mode, client_id
          FROM shopify_connections
         WHERE user_id = ? AND device_id = ?
+          AND (? IS NULL OR shop_domain = ?)
         ORDER BY is_active DESC, updated_at DESC, id DESC
         LIMIT 1`,
     )
-    .get(userId, deviceId) as
+    .get(userId, deviceId, requestedDomain, requestedDomain) as
     | {
         shop_domain: string;
         access_token_enc: string;
@@ -1918,6 +1921,7 @@ export async function getShopifyCategoryMetafieldOptions(
   userId: number,
   deviceId: string,
   categoryId: string,
+  shopDomain?: string,
 ): Promise<ShopifyCategoryMetafieldOptionsResult> {
   const cleanedCategoryId = cleanField(categoryId);
   if (
@@ -1933,7 +1937,7 @@ export async function getShopifyCategoryMetafieldOptions(
     };
   }
 
-  const stored = await getStoredShopifyAccessToken(userId, deviceId);
+  const stored = await getStoredShopifyAccessToken(userId, deviceId, shopDomain);
   if (!stored) throw new Error("尚未绑定 Shopify");
 
   const warnings: string[] = [];

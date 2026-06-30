@@ -3596,6 +3596,9 @@ export default function ProductListingPage() {
             <ProductFormPanel
               form={form}
               setForm={setForm}
+              shopDomain={
+                hasActiveShopifyBinding && binding ? binding.shopDomain : ""
+              }
               shopifyBindingKey={
                 hasActiveShopifyBinding && binding
                   ? `${binding.shopDomain}:${binding.updatedAt || 0}`
@@ -5405,6 +5408,7 @@ function ShopifyCategoryPicker({
 function ProductFormPanel({
   form,
   setForm,
+  shopDomain,
   shopifyBindingKey,
   variantRows,
   setVariantRows,
@@ -5428,6 +5432,7 @@ function ProductFormPanel({
 }: {
   form: ProductForm;
   setForm: React.Dispatch<React.SetStateAction<ProductForm>>;
+  shopDomain: string;
   shopifyBindingKey: string;
   variantRows: ProductVariantRow[];
   setVariantRows: React.Dispatch<React.SetStateAction<ProductVariantRow[]>>;
@@ -5915,8 +5920,10 @@ function ProductFormPanel({
 
   useEffect(() => {
     const categoryId = form.shopifyCategoryId;
+    const categoryMetafieldsRequestKey = `${shopifyBindingKey}:${categoryId}`;
     if (
       !shopifyBindingKey ||
+      !shopDomain ||
       !categoryId ||
       categoryId === SHOPIFY_UNCATEGORIZED_CATEGORY_ID ||
       !isShopifyTaxonomyCategoryId(categoryId)
@@ -5930,14 +5937,18 @@ function ProductFormPanel({
     }
 
     const controller = new AbortController();
-    if (categoryMetafieldsCategoryIdRef.current !== categoryId) {
+    if (categoryMetafieldsCategoryIdRef.current !== categoryMetafieldsRequestKey) {
       setShopifyCategoryMetafields({});
       onProductMetafieldDefinitionsChange([]);
     }
     setLoadingCategoryMetafields(true);
     setCategoryMetafieldLoadError("");
+    const params = new URLSearchParams({
+      categoryId,
+      shopDomain,
+    });
     fetchWithShopifyDevice(
-      `/api/shopify/category-metafields?categoryId=${encodeURIComponent(categoryId)}`,
+      `/api/shopify/category-metafields?${params.toString()}`,
       { signal: controller.signal },
     )
       .then(async (res) => {
@@ -5953,12 +5964,13 @@ function ProductFormPanel({
         if (!res.ok) throw new Error(data.error || res.statusText);
         setShopifyCategoryMetafields(data.fields || {});
         onProductMetafieldDefinitionsChange(data.productDefinitions || []);
-        categoryMetafieldsCategoryIdRef.current = categoryId;
+        categoryMetafieldsCategoryIdRef.current = categoryMetafieldsRequestKey;
       })
       .catch((e) => {
         if (controller.signal.aborted) return;
-        if (categoryMetafieldsCategoryIdRef.current !== categoryId) {
+        if (categoryMetafieldsCategoryIdRef.current !== categoryMetafieldsRequestKey) {
           setShopifyCategoryMetafields({});
+          onProductMetafieldDefinitionsChange([]);
         }
         setCategoryMetafieldLoadError(e instanceof Error ? e.message : String(e));
       })
@@ -5970,6 +5982,7 @@ function ProductFormPanel({
   }, [
     form.shopifyCategoryId,
     onProductMetafieldDefinitionsChange,
+    shopDomain,
     shopifyBindingKey,
   ]);
 

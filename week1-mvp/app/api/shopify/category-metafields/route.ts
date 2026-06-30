@@ -10,10 +10,12 @@ export async function GET(req: NextRequest) {
     const user = await requireUser();
     const deviceId = getShopifyDeviceIdFromRequest(req);
     const categoryId = req.nextUrl.searchParams.get("categoryId") || "";
+    const shopDomain = req.nextUrl.searchParams.get("shopDomain") || undefined;
     const result = await getShopifyCategoryMetafieldOptions(
       user.id,
       deviceId,
       categoryId,
+      shopDomain,
     );
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {

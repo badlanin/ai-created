@@ -388,6 +388,14 @@ type ShopifyProductsQueryData = {
   };
 };
 
+type ShopifyShopQueryData = {
+  shop?: {
+    name?: string | null;
+    myshopifyDomain?: string | null;
+    primaryDomain?: { host?: string | null } | null;
+  } | null;
+};
+
 const PRODUCTS_QUERY = `
 query Products($first: Int!, $after: String, $query: String) {
   products(first: $first, after: $after, query: $query, sortKey: CREATED_AT, reverse: true) {
@@ -571,6 +579,7 @@ export async function getProductBatchStatus() {
 
 export async function listProductBatchStores(): Promise<ProductBatchStoreSafe[]> {
   const doc = await readStoresDocument();
+  await refreshProductBatchStoreNames(doc);
   return doc.stores.map(toSafeStore);
 }
 
@@ -599,6 +608,17 @@ export async function exchangeAndSaveProductBatchStore(input: {
     clientId,
     clientSecret,
   });
+  const shopName =
+    (await fetchShopifyShopName({
+      key: "new",
+      name: null,
+      shopDomain,
+      accessToken: token.accessToken,
+      apiVersion: SHOPIFY_API_VERSION,
+      language: "en",
+      market: "",
+      brandVoice: "",
+    }).catch(() => "")) || fallbackStoreName(shopDomain);
   const nowMs = Date.now();
   const now = new Date(nowMs).toISOString();
   const expiresAt =
@@ -607,7 +627,7 @@ export async function exchangeAndSaveProductBatchStore(input: {
       : new Date(nowMs + PRODUCT_BATCH_TOKEN_TTL_MS).toISOString();
   const store: ProductBatchStoreRecord = {
     key: nextStoreKey(doc.stores),
-    name: shopDomain.replace(/\.myshopify\.com$/i, ""),
+    name: shopName,
     shopDomain,
     accessTokenEnc: encryptSecret(token.accessToken),
     apiVersion: SHOPIFY_API_VERSION,
@@ -1084,6 +1104,7 @@ export async function applyProductBatchRun(opts: {
 
 async function requireStoreTokens(storeKeys?: string[]): Promise<ShopifyToken[]> {
   const doc = await readStoresDocument();
+  await refreshProductBatchStoreNames(doc);
   if (!doc.stores.length) {
     throw new Error("请先在产品批量优化里添加 Shopify 店铺。");
   }
@@ -2145,7 +2166,7 @@ function normalizeStoreRecord(
 ): ProductBatchStoreRecord {
   return {
     key: normalizeStoreKey(store.key),
-    name: cleanInlineText(store.name || store.shopDomain.replace(/\.myshopify\.com$/i, "")),
+    name: cleanInlineText(store.name || fallbackStoreName(store.shopDomain)),
     shopDomain: normalizeShopDomainInput(store.shopDomain),
     accessTokenEnc: store.accessTokenEnc,
     apiVersion: store.apiVersion || SHOPIFY_API_VERSION,
@@ -2177,7 +2198,7 @@ function toSafeStore(store: ProductBatchStoreRecord): ProductBatchStoreSafe {
   const remaining = expiresAtMs ? Math.max(0, expiresAtMs - Date.now()) : 0;
   return {
     key: store.key,
-    name: store.name || store.shopDomain.replace(/\.myshopify\.com$/i, ""),
+    name: store.name || fallbackStoreName(store.shopDomain),
     shopDomain: store.shopDomain,
     apiVersion: store.apiVersion || SHOPIFY_API_VERSION,
     language: store.language || "en",
@@ -2189,6 +2210,62 @@ function toSafeStore(store: ProductBatchStoreRecord): ProductBatchStoreSafe {
     tokenRemainingMs: remaining,
     defaultProductQuery: store.defaultProductQuery || "status:active",
   };
+}
+
+async function refreshProductBatchStoreNames(doc: ProductBatchStoresDocument) {
+  const candidates = doc.stores.filter(shouldRefreshStoreName);
+  if (!candidates.length) return;
+
+  const refreshed = await Promise.all(candidates.map(async (store) => {
+    try {
+      const shopName = await fetchShopifyShopName({
+        key: store.key,
+        name: store.name,
+        shopDomain: store.shopDomain,
+        accessToken: getValidStoreAccessToken(store),
+        apiVersion: store.apiVersion || SHOPIFY_API_VERSION,
+        language: store.language || "en",
+        market: store.market || "",
+        brandVoice: store.brandVoice || "",
+      });
+      if (!shopName || shopName === store.name) return false;
+      store.name = shopName;
+      store.updatedAt = new Date().toISOString();
+      return true;
+    } catch {
+      return false;
+    }
+  }));
+
+  if (refreshed.some(Boolean)) {
+    await writeStoresDocument(doc);
+  }
+}
+
+function shouldRefreshStoreName(store: ProductBatchStoreRecord) {
+  const current = cleanInlineText(store.name || "");
+  if (!current) return true;
+  return current.toLowerCase() === fallbackStoreName(store.shopDomain).toLowerCase();
+}
+
+function fallbackStoreName(shopDomain: string) {
+  return normalizeShopDomainInput(shopDomain).replace(/\.myshopify\.com$/i, "");
+}
+
+async function fetchShopifyShopName(connection: ShopifyToken) {
+  const data = await shopifyGraphql<ShopifyShopQueryData>(
+    connection,
+    `query BuqiqiProductBatchShopName {
+      shop {
+        name
+        myshopifyDomain
+        primaryDomain {
+          host
+        }
+      }
+    }`,
+  );
+  return cleanInlineText(data.shop?.name || "");
 }
 
 async function requestShopifyAccessToken(input: {
