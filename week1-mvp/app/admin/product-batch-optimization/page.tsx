@@ -170,6 +170,7 @@ export default function ProductBatchOptimizationPage() {
   const [status, setStatus] = useState<StatusData | null>(null);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [activeRun, setActiveRun] = useState<RunDocument | null>(null);
+  const [openRunId, setOpenRunId] = useState<string | null>(null);
   const [selectedStoreKeys, setSelectedStoreKeys] = useState<Set<string>>(new Set());
   const [selectedProposalKeys, setSelectedProposalKeys] = useState<Set<string>>(
     new Set(),
@@ -311,9 +312,17 @@ export default function ProductBatchOptimizationPage() {
 
   useEffect(() => {
     setPromptPresets(readProductBatchPromptPresets());
-    void loadStatus(false);
+    void loadStatus(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (activeRun || loading || generating) return;
+    const firstPreviewRun = filteredPreviewRuns[0];
+    if (!firstPreviewRun) return;
+    void loadRun(firstPreviewRun.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRun?.id, filteredPreviewRuns, loading, generating]);
 
   useEffect(() => {
     if (!activeRun) return;
@@ -352,6 +361,7 @@ export default function ProductBatchOptimizationPage() {
             );
             if (disposed) return;
             setActiveRun(runData.run);
+            setOpenRunId(runData.run.id);
             setSelectedProposalKeys(
               new Set(runData.run.proposals.map((item) => proposalKey(item))),
             );
@@ -413,8 +423,9 @@ export default function ProductBatchOptimizationPage() {
         }
         return next;
       });
-      if (selectFirst && !activeRun && data.runs?.[0]) {
-        await loadRun(data.runs[0].id);
+      const firstPreviewRun = data.runs?.find((run) => !isRunSubmitted(run));
+      if (selectFirst && !activeRun && firstPreviewRun) {
+        await loadRun(firstPreviewRun.id);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -431,6 +442,7 @@ export default function ProductBatchOptimizationPage() {
       ),
     );
     setActiveRun(data.run);
+    setOpenRunId(data.run.id);
     setSelectedProposalKeys(
       new Set(data.run.proposals.map((item) => proposalKey(item))),
     );
@@ -439,9 +451,7 @@ export default function ProductBatchOptimizationPage() {
 
   async function toggleRun(id: string) {
     if (activeRun?.id === id) {
-      setActiveRun(null);
-      setSelectedProposalKeys(new Set());
-      setExpandedProposalKey(null);
+      setOpenRunId((current) => (current === id ? null : id));
       return;
     }
     await loadRun(id);
@@ -764,6 +774,7 @@ export default function ProductBatchOptimizationPage() {
       setRuns((prev) => prev.filter((item) => item.id !== id));
       if (activeRun?.id === id) {
         setActiveRun(null);
+        setOpenRunId(null);
         setSelectedProposalKeys(new Set());
       }
     } catch (e) {
@@ -1242,14 +1253,15 @@ export default function ProductBatchOptimizationPage() {
         <div className="space-y-2">
           {filteredPreviewRuns.length ? (
             filteredPreviewRuns.map((run) => {
-              const isOpen = activeRun?.id === run.id;
+              const isActive = activeRun?.id === run.id;
+              const isOpen = openRunId === run.id;
               return (
                 <div key={run.id} className="space-y-3">
                   <button
                     type="button"
                     onClick={() => void toggleRun(run.id)}
                     className={`relative w-full rounded-lg border p-3 pb-9 text-left transition-colors ${
-                      isOpen
+                      isActive
                         ? "border-brand-400 bg-[var(--brand-50-bg)]"
                         : "border-border-subtle bg-bg-secondary hover:bg-bg-tertiary"
                     }`}
@@ -1287,7 +1299,7 @@ export default function ProductBatchOptimizationPage() {
                       删除
                     </span>
                   </button>
-                  {isOpen && activeRun ? (
+                  {isOpen && isActive && activeRun ? (
                     <div className="rounded-lg border border-brand-200 bg-bg-primary p-3">
                       <ActiveRunPreviewResults
                         filteredProposals={filteredProposals}
@@ -1329,14 +1341,15 @@ export default function ProductBatchOptimizationPage() {
           <div className="space-y-2">
             {filteredSubmittedRuns.length ? (
               filteredSubmittedRuns.map((run) => {
-                const isOpen = activeRun?.id === run.id;
+                const isActive = activeRun?.id === run.id;
+                const isOpen = openRunId === run.id;
                 return (
                   <div key={run.id} className="space-y-3">
                     <button
                       type="button"
                       onClick={() => void toggleRun(run.id)}
                       className={`relative w-full rounded-lg border p-3 pb-9 text-left transition-colors ${
-                        isOpen
+                        isActive
                           ? "border-brand-400 bg-[var(--brand-50-bg)]"
                           : "border-border-subtle bg-bg-secondary hover:bg-bg-tertiary"
                       }`}
@@ -1395,7 +1408,7 @@ export default function ProductBatchOptimizationPage() {
                         </span>
                       </span>
                     </button>
-                    {isOpen && activeRun ? (
+                    {isOpen && isActive && activeRun ? (
                       <div className="rounded-lg border border-brand-200 bg-bg-primary p-3">
                         <ActiveRunPreviewResults
                           filteredProposals={filteredProposals}
