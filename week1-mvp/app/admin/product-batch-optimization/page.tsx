@@ -69,6 +69,7 @@ type Snapshot = {
   seoTitle: string;
   metaDescription: string;
   categorySize: string;
+  templateStyle: string;
   tags: string[];
   faq: FaqItem[];
   imageAltTexts?: Array<{ mediaId: string; altText: string }>;
@@ -2012,6 +2013,8 @@ function SnapshotCompareGrid({
       />
       <SnapshotTagList tags={current.tags} tone="current" />
       <SnapshotTagList tags={proposed.tags} tone="proposed" />
+      <SnapshotField label="模板样式" value={current.templateStyle} tone="current" />
+      <SnapshotField label="模板样式" value={proposed.templateStyle} tone="proposed" />
       <SnapshotField label="类别元字段尺寸" value={current.categorySize} tone="current" />
       <SnapshotField label="类别元字段尺寸" value={proposed.categorySize} tone="proposed" />
       <SnapshotFaqList faq={current.faq} tone="current" />

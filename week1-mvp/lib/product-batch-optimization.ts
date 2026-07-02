@@ -125,6 +125,7 @@ const PRODUCT_BATCH_OUTPUT_SCHEMA = {
       },
     },
     categorySize: { type: "string" },
+    templateStyle: { type: "string" },
     faq: {
       type: "array",
       items: {
@@ -148,6 +149,7 @@ const PRODUCT_BATCH_OUTPUT_SCHEMA = {
     "tags",
     "imageAltTexts",
     "categorySize",
+    "templateStyle",
     "faq",
     "rationale",
     "warnings",
@@ -174,6 +176,7 @@ export type ProductBatchSnapshot = {
   seoTitle: string;
   metaDescription: string;
   categorySize: string;
+  templateStyle: string;
   tags: string[];
   faq: ProductBatchFaqItem[];
   imageAltTexts: ProductBatchImageSnapshot[];
@@ -186,6 +189,7 @@ export type ProductBatchProposed = {
   seoTitle: string;
   metaDescription: string;
   categorySize: string;
+  templateStyle: string;
   tags: string[];
   imageAltTexts: Array<{ mediaId: string; altText: string }>;
   faq: ProductBatchFaqItem[];
@@ -367,6 +371,7 @@ type ShopifyProductNode = {
   handle?: string | null;
   vendor?: string | null;
   productType?: string | null;
+  templateSuffix?: string | null;
   status?: string | null;
   category?: { id?: string | null } | null;
   tags?: string[] | null;
@@ -408,6 +413,7 @@ query Products($first: Int!, $after: String, $query: String) {
         handle
         vendor
         productType
+        templateSuffix
         status
         category {
           id
@@ -495,6 +501,7 @@ mutation ProductBatchUpdate($product: ProductUpdateInput!) {
       handle
       tags
       status
+      templateSuffix
       seo {
         title
         description
@@ -1237,6 +1244,7 @@ async function generateProductProposal(opts: {
       categoryMetafields: {
         categorySize: getProductCategorySize(opts.product),
       },
+      templateStyle: opts.product.templateSuffix || "",
       descriptionHtml: truncate(opts.product.descriptionHtml || "", 7000),
       images: images.map((image) => ({
         mediaId: image.mediaId,
@@ -1366,6 +1374,7 @@ function getCurrentSnapshot(
     seoTitle: product.seo?.title || "",
     metaDescription: product.seo?.description || "",
     categorySize: getProductCategorySize(product),
+    templateStyle: normalizeProductTemplateStyle(product.templateSuffix || ""),
     tags: product.tags || [],
     faq: getProductFaq(product),
     imageAltTexts: images,
@@ -1433,6 +1442,9 @@ function normalizeGeneratedProposal(
       limits.metaDescriptionMaxChars,
     ),
     categorySize,
+    templateStyle: normalizeProductTemplateStyle(
+      String(raw.templateStyle ?? product.templateSuffix ?? ""),
+    ),
     tags: stripAppliedTag(normalizeTags(raw.tags, product.tags || [])),
     imageAltTexts,
     faq,
@@ -1463,6 +1475,13 @@ function parseSizeOptions(value: string): string[] {
   return options;
 }
 
+function normalizeProductTemplateStyle(value: unknown): string {
+  const cleaned = cleanInlineText(String(value || ""));
+  if (!cleaned) return "";
+  if (/^(默认|默认产品|默认模板|default|default product)$/i.test(cleaned)) return "";
+  if (cleaned.toLowerCase() === "product") return "";
+  return cleaned.replace(/^product[.-]/i, "").trim();
+}
 function normalizeCategorySize(
   value: string,
   opts: {
@@ -1494,6 +1513,7 @@ function summarizeChanges(
     seoTitleChanged: current.seoTitle !== proposed.seoTitle,
     metaDescriptionChanged: current.metaDescription !== proposed.metaDescription,
     categorySizeChanged: current.categorySize !== proposed.categorySize,
+    templateStyleChanged: current.templateStyle !== proposed.templateStyle,
     tagsChanged: JSON.stringify(current.tags) !== JSON.stringify(proposed.tags),
     faqChanged: JSON.stringify(current.faq) !== JSON.stringify(proposed.faq),
     imageAltTextUpdates: proposed.imageAltTexts.length,
@@ -1504,6 +1524,13 @@ async function updateProduct(
   connection: ShopifyToken,
   proposal: ProductBatchProposal,
 ) {
+  const hasTemplateStyle = Object.prototype.hasOwnProperty.call(
+    proposal.proposed,
+    "templateStyle",
+  );
+  const templateSuffix = normalizeProductTemplateStyle(
+    proposal.proposed.templateStyle ?? proposal.current.templateStyle ?? "",
+  );
   const data = await shopifyGraphql<{
     productUpdate: {
       product: unknown;
@@ -1519,6 +1546,7 @@ async function updateProduct(
         title: proposal.proposed.seoTitle,
         description: proposal.proposed.metaDescription,
       },
+      ...(hasTemplateStyle ? { templateSuffix: templateSuffix || null } : {}),
       tags: stripAppliedTag(proposal.proposed.tags),
     },
   });
