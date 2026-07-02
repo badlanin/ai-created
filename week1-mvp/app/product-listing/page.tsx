@@ -553,6 +553,8 @@ function parseBooleanLike(value: string): boolean | null {
   return null;
 }
 
+const FIXED_PRODUCT_TAG = "ai-seo-geo-applied";
+
 const FIXED_FULFILLMENT_DEFAULTS: Pick<
   ProductForm,
   | "inventory"
@@ -577,7 +579,7 @@ const EMPTY_FORM: ProductForm = {
   vendor: "",
   templateStyle: "",
   collections: "",
-  tags: "",
+  tags: FIXED_PRODUCT_TAG,
   color: "",
   material: "",
   neckline: "",

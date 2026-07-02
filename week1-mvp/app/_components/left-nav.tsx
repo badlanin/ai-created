@@ -95,7 +95,6 @@ export function LeftNav({
   const adminPaths = [
     "/admin/users",
     "/admin/product-stats",
-    "/admin/product-batch-optimization",
     "/admin/billing",
     "/admin/model-prices",
     "/admin/announcements",
@@ -187,6 +186,12 @@ export function LeftNav({
           Icon={ShoppingBag}
           active={isActive("/product-listing")}
           manualRefresh
+        />
+        <CollapsedIcon
+          href="/admin/product-batch-optimization"
+          label="产品批量优化"
+          Icon={Sparkles}
+          active={isActive("/admin/product-batch-optimization")}
         />
         <CollapsedIcon
           href="/history"
@@ -326,6 +331,12 @@ export function LeftNav({
             manualRefresh
           />
           <NavItem
+            href="/admin/product-batch-optimization"
+            Icon={Sparkles}
+            label="产品批量优化"
+            active={isActive("/admin/product-batch-optimization")}
+          />
+          <NavItem
             href="/history"
             Icon={HistoryIcon}
             label="历史记录"
@@ -373,7 +384,6 @@ export function LeftNav({
             >
               <SubItem href="/admin/users" label="用户" active={isActive("/admin/users")} />
               <SubItem href="/admin/product-stats" label="产品数量统计" active={isActive("/admin/product-stats")} />
-              <SubItem href="/admin/product-batch-optimization" label="产品批量优化" active={isActive("/admin/product-batch-optimization")} />
               <SubItem href="/admin/billing" label="团队账单" active={isActive("/admin/billing")} />
               <SubItem href="/admin/model-prices" label="单价 / 汇率" active={isActive("/admin/model-prices")} />
               <SubItem href="/admin/announcements" label="公告栏" active={isActive("/admin/announcements")} />
