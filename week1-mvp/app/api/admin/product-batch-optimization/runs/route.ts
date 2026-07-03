@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { listProductBatchRuns } from "@/lib/product-batch-optimization";
 
 export const runtime = "nodejs";
 
 export async function GET() {
   try {
-    await requireAdmin();
+    await requireUser();
     const runs = await listProductBatchRuns();
     return NextResponse.json({ ok: true, runs });
   } catch (e) {

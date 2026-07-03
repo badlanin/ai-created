@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { exchangeAndSaveProductBatchStore } from "@/lib/product-batch-optimization";
 
 export const runtime = "nodejs";
@@ -7,7 +7,7 @@ export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   try {
-    await requireAdmin();
+    await requireUser();
     const body = (await req.json()) as {
       shopDomain?: string;
       clientId?: string;

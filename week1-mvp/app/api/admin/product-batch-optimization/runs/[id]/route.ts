@@ -3,7 +3,7 @@ import {
   deleteProductBatchRun,
   readProductBatchRun,
 } from "@/lib/product-batch-optimization";
-import { requireAdmin } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -12,7 +12,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    await requireAdmin();
+    await requireUser();
     const { id } = await params;
     const run = await readProductBatchRun(id);
     return NextResponse.json({ ok: true, run });
@@ -30,7 +30,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    await requireAdmin();
+    await requireUser();
     const { id } = await params;
     await deleteProductBatchRun(id);
     return NextResponse.json({ ok: true });

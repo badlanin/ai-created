@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { deleteProductBatchStore } from "@/lib/product-batch-optimization";
 
 export const runtime = "nodejs";
@@ -9,7 +9,7 @@ export async function DELETE(
   { params }: { params: Promise<{ key: string }> },
 ) {
   try {
-    await requireAdmin();
+    await requireUser();
     const { key } = await params;
     const result = await deleteProductBatchStore(key);
     return NextResponse.json(result);

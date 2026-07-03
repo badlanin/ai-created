@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import {
   createProductBatchPreview,
   failProductBatchPreview,
@@ -10,7 +10,7 @@ export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireAdmin();
+    const user = await requireUser();
     const body = (await req.json()) as {
       jobId?: string;
       storeKeys?: string[];

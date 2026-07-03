@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { getProductBatchPreviewProgress } from "@/lib/product-batch-optimization";
 
 export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
   try {
-    await requireAdmin();
+    await requireUser();
     const jobId = req.nextUrl.searchParams.get("jobId") || "";
     if (!jobId) {
       return NextResponse.json({ error: "jobId 必填" }, { status: 400 });
