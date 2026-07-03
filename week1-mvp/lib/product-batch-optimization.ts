@@ -1798,14 +1798,25 @@ function formatCompletenessIssues(issues: ProductBatchCompletenessIssue[]) {
 
 function normalizeCompleteSentenceText(value: string, maxChars: number) {
   const text = clampTextToCompleteBoundary(value, maxChars);
-  if (!text || hasSentenceTerminal(text, false) || hasDanglingEnding(text)) return text;
-  return appendTerminalMark(text, ".", maxChars);
+  if (!text) return text;
+  if (hasSentenceTerminal(text, false)) return text;
+  const repaired = trimDanglingTextTail(text);
+  return appendTerminalMark(repaired || text, ".", maxChars);
 }
 
 function normalizeQuestionText(value: string) {
   const text = clampTextToCompleteBoundary(value, 220);
   if (!text || hasSentenceTerminal(text, true) || hasDanglingEnding(text)) return text;
   return appendTerminalMark(text, "?", 220);
+}
+function trimDanglingTextTail(value: string) {
+  let text = cleanInlineText(value).replace(/[\s,;:，；：、\-–—]+$/u, "");
+  for (let index = 0; index < 8 && hasDanglingEnding(text); index += 1) {
+    const next = text.replace(/\s+\S+$/u, "").trim();
+    if (!next || next === text) break;
+    text = next.replace(/[\s,;:，；：、\-–—]+$/u, "");
+  }
+  return text;
 }
 
 function clampTextToWordBoundary(value: string, maxChars: number) {
@@ -1855,10 +1866,10 @@ function hasDanglingQuestionEnding(value: string) {
 }
 
 function hasDanglingEnding(value: string) {
-  const text = cleanInlineText(value)
-    .replace(/[.!?。！？"'）)\]}]+$/u, "")
-    .trim();
-  if (!text) return true;
+  const source = cleanInlineText(value);
+  if (!source) return true;
+  if (hasSentenceTerminal(source, false)) return false;
+  const text = source.trim();
   if (/[,:;，：；、\-–—]$/u.test(text)) return true;
   return /\b(?:and|or|but|with|without|for|to|of|in|on|at|by|from|as|that|which|while|because|including|featuring|made|crafted|designed|suitable|ideal|perfect|plus|via|using|into|over|under|between|through|about|toward|towards|the|a|an|its|their|your|our|is|are|was|were|be|being|been|has|have|had|can|will|would|should|may|might|must)\s*$/i.test(text);
 }
