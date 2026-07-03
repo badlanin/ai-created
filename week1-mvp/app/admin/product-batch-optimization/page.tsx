@@ -865,6 +865,11 @@ export default function ProductBatchOptimizationPage() {
       .map((proposal) => proposalKey(proposal));
   }
 
+  function currentStoreSelectedProposalKeys() {
+    const currentKeys = new Set(currentStoreProposalKeys());
+    return Array.from(selectedProposalKeys).filter((key) => currentKeys.has(key));
+  }
+
   function allPreviewProposalKeys() {
     return activeRun?.proposals.map((proposal) => proposalKey(proposal)) || [];
   }
@@ -1232,11 +1237,15 @@ export default function ProductBatchOptimizationPage() {
           selectedProductCount={selectedProductCount}
           applyOptions={applyOptions}
           currentStoreProposalCount={currentStoreProposalKeys().length}
+          currentStoreSelectedProposalCount={currentStoreSelectedProposalKeys().length}
           allPreviewProposalCount={allPreviewProposalKeys().length}
           onSelectAll={selectAllProducts}
           onClear={clearProducts}
           onDelete={() => void handleDeleteRun(activeRun.id)}
           onApplySelected={() => void handleApply()}
+          onApplyCurrentStoreSelected={() =>
+            void handleApply(currentStoreSelectedProposalKeys(), "当前店铺选中项")
+          }
           onApplyCurrentStore={() =>
             void handleApply(currentStoreProposalKeys(), "当前店铺全部预览")
           }
@@ -1681,11 +1690,13 @@ function ActiveRunPreviewControls({
   selectedProductCount,
   applyOptions,
   currentStoreProposalCount,
+  currentStoreSelectedProposalCount,
   allPreviewProposalCount,
   onSelectAll,
   onClear,
   onDelete,
   onApplySelected,
+  onApplyCurrentStoreSelected,
   onApplyCurrentStore,
   onApplyAll,
   onSetDraft,
@@ -1695,11 +1706,13 @@ function ActiveRunPreviewControls({
   selectedProductCount: number;
   applyOptions: { setDraft: boolean };
   currentStoreProposalCount: number;
+  currentStoreSelectedProposalCount: number;
   allPreviewProposalCount: number;
   onSelectAll: () => void;
   onClear: () => void;
   onDelete: () => void;
   onApplySelected: () => void;
+  onApplyCurrentStoreSelected: () => void;
   onApplyCurrentStore: () => void;
   onApplyAll: () => void;
   onSetDraft: (checked: boolean) => void;
@@ -1759,7 +1772,15 @@ function ActiveRunPreviewControls({
           </label>
         </div>
 
-        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-4">
+          <button
+            type="button"
+            onClick={onApplyCurrentStoreSelected}
+            className="btn btn-danger btn-sm justify-center"
+            disabled={applying || currentStoreSelectedProposalCount === 0}
+          >
+            提交当前店铺选中项
+          </button>
           <button
             type="button"
             onClick={onApplyCurrentStore}
