@@ -104,6 +104,17 @@ const PRODUCT_BATCH_SYSTEM_PROMPT = `
 1. 只返回合法 JSON，不要 Markdown、代码块、解释或 JSON 之外的文字。
 2. JSON 必须匹配 schema。warnings 用来提示资料不足、疑似风险或需要人工确认的点。
 3. rationale 必须使用中文，简洁说明本次优化了哪些内容以及为什么这样改。
+4. 所有商品描述、Meta 描述、FAQ 问答、图片 Alt 以及其他自然语言文案必须是完整句子或完整短语，不得以介词、连词、逗号、冒号、破折号或半截短语结尾；字符限制不足时必须改写成更短的完整表达，不得直接截断。
+`.trim();
+
+const PRODUCT_BATCH_REPAIR_SYSTEM_PROMPT = `
+你是 Shopify 商品文案完整性修复器。你只修复不完整、被截断或残缺的句子，不做新的营销创作。
+规则：
+1. 只返回合法 JSON，必须匹配 schema。
+2. 不新增未经输入支持的商品事实，不新增材质、认证、折扣、物流、售后、库存、SKU、价格或变体信息。
+3. 保持商品标题、URL handle、标签、类别尺寸、模板样式尽量不变；除非这些字段本身存在残句，否则不要改动。
+4. 修复 descriptionHtml、metaDescription、FAQ、imageAltTexts 等自然语言字段，使每个句子完整，不得以介词、连词、逗号、冒号、破折号或半截短语结尾。
+5. 如果字符限制不够，必须改写成更短的完整句子，不得直接截断。
 `.trim();
 
 const PRODUCT_BATCH_OUTPUT_SCHEMA = {
@@ -195,6 +206,12 @@ export type ProductBatchProposed = {
   tags: string[];
   imageAltTexts: Array<{ mediaId: string; altText: string }>;
   faq: ProductBatchFaqItem[];
+};
+
+type ProductBatchCompletenessIssue = {
+  field: string;
+  message: string;
+  value?: string;
 };
 
 export type ProductBatchProposal = {
@@ -1109,6 +1126,11 @@ export async function applyProductBatchRun(opts: {
       if (!connection) {
         throw new Error(`店铺 ${storeKey || "未知"} 未绑定或 token 不存在。`);
       }
+      assertProposalCompleteness(
+        proposal.proposed,
+        validateProposalCompleteness(proposal.proposed),
+        "写回前内容完整性校验失败",
+      );
       result.productUpdate = await updateProduct(connection, proposal);
       if (opts.applyFaq !== false) {
         result.faqUpdate = await updateFaqMetafields(
@@ -1383,8 +1405,30 @@ async function generateProductProposal(opts: {
 
   const rawText = response.text || "";
   const raw = parseJsonObject(rawText);
-  const proposed = normalizeGeneratedProposal(raw, opts.product, images, opts.prompt);
   const current = getCurrentSnapshot(opts.product, images);
+  let proposed = normalizeGeneratedProposal(raw, opts.product, images, opts.prompt);
+  let completenessIssues = validateProposalCompleteness(proposed);
+  let repairedForCompleteness = false;
+  if (completenessIssues.length) {
+    proposed = await repairProposalCompleteness({
+      user: opts.user,
+      connection: opts.connection,
+      product: opts.product,
+      images,
+      prompt: opts.prompt,
+      model: opts.model,
+      proposed,
+      issues: completenessIssues,
+      signal: opts.signal,
+    });
+    repairedForCompleteness = true;
+    completenessIssues = validateProposalCompleteness(proposed);
+  }
+  assertProposalCompleteness(
+    proposed,
+    completenessIssues,
+    "模型生成内容完整性校验失败",
+  );
 
   return {
     store: {
@@ -1408,10 +1452,142 @@ async function generateProductProposal(opts: {
     proposed,
     changeSummary: summarizeChanges(current, proposed),
     rationale: cleanText(String(raw.rationale || "")),
-    warnings: normalizeStringArray(raw.warnings).slice(0, 8),
+    warnings: [
+      ...normalizeStringArray(raw.warnings),
+      ...(repairedForCompleteness
+        ? ["已自动修复生成内容中的残句，写回前会再次校验完整性。"]
+        : []),
+    ].slice(0, 8),
   };
 }
 
+async function repairProposalCompleteness(opts: {
+  user: User;
+  connection: ShopifyToken;
+  product: ShopifyProductNode;
+  images: ProductBatchImageSnapshot[];
+  prompt: string;
+  model: string;
+  proposed: ProductBatchProposed;
+  issues: ProductBatchCompletenessIssue[];
+  signal?: AbortSignal;
+}): Promise<ProductBatchProposed> {
+  if (opts.signal?.aborted) {
+    throw new Error("已强制停止");
+  }
+  const repairData = {
+    store: {
+      shopDomain: opts.connection.shopDomain,
+      language: opts.connection.language || "English",
+      market: opts.connection.market || "Global ecommerce",
+      brandVoice: opts.connection.brandVoice || "clean, factual, conversion-oriented",
+    },
+    currentProduct: {
+      id: opts.product.id,
+      title: opts.product.title,
+      handle: opts.product.handle,
+      vendor: opts.product.vendor,
+      productType: opts.product.productType,
+      tags: opts.product.tags || [],
+      seo: opts.product.seo || {},
+      descriptionText: getDescriptionParagraphTexts(opts.product.descriptionHtml || ""),
+      faq: getProductFaq(opts.product),
+      categorySize: getProductCategorySize(opts.product),
+      templateStyle: opts.product.templateSuffix || "",
+      images: opts.images.map((image) => ({
+        mediaId: image.mediaId,
+        existingAltText: image.altText,
+        url: image.url,
+      })),
+    },
+    proposed: opts.proposed,
+    incompleteIssues: opts.issues,
+    rules: PRODUCT_BATCH_RULES,
+    customInstructions: opts.prompt,
+  };
+
+  const client = buildGenaiClient();
+  try {
+    const response = await abortable(
+      retryWithBackoff(
+        async () => {
+          await acquireToken(opts.model);
+          return client.models.generateContent({
+            model: opts.model,
+            contents: [
+              {
+                role: "user",
+                parts: [
+                  {
+                    text:
+                      "Repair the incomplete Shopify product optimization JSON. Return only the repaired JSON.\n\n" +
+                      JSON.stringify(repairData, null, 2),
+                  },
+                ],
+              },
+            ],
+            config: {
+              systemInstruction: PRODUCT_BATCH_REPAIR_SYSTEM_PROMPT,
+              responseMimeType: "application/json",
+              responseSchema: PRODUCT_BATCH_OUTPUT_SCHEMA,
+              temperature: 0.1,
+            },
+          });
+        },
+        {
+          maxRetries: 2,
+          initialDelayMs: 1500,
+          maxDelayMs: 12_000,
+          onRetry: (err, attempt, delayMs) => {
+            console.warn(
+              `[product-batch] completeness repair retry ${attempt} in ${Math.round(delayMs)}ms: ${formatModelError(err)}`,
+            );
+          },
+        },
+      ),
+      opts.signal,
+      "已强制停止",
+    );
+    if (opts.signal?.aborted) {
+      throw new Error("已强制停止");
+    }
+    recordUsage({
+      userId: opts.user.id,
+      model: opts.model,
+      feature: "other",
+      usageMetadata: response.usageMetadata as never,
+      success: true,
+      notes: {
+        kind: "product-batch-completeness-repair",
+        shopDomain: opts.connection.shopDomain,
+        productId: opts.product.id,
+        issueCount: opts.issues.length,
+      },
+    });
+    const repairedRaw = parseJsonObject(response.text || "");
+    return normalizeGeneratedProposal(
+      { ...opts.proposed, ...repairedRaw },
+      opts.product,
+      opts.images,
+      opts.prompt,
+    );
+  } catch (err) {
+    recordUsage({
+      userId: opts.user.id,
+      model: opts.model,
+      feature: "other",
+      success: false,
+      error: formatModelError(err),
+      notes: {
+        kind: "product-batch-completeness-repair",
+        shopDomain: opts.connection.shopDomain,
+        productId: opts.product.id,
+        issueCount: opts.issues.length,
+      },
+    });
+    throw new Error(`自动修复完整性失败：${formatModelError(err)}`);
+  }
+}
 function getCurrentSnapshot(
   product: ShopifyProductNode,
   images: ProductBatchImageSnapshot[],
@@ -1479,7 +1655,7 @@ function normalizeGeneratedProposal(
     },
   );
 
-  return {
+  return normalizeProposalCompleteness({
     title: clampText(String(raw.title || product.title || ""), limits.productTitleMaxChars),
     handle:
       normalizeProductHandle(raw.handle || raw.title) ||
@@ -1497,9 +1673,204 @@ function normalizeGeneratedProposal(
     tags: stripAppliedTag(normalizeTags(raw.tags, product.tags || [])),
     imageAltTexts,
     faq,
+  });
+}
+
+function normalizeProposalCompleteness(proposed: ProductBatchProposed): ProductBatchProposed {
+  const limits = PRODUCT_BATCH_RULES.contentRules;
+  return {
+    ...proposed,
+    title: clampTextToWordBoundary(proposed.title, limits.productTitleMaxChars),
+    seoTitle: clampTextToWordBoundary(proposed.seoTitle, limits.seoTitleMaxChars),
+    metaDescription: normalizeCompleteSentenceText(
+      proposed.metaDescription,
+      limits.metaDescriptionMaxChars,
+    ),
+    imageAltTexts: proposed.imageAltTexts.map((item) => ({
+      mediaId: item.mediaId,
+      altText: normalizeCompleteSentenceText(
+        item.altText,
+        limits.imageAltTextMaxChars,
+      ),
+    })).filter((item) => item.mediaId && item.altText),
+    faq: proposed.faq.map((item) => ({
+      question: normalizeQuestionText(item.question),
+      answer: normalizeCompleteSentenceText(item.answer, 500),
+    })).filter((item) => item.question && item.answer),
   };
 }
 
+function validateProposalCompleteness(
+  proposed: ProductBatchProposed,
+): ProductBatchCompletenessIssue[] {
+  const issues: ProductBatchCompletenessIssue[] = [];
+  addTextCompletenessIssue(issues, "title", proposed.title, {
+    required: true,
+    requireTerminal: false,
+  });
+  addTextCompletenessIssue(issues, "seoTitle", proposed.seoTitle, {
+    required: true,
+    requireTerminal: false,
+  });
+  addTextCompletenessIssue(issues, "metaDescription", proposed.metaDescription, {
+    required: true,
+    requireTerminal: true,
+  });
+
+  const descriptionParts = getDescriptionParagraphTexts(proposed.descriptionHtml);
+  if (!descriptionParts.length) {
+    issues.push({ field: "descriptionHtml", message: "商品描述为空或无法读取。" });
+  }
+  descriptionParts.forEach((part, index) => {
+    addTextCompletenessIssue(issues, `descriptionHtml[${index + 1}]`, part, {
+      required: true,
+      requireTerminal: true,
+    });
+  });
+
+  proposed.faq.forEach((item, index) => {
+    addTextCompletenessIssue(issues, `faq[${index + 1}].question`, item.question, {
+      required: true,
+      requireTerminal: true,
+      question: true,
+    });
+    addTextCompletenessIssue(issues, `faq[${index + 1}].answer`, item.answer, {
+      required: true,
+      requireTerminal: true,
+    });
+  });
+
+  proposed.imageAltTexts.forEach((item, index) => {
+    addTextCompletenessIssue(issues, `imageAltTexts[${index + 1}]`, item.altText, {
+      required: true,
+      requireTerminal: true,
+    });
+  });
+
+  return issues.slice(0, 24);
+}
+
+function assertProposalCompleteness(
+  proposed: ProductBatchProposed,
+  issues = validateProposalCompleteness(proposed),
+  context = "内容完整性校验失败",
+) {
+  if (!issues.length) return;
+  throw new Error(`${context}：${formatCompletenessIssues(issues)}`);
+}
+
+function addTextCompletenessIssue(
+  issues: ProductBatchCompletenessIssue[],
+  field: string,
+  value: string,
+  opts: { required?: boolean; requireTerminal?: boolean; question?: boolean },
+) {
+  const text = cleanInlineText(value || "");
+  if (!text) {
+    if (opts.required) issues.push({ field, message: "内容为空。" });
+    return;
+  }
+  if (hasDanglingEnding(text)) {
+    issues.push({ field, message: "内容以未完成的连接词或残句结尾。", value: text });
+    return;
+  }
+  if (opts.requireTerminal && !hasSentenceTerminal(text, Boolean(opts.question))) {
+    issues.push({ field, message: "内容缺少完整句子结尾。", value: text });
+  }
+}
+
+function formatCompletenessIssues(issues: ProductBatchCompletenessIssue[]) {
+  return issues
+    .slice(0, 8)
+    .map((issue) => `${issue.field} ${issue.message}`)
+    .join("；");
+}
+
+function normalizeCompleteSentenceText(value: string, maxChars: number) {
+  const text = clampTextToCompleteBoundary(value, maxChars);
+  if (!text || hasSentenceTerminal(text, false) || hasDanglingEnding(text)) return text;
+  return appendTerminalMark(text, ".", maxChars);
+}
+
+function normalizeQuestionText(value: string) {
+  const text = clampTextToCompleteBoundary(value, 220);
+  if (!text || hasSentenceTerminal(text, true) || hasDanglingEnding(text)) return text;
+  return appendTerminalMark(text, "?", 220);
+}
+
+function clampTextToWordBoundary(value: string, maxChars: number) {
+  const text = cleanInlineText(value);
+  if (text.length <= maxChars) return text;
+  const cut = text.slice(0, maxChars).trim();
+  return cut.replace(/[\s,;:，；：、\-–—]+\S*$/, "").trim() || cut;
+}
+
+function clampTextToCompleteBoundary(value: string, maxChars: number) {
+  const text = cleanInlineText(value);
+  if (text.length <= maxChars) return text;
+  const cut = text.slice(0, maxChars).trim();
+  const sentenceEnd = findLastSentenceEnd(cut);
+  if (sentenceEnd >= Math.max(30, Math.floor(maxChars * 0.45))) {
+    return cut.slice(0, sentenceEnd + 1).trim();
+  }
+  return clampTextToWordBoundary(cut, maxChars);
+}
+
+function findLastSentenceEnd(value: string) {
+  let last = -1;
+  for (const match of value.matchAll(/[.!?。！？]/g)) {
+    last = match.index ?? last;
+  }
+  return last;
+}
+
+function appendTerminalMark(value: string, mark: "." | "?", maxChars: number) {
+  const cleaned = value.replace(/[\s,;:，；：、\-–—]+$/u, "");
+  if (cleaned.length + mark.length <= maxChars) return `${cleaned}${mark}`;
+  const shortened = clampTextToWordBoundary(cleaned, Math.max(1, maxChars - mark.length));
+  return shortened ? `${shortened}${mark}` : cleaned;
+}
+
+function hasSentenceTerminal(value: string, questionOnly: boolean) {
+  const text = cleanInlineText(value).replace(/["'）)\]}]+$/u, "");
+  return questionOnly ? /[?？]$/.test(text) : /[.!?。！？]$/.test(text);
+}
+
+function hasDanglingEnding(value: string) {
+  const text = cleanInlineText(value)
+    .replace(/[.!?。！？"'）)\]}]+$/u, "")
+    .trim();
+  if (!text) return true;
+  if (/[,:;，：；、\-–—]$/u.test(text)) return true;
+  return /\b(?:and|or|but|with|without|for|to|of|in|on|at|by|from|as|that|which|while|because|including|featuring|made|crafted|designed|suitable|ideal|perfect|plus|via|using|into|over|under|between|through|about|toward|towards|the|a|an|its|their|your|our|is|are|was|were|be|being|been|has|have|had|can|will|would|should|may|might|must)\s*$/i.test(text);
+}
+
+function getDescriptionParagraphTexts(html: string) {
+  const source = String(html || "");
+  const matches = Array.from(source.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi))
+    .map((match) => htmlToPlainText(match[1]))
+    .filter(Boolean);
+  if (matches.length) return matches;
+  const plain = htmlToPlainText(source);
+  return plain
+    .split(/\n{2,}/)
+    .map((part) => cleanInlineText(part))
+    .filter(Boolean);
+}
+
+function htmlToPlainText(html: string) {
+  return cleanInlineText(
+    String(html || "")
+      .replace(/<br\s*\/?\s*>/gi, "\n")
+      .replace(/<[^>]*>/g, " ")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/&amp;/gi, "&")
+      .replace(/&lt;/gi, "<")
+      .replace(/&gt;/gi, ">")
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/g, "'"),
+  );
+}
 function extractPromptCategorySizeOptions(prompt: string): string[] {
   const text = cleanInlineText(prompt || "");
   if (!text) return [];
