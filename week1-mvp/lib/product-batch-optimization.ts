@@ -95,7 +95,7 @@ const PRODUCT_BATCH_SYSTEM_PROMPT = `
 2. 标题必须重新优化，不得与原标题完全相同。
 3. 描述正文只使用自然段，不要生成项目符号、编号列表、参数表或属性清单。
 4. 描述 HTML 只能使用 p、strong、em、br 标签，不要把 FAQ 写进描述正文。
-5. SEO 标题控制在 70 字符以内，Meta 描述控制在 160 字符以内。
+5. SEO 标题控制在 70 字符以内；Meta 描述控制在 160 字符以内。SEO 标题和Meta 描述在限定字数内都必须保证句子的完整。
 6. 图片 Alt 简洁描述可见商品，不要重复 "image of"，不要堆砌关键词。
 7. categorySize 表示 Shopify 类别元字段中的尺寸；不要写固定默认值，只能根据用户输入、现有商品资料或可确认的商品信息生成。
 8. 如果 customInstructions 明确列出 categorySize/类别元字段尺寸的固定尺寸，categorySize 必须逐项复制这些值，不得新增、猜测或扩展未列出的尺寸。
