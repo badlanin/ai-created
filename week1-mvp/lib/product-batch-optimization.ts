@@ -79,7 +79,7 @@ const PRODUCT_BATCH_RULES = {
 };
 
 export const PRODUCT_BATCH_DEFAULT_PROMPT =
-  "请根据现有商品资料优化 Shopify 商品标题、描述、SEO 标题、Meta 描述、标签、图片 Alt 和 FAQ。保持事实准确，不要编造材质、认证、折扣、物流或售后承诺。文案优先使用英文，适合礼服/婚纱独立站自然搜索和 AI 问答引用。";
+  "请根据现有商品资料优化 Shopify 商品标题、描述、SEO 标题、Meta 描述、标签、图片 Alt 和 FAQ。保持事实准确，不要编造材质、认证、折扣、物流或售后承诺。除类别元字段尺寸外，标题、描述、SEO 标题、Meta 描述、标签、图片 Alt 和 FAQ 必须统一使用英文；涉及数字时使用阿拉伯数字。适合礼服/婚纱独立站自然搜索和 AI 问答引用。";
 
 const PRODUCT_BATCH_SYSTEM_PROMPT = `
 你是专业的 Shopify 商品 SEO/GEO 内容编辑。你会基于输入的商品资料，优化商品标题、商品描述、页面标题、元描述、标签、图片 Alt 文本和 FAQ。
@@ -91,30 +91,31 @@ const PRODUCT_BATCH_SYSTEM_PROMPT = `
 4. 不得改变品牌名称、产品型号和其他关键商品信息。
 
 文案规则：
-1. 使用店铺目标语言、目标市场用语和品牌语气。
+1. 除 categorySize、rationale 和 warnings 外，标题、描述、页面标题、Meta 描述、标签、图片 Alt 和 FAQ 问答必须统一使用英文；中文输入只能作为理解资料，不得直接输出到这些字段；涉及数字时使用阿拉伯数字，并保持目标市场用语和品牌语气。
 2. 标题必须重新优化，不得与原标题完全相同。
 3. 描述正文只使用自然段，不要生成项目符号、编号列表、参数表或属性清单。
 4. 描述 HTML 只能使用 p、strong、em、br 标签，不要把 FAQ 写进描述正文。
 5. SEO 标题控制在 70 字符以内；Meta 描述控制在 160 字符以内。SEO 标题和Meta 描述在限定字数内都必须保证句子的完整。SEO 标题必须同时输出 seoTitlePhrases 候选短语，Meta 描述必须同时输出 metaDescriptionSentences 候选短句；候选内容要短、完整、可由代码组合，不要依赖截断。
 6. 图片 Alt 简洁描述可见商品，不要重复 "image of"，不要堆砌关键词。
-7. categorySize 表示 Shopify 类别元字段中的尺寸；不要写固定默认值，只能根据用户输入、现有商品资料或可确认的商品信息生成。
-8. 如果 customInstructions 明确列出 categorySize/类别元字段尺寸的固定尺寸，categorySize 必须逐项复制这些值，不得新增、猜测或扩展未列出的尺寸。
+7. categorySize 表示 Shopify 类别元字段中的尺寸，只能输出阿拉伯数字尺寸列表，例如 "2, 4, 6, 8"；不要输出中文数字、英文单词或说明文字；不要写固定默认值，只能根据用户输入、现有商品资料或可确认的商品信息生成。
+8. 如果 customInstructions 明确列出 categorySize/类别元字段尺寸的固定尺寸，categorySize 必须逐项复制其中的阿拉伯数字，不得新增、猜测或扩展未列出的尺寸。
 
 输出规则：
 1. 只返回合法 JSON，不要 Markdown、代码块、解释或 JSON 之外的文字。
 2. JSON 必须匹配 schema。warnings 用来提示资料不足、疑似风险或需要人工确认的点。
 3. rationale 必须使用中文，简洁说明本次优化了哪些内容以及为什么这样改。
-4. 所有商品描述、Meta 描述、FAQ 问答、图片 Alt 以及其他自然语言文案必须是完整句子或完整短语，不得以介词、连词、逗号、冒号、破折号或半截短语结尾；字符限制不足时必须改写成更短的完整表达，不得直接截断。
+4. 所有商品标题、商品描述、页面标题、Meta 描述、标签、FAQ 问答、图片 Alt 等自然语言写回字段必须是英文完整句子或英文完整短语，不得以介词、连词、逗号、冒号、破折号或半截短语结尾；字符限制不足时必须改写成更短的完整表达，不得直接截断。categorySize 例外，只能使用阿拉伯数字尺寸列表。
 `.trim();
 
 const PRODUCT_BATCH_REPAIR_SYSTEM_PROMPT = `
-你是 Shopify 商品文案完整性修复器。你只修复不完整、被截断或残缺的句子，不做新的营销创作。
+你是 Shopify 商品文案完整性与英文质量修复器。你只修复不完整、被截断、残缺、非英文或类别尺寸格式错误的字段，不做新的营销创作。
 规则：
 1. 只返回合法 JSON，必须匹配 schema。
 2. 不新增未经输入支持的商品事实，不新增材质、认证、折扣、物流、售后、库存、SKU、价格或变体信息。
-3. 保持商品标题、URL handle、标签、类别尺寸、模板样式尽量不变；除非这些字段本身存在残句，否则不要改动。
-4. 修复 descriptionHtml、seoTitle、seoTitlePhrases、metaDescription、metaDescriptionSentences、FAQ、imageAltTexts 等自然语言字段，使每个句子或短语完整，不得以介词、连词、逗号、冒号、破折号或半截短语结尾。
+3. 保持 URL handle、模板样式尽量不变；修复商品标题、标签和类别尺寸时只处理质量问题，不新增事实。
+4. 修复 title、descriptionHtml、seoTitle、seoTitlePhrases、metaDescription、metaDescriptionSentences、tags、FAQ、imageAltTexts 等自然语言字段，使每个句子或短语为英文且完整，不得以介词、连词、逗号、冒号、破折号或半截短语结尾。
 5. 如果字符限制不够，必须改写成更短的完整句子，不得直接截断。
+6. categorySize 只能保留阿拉伯数字尺寸列表，例如 "2, 4, 6, 8"；不得输出中文数字、英文单词或说明文字。
 `.trim();
 
 const PRODUCT_BATCH_OUTPUT_SCHEMA = {
@@ -1130,10 +1131,10 @@ export async function applyProductBatchRun(opts: {
       if (!connection) {
         throw new Error(`店铺 ${storeKey || "未知"} 未绑定或 token 不存在。`);
       }
-      assertProposalCompleteness(
+      assertProposalQuality(
         proposal.proposed,
-        validateProposalCompleteness(proposal.proposed),
-        "写回前内容完整性校验失败",
+        validateProposalQuality(proposal.proposed),
+        "写回前内容质量校验失败",
       );
       result.productUpdate = await updateProduct(connection, proposal);
       if (opts.applyFaq !== false) {
@@ -1299,7 +1300,7 @@ async function generateProductProposal(opts: {
       key: opts.connection.key,
       name: opts.connection.name || opts.connection.shopDomain,
       shopDomain: opts.connection.shopDomain,
-      language: opts.connection.language || "English unless the user prompt says otherwise",
+      language: "English",
       market: opts.connection.market || "Global ecommerce",
       brandVoice:
         opts.connection.brandVoice ||
@@ -1411,9 +1412,9 @@ async function generateProductProposal(opts: {
   const raw = parseJsonObject(rawText);
   const current = getCurrentSnapshot(opts.product, images);
   let proposed = normalizeGeneratedProposal(raw, opts.product, images, opts.prompt);
-  let completenessIssues = validateProposalCompleteness(proposed);
-  let repairedForCompleteness = false;
-  if (completenessIssues.length) {
+  let qualityIssues = validateProposalQuality(proposed);
+  let repairedForQuality = false;
+  if (qualityIssues.length) {
     proposed = await repairProposalCompleteness({
       user: opts.user,
       connection: opts.connection,
@@ -1422,16 +1423,16 @@ async function generateProductProposal(opts: {
       prompt: opts.prompt,
       model: opts.model,
       proposed,
-      issues: completenessIssues,
+      issues: qualityIssues,
       signal: opts.signal,
     });
-    repairedForCompleteness = true;
-    completenessIssues = validateProposalCompleteness(proposed);
+    repairedForQuality = true;
+    qualityIssues = validateProposalQuality(proposed);
   }
-  assertProposalCompleteness(
+  assertProposalQuality(
     proposed,
-    completenessIssues,
-    "模型生成内容完整性校验失败",
+    qualityIssues,
+    "模型生成内容质量校验失败",
   );
 
   return {
@@ -1439,7 +1440,7 @@ async function generateProductProposal(opts: {
       key: opts.connection.key,
       name: opts.connection.name,
       shopDomain: opts.connection.shopDomain,
-      language: opts.connection.language || "English",
+      language: "English",
       market: opts.connection.market || "Global ecommerce",
     },
     product: {
@@ -1458,8 +1459,8 @@ async function generateProductProposal(opts: {
     rationale: cleanText(String(raw.rationale || "")),
     warnings: [
       ...normalizeStringArray(raw.warnings),
-      ...(repairedForCompleteness
-        ? ["已自动修复生成内容中的残句，写回前会再次校验完整性。"]
+      ...(repairedForQuality
+        ? ["已自动修复生成内容中的残句、非英文内容或类别尺寸格式，写回前会再次校验。"]
         : []),
     ].slice(0, 8),
   };
@@ -1482,7 +1483,7 @@ async function repairProposalCompleteness(opts: {
   const repairData = {
     store: {
       shopDomain: opts.connection.shopDomain,
-      language: opts.connection.language || "English",
+      language: "English",
       market: opts.connection.market || "Global ecommerce",
       brandVoice: opts.connection.brandVoice || "clean, factual, conversion-oriented",
     },
@@ -1505,7 +1506,7 @@ async function repairProposalCompleteness(opts: {
       })),
     },
     proposed: opts.proposed,
-    incompleteIssues: opts.issues,
+    qualityIssues: opts.issues,
     rules: PRODUCT_BATCH_RULES,
     customInstructions: opts.prompt,
   };
@@ -1524,7 +1525,7 @@ async function repairProposalCompleteness(opts: {
                 parts: [
                   {
                     text:
-                      "Repair the incomplete Shopify product optimization JSON. Return only the repaired JSON.\n\n" +
+                      "Repair the incomplete, non-English, or incorrectly formatted Shopify product optimization JSON. Return only the repaired JSON.\n\n" +
                       JSON.stringify(repairData, null, 2),
                   },
                 ],
@@ -1544,7 +1545,7 @@ async function repairProposalCompleteness(opts: {
           maxDelayMs: 12_000,
           onRetry: (err, attempt, delayMs) => {
             console.warn(
-              `[product-batch] completeness repair retry ${attempt} in ${Math.round(delayMs)}ms: ${formatModelError(err)}`,
+              `[product-batch] quality repair retry ${attempt} in ${Math.round(delayMs)}ms: ${formatModelError(err)}`,
             );
           },
         },
@@ -1562,7 +1563,7 @@ async function repairProposalCompleteness(opts: {
       usageMetadata: response.usageMetadata as never,
       success: true,
       notes: {
-        kind: "product-batch-completeness-repair",
+        kind: "product-batch-quality-repair",
         shopDomain: opts.connection.shopDomain,
         productId: opts.product.id,
         issueCount: opts.issues.length,
@@ -1583,13 +1584,13 @@ async function repairProposalCompleteness(opts: {
       success: false,
       error: formatModelError(err),
       notes: {
-        kind: "product-batch-completeness-repair",
+        kind: "product-batch-quality-repair",
         shopDomain: opts.connection.shopDomain,
         productId: opts.product.id,
         issueCount: opts.issues.length,
       },
     });
-    throw new Error(`自动修复完整性失败：${formatModelError(err)}`);
+    throw new Error(`自动修复内容质量失败：${formatModelError(err)}`);
   }
 }
 function getCurrentSnapshot(
@@ -1843,6 +1844,98 @@ function validateProposalCompleteness(
   return issues.slice(0, 24);
 }
 
+function validateProposalQuality(
+  proposed: ProductBatchProposed,
+): ProductBatchCompletenessIssue[] {
+  return [
+    ...validateProposalCompleteness(proposed),
+    ...validateProposalEnglish(proposed),
+    ...validateProposalCategorySize(proposed),
+  ].slice(0, 32);
+}
+
+function validateProposalEnglish(
+  proposed: ProductBatchProposed,
+): ProductBatchCompletenessIssue[] {
+  const issues: ProductBatchCompletenessIssue[] = [];
+  addEnglishLanguageIssue(issues, "title", proposed.title);
+  addEnglishLanguageIssue(issues, "seoTitle", proposed.seoTitle);
+  addEnglishLanguageIssue(issues, "metaDescription", proposed.metaDescription);
+
+  getDescriptionParagraphTexts(proposed.descriptionHtml).forEach((part, index) => {
+    addEnglishLanguageIssue(issues, `descriptionHtml[${index + 1}]`, part);
+  });
+
+  proposed.tags.forEach((tag, index) => {
+    if (!shouldPreserveTag(tag)) {
+      addEnglishLanguageIssue(issues, `tags[${index + 1}]`, tag);
+    }
+  });
+
+  proposed.faq.forEach((item, index) => {
+    addEnglishLanguageIssue(issues, `faq[${index + 1}].question`, item.question);
+    addEnglishLanguageIssue(issues, `faq[${index + 1}].answer`, item.answer);
+  });
+
+  proposed.imageAltTexts.forEach((item, index) => {
+    addEnglishLanguageIssue(issues, `imageAltTexts[${index + 1}]`, item.altText);
+  });
+
+  return issues;
+}
+
+function validateProposalCategorySize(
+  proposed: ProductBatchProposed,
+): ProductBatchCompletenessIssue[] {
+  const text = cleanInlineText(proposed.categorySize || "");
+  if (!text) return [];
+  if (/^[0-9\s,，、/.-]+$/u.test(text) && parseSizeOptions(text).length) return [];
+  return [{
+    field: "categorySize",
+    message: "类别元字段尺寸只能使用阿拉伯数字列表。",
+    value: text,
+  }];
+}
+
+function addEnglishLanguageIssue(
+  issues: ProductBatchCompletenessIssue[],
+  field: string,
+  value: string,
+) {
+  const text = cleanInlineText(value || "");
+  if (!text) return;
+  if (hasCjkText(text)) {
+    issues.push({ field, message: "包含中文或 CJK 字符，必须改为英文。", value: text });
+    return;
+  }
+  if (!isLikelyEnglishText(text)) {
+    issues.push({ field, message: "疑似非英文内容，必须改为英文。", value: text });
+  }
+}
+
+function hasCjkText(value: string) {
+  return /[\u3400-\u9FFF\uF900-\uFAFF\u3040-\u30FF\uAC00-\uD7AF]/u.test(value);
+}
+
+function isLikelyEnglishText(value: string) {
+  const text = cleanInlineText(value)
+    .replace(/https?:\/\/\S+/gi, " ")
+    .replace(/&[a-z]+;/gi, " ");
+  const letters = text.match(/\p{L}/gu) || [];
+  if (!letters.length) return true;
+  const latinLetters = text.match(/\p{Script=Latin}/gu) || [];
+  return latinLetters.length / letters.length >= 0.9;
+}
+
+function assertProposalQuality(
+  proposed: ProductBatchProposed,
+  issues = validateProposalQuality(proposed),
+  context = "内容质量校验失败",
+) {
+  if (!issues.length) return;
+  throw new Error(`${context}：${formatCompletenessIssues(issues)}`);
+}
+
 function assertProposalCompleteness(
   proposed: ProductBatchProposed,
   issues = validateProposalCompleteness(proposed),
@@ -2039,11 +2132,12 @@ function normalizeCategorySize(
   }
 
   const cleaned = cleanInlineText(value || opts.fallback || "");
-  if (!opts.currentOptions.length) return cleaned;
+  const parsed = parseSizeOptions(cleaned);
+  if (!opts.currentOptions.length) return parsed.join(", ");
 
   const allowed = new Set(opts.currentOptions);
-  const kept = parseSizeOptions(cleaned).filter((size) => allowed.has(size));
-  return kept.length ? kept.join(", ") : cleanInlineText(opts.fallback || "");
+  const kept = parsed.filter((size) => allowed.has(size));
+  return kept.length ? kept.join(", ") : parseSizeOptions(opts.fallback || "").join(", ");
 }
 
 function summarizeChanges(
