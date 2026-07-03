@@ -1799,7 +1799,7 @@ function formatCompletenessIssues(issues: ProductBatchCompletenessIssue[]) {
 function normalizeCompleteSentenceText(value: string, maxChars: number) {
   const text = clampTextToCompleteBoundary(value, maxChars);
   if (!text) return text;
-  if (hasSentenceTerminal(text, false)) return text;
+  if (hasSentenceTerminal(text, false) && !hasDanglingEnding(text)) return text;
   const repaired = trimDanglingTextTail(text);
   return appendTerminalMark(repaired || text, ".", maxChars);
 }
@@ -1868,8 +1868,10 @@ function hasDanglingQuestionEnding(value: string) {
 function hasDanglingEnding(value: string) {
   const source = cleanInlineText(value);
   if (!source) return true;
-  if (hasSentenceTerminal(source, false)) return false;
-  const text = source.trim();
+  const text = source
+    .replace(/[.!?。！？"'）)\]}]+$/u, "")
+    .trim();
+  if (!text) return true;
   if (/[,:;，：；、\-–—]$/u.test(text)) return true;
   return /\b(?:and|or|but|with|without|for|to|of|in|on|at|by|from|as|that|which|while|because|including|featuring|made|crafted|designed|suitable|ideal|perfect|plus|via|using|into|over|under|between|through|about|toward|towards|the|a|an|its|their|your|our|is|are|was|were|be|being|been|has|have|had|can|will|would|should|may|might|must)\s*$/i.test(text);
 }
