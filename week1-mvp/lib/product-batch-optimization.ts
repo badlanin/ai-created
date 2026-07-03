@@ -1770,11 +1770,21 @@ function addTextCompletenessIssue(
     if (opts.required) issues.push({ field, message: "内容为空。" });
     return;
   }
+  if (opts.question) {
+    if (hasDanglingQuestionEnding(text)) {
+      issues.push({ field, message: "问题以未完成的连接词或残句结尾。", value: text });
+      return;
+    }
+    if (opts.requireTerminal && !hasSentenceTerminal(text, true)) {
+      issues.push({ field, message: "问题缺少问号结尾。", value: text });
+    }
+    return;
+  }
   if (hasDanglingEnding(text)) {
     issues.push({ field, message: "内容以未完成的连接词或残句结尾。", value: text });
     return;
   }
-  if (opts.requireTerminal && !hasSentenceTerminal(text, Boolean(opts.question))) {
+  if (opts.requireTerminal && !hasSentenceTerminal(text, false)) {
     issues.push({ field, message: "内容缺少完整句子结尾。", value: text });
   }
 }
@@ -1834,6 +1844,14 @@ function appendTerminalMark(value: string, mark: "." | "?", maxChars: number) {
 function hasSentenceTerminal(value: string, questionOnly: boolean) {
   const text = cleanInlineText(value).replace(/["'）)\]}]+$/u, "");
   return questionOnly ? /[?？]$/.test(text) : /[.!?。！？]$/.test(text);
+}
+function hasDanglingQuestionEnding(value: string) {
+  const text = cleanInlineText(value)
+    .replace(/[?？"'）)\]}]+$/u, "")
+    .trim();
+  if (!text) return true;
+  if (/[,;:，；：、\-–—]$/u.test(text)) return true;
+  return /\b(?:and|or|but|because|including|featuring|plus|via|using|that|which|while)\s*$/i.test(text);
 }
 
 function hasDanglingEnding(value: string) {
