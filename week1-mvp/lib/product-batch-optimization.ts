@@ -1589,7 +1589,6 @@ async function updateProduct(
     product: {
       id: proposal.product.id,
       title: proposal.proposed.title,
-      handle: proposal.proposed.handle,
       descriptionHtml: proposal.proposed.descriptionHtml,
       seo: {
         title: proposal.proposed.seoTitle,

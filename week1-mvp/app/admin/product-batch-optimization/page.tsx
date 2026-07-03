@@ -2025,8 +2025,6 @@ function SnapshotCompareGrid({
       <SnapshotField label="SEO 标题" value={proposed.seoTitle} tone="proposed" />
       <SnapshotField label="Meta 描述" value={current.metaDescription} tone="current" />
       <SnapshotField label="Meta 描述" value={proposed.metaDescription} tone="proposed" />
-      <SnapshotField label="URL handle" value={current.handle} tone="current" />
-      <SnapshotField label="URL handle" value={proposed.handle} tone="proposed" />
     </section>
   );
 }
