@@ -25,6 +25,8 @@ import {
   X,
 } from "lucide-react";
 
+import { fetchWithShopifyDevice } from "@/lib/shopify-device-client";
+
 type StoreSafe = {
   key: string;
   name: string;
@@ -349,7 +351,7 @@ export default function ProductBatchOptimizationPage() {
     async function refreshProgress() {
       try {
         const data = await readJson<{ progress: PreviewProgress }>(
-          await fetch(
+          await fetchWithShopifyDevice(
             `/api/admin/product-batch-optimization/preview/progress?jobId=${encodeURIComponent(jobId)}`,
           ),
         );
@@ -362,7 +364,7 @@ export default function ProductBatchOptimizationPage() {
         if (nextProgress.done) {
           if (nextProgress.runId) {
             const runData = await readJson<{ run: RunDocument }>(
-              await fetch(
+              await fetchWithShopifyDevice(
                 `/api/admin/product-batch-optimization/runs/${encodeURIComponent(nextProgress.runId)}`,
               ),
             );
@@ -415,7 +417,7 @@ export default function ProductBatchOptimizationPage() {
     setError(null);
     try {
       const data = await readJson<StatusData>(
-        await fetch("/api/admin/product-batch-optimization/status"),
+        await fetchWithShopifyDevice("/api/admin/product-batch-optimization/status"),
       );
       setStatus(data);
       setRuns(data.runs || []);
@@ -444,7 +446,7 @@ export default function ProductBatchOptimizationPage() {
   async function loadRun(id: string) {
     setError(null);
     const data = await readJson<{ run: RunDocument }>(
-      await fetch(
+      await fetchWithShopifyDevice(
         `/api/admin/product-batch-optimization/runs/${encodeURIComponent(id)}`,
       ),
     );
@@ -498,7 +500,7 @@ export default function ProductBatchOptimizationPage() {
     setNotice(null);
     try {
       await readJson<{ jobId: string; queued: boolean }>(
-        await fetch("/api/admin/product-batch-optimization/preview", {
+        await fetchWithShopifyDevice("/api/admin/product-batch-optimization/preview", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -532,7 +534,7 @@ export default function ProductBatchOptimizationPage() {
     setStopRequested(true);
     try {
       const result = await readJson<{ cancelled?: boolean; reason?: string }>(
-        await fetch("/api/admin/product-batch-optimization/preview/cancel", {
+        await fetchWithShopifyDevice("/api/admin/product-batch-optimization/preview/cancel", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ jobId: previewJobId }),
@@ -639,7 +641,7 @@ export default function ProductBatchOptimizationPage() {
     setNotice(null);
     try {
       const data = await readJson<{ run: RunDocument; results: ApplyResult[] }>(
-        await fetch("/api/admin/product-batch-optimization/apply", {
+        await fetchWithShopifyDevice("/api/admin/product-batch-optimization/apply", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -674,7 +676,7 @@ export default function ProductBatchOptimizationPage() {
           ? activeRun
           : (
               await readJson<{ run: RunDocument }>(
-                await fetch(
+                await fetchWithShopifyDevice(
                   `/api/admin/product-batch-optimization/runs/${encodeURIComponent(id)}`,
                 ),
               )
@@ -691,7 +693,7 @@ export default function ProductBatchOptimizationPage() {
 
       setApplying(true);
       const data = await readJson<{ run: RunDocument; results: ApplyResult[] }>(
-        await fetch("/api/admin/product-batch-optimization/apply", {
+        await fetchWithShopifyDevice("/api/admin/product-batch-optimization/apply", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -740,7 +742,7 @@ export default function ProductBatchOptimizationPage() {
         );
       }
       const result = await readJson<{ store: StoreSafe }>(
-        await fetch(
+        await fetchWithShopifyDevice(
           "/api/admin/product-batch-optimization/stores/exchange-token",
           {
             method: "POST",
@@ -773,7 +775,7 @@ export default function ProductBatchOptimizationPage() {
     setError(null);
     try {
       await readJson(
-        await fetch(
+        await fetchWithShopifyDevice(
           `/api/admin/product-batch-optimization/stores/${encodeURIComponent(store.key)}`,
           { method: "DELETE" },
         ),
@@ -795,7 +797,7 @@ export default function ProductBatchOptimizationPage() {
     setError(null);
     try {
       await readJson(
-        await fetch(
+        await fetchWithShopifyDevice(
           `/api/admin/product-batch-optimization/runs/${encodeURIComponent(id)}`,
           { method: "DELETE" },
         ),

@@ -1,13 +1,15 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { listProductBatchRuns } from "@/lib/product-batch-optimization";
+import { getShopifyDeviceIdFromRequest } from "@/lib/shopify-device";
 
 export const runtime = "nodejs";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    await requireUser();
-    const runs = await listProductBatchRuns();
+    const user = await requireUser();
+    const deviceId = getShopifyDeviceIdFromRequest(req);
+    const runs = await listProductBatchRuns({ userId: user.id, deviceId });
     return NextResponse.json({ ok: true, runs });
   } catch (e) {
     const status = (e as { status?: number }).status || 500;

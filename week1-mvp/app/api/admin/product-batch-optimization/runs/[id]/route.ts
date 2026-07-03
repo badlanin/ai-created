@@ -1,20 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireUser } from "@/lib/auth";
 import {
   deleteProductBatchRun,
   readProductBatchRun,
 } from "@/lib/product-batch-optimization";
-import { requireUser } from "@/lib/auth";
+import { getShopifyDeviceIdFromRequest } from "@/lib/shopify-device";
 
 export const runtime = "nodejs";
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    await requireUser();
+    const user = await requireUser();
+    const deviceId = getShopifyDeviceIdFromRequest(req);
     const { id } = await params;
-    const run = await readProductBatchRun(id);
+    const run = await readProductBatchRun(id, { userId: user.id, deviceId });
     return NextResponse.json({ ok: true, run });
   } catch (e) {
     const status = (e as { status?: number }).status || 500;
@@ -26,13 +28,14 @@ export async function GET(
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    await requireUser();
+    const user = await requireUser();
+    const deviceId = getShopifyDeviceIdFromRequest(req);
     const { id } = await params;
-    await deleteProductBatchRun(id);
+    await deleteProductBatchRun({ userId: user.id, deviceId }, id);
     return NextResponse.json({ ok: true });
   } catch (e) {
     const status = (e as { status?: number }).status || 500;

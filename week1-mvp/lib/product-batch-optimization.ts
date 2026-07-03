@@ -21,6 +21,8 @@ const PRODUCT_BATCH_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 
 type PreviewJobState = {
   id: string;
+  userId: number;
+  deviceId: string;
   cancelled: boolean;
   controller: AbortController;
   createdAt: number;
@@ -220,6 +222,8 @@ export type ProductBatchProposal = {
 
 export type ProductBatchRunSummary = {
   id: string;
+  userId?: number;
+  deviceId?: string;
   createdAt: number;
   updatedAt: number;
   shopDomain: string;
@@ -316,6 +320,8 @@ export type ProductBatchStoreSafe = {
 
 type ProductBatchStoreRecord = {
   key: string;
+  userId?: number;
+  deviceId?: string;
   name: string;
   shopDomain: string;
   accessTokenEnc: string;
@@ -332,6 +338,11 @@ type ProductBatchStoreRecord = {
 
 type ProductBatchStoresDocument = {
   stores: ProductBatchStoreRecord[];
+};
+
+type ProductBatchScope = {
+  userId: number;
+  deviceId: string;
 };
 
 type ShopifyMetafieldNode = {
@@ -572,9 +583,9 @@ mutation ProductBatchMetafieldsSet($metafields: [MetafieldsSetInput!]!) {
 }
 `;
 
-export async function getProductBatchStatus() {
-  const stores = await listProductBatchStores();
-  const runs = await listProductBatchRuns();
+export async function getProductBatchStatus(scope: ProductBatchScope) {
+  const stores = await listProductBatchStores(scope);
+  const runs = await listProductBatchRuns(scope);
   return {
     stores,
     runs,
@@ -584,13 +595,17 @@ export async function getProductBatchStatus() {
   };
 }
 
-export async function listProductBatchStores(): Promise<ProductBatchStoreSafe[]> {
+export async function listProductBatchStores(
+  scope: ProductBatchScope,
+): Promise<ProductBatchStoreSafe[]> {
   const doc = await readStoresDocument();
-  await refreshProductBatchStoreNames(doc);
-  return doc.stores.map(toSafeStore);
+  await refreshProductBatchStoreNames(doc, scope);
+  return getScopedStores(doc, scope).map(toSafeStore);
 }
 
 export async function exchangeAndSaveProductBatchStore(input: {
+  userId: number;
+  deviceId: string;
   shopDomain?: string;
   clientId?: string;
   clientSecret?: string;
@@ -602,8 +617,9 @@ export async function exchangeAndSaveProductBatchStore(input: {
     "SHOPIFY_CLIENT_SECRET",
   );
   const doc = await readStoresDocument();
+  const scopedStores = getScopedStores(doc, input);
   if (
-    doc.stores.some(
+    scopedStores.some(
       (store) => store.shopDomain.toLowerCase() === shopDomain.toLowerCase(),
     )
   ) {
@@ -633,7 +649,9 @@ export async function exchangeAndSaveProductBatchStore(input: {
       ? new Date(nowMs + token.expiresIn * 1000).toISOString()
       : new Date(nowMs + PRODUCT_BATCH_TOKEN_TTL_MS).toISOString();
   const store: ProductBatchStoreRecord = {
-    key: nextStoreKey(doc.stores),
+    key: nextStoreKey(scopedStores),
+    userId: input.userId,
+    deviceId: input.deviceId,
     name: shopName,
     shopDomain,
     accessTokenEnc: encryptSecret(token.accessToken),
@@ -652,11 +670,16 @@ export async function exchangeAndSaveProductBatchStore(input: {
   return { ok: true, store: toSafeStore(store) };
 }
 
-export async function deleteProductBatchStore(storeKey: string) {
+export async function deleteProductBatchStore(
+  scope: ProductBatchScope,
+  storeKey: string,
+) {
   const key = normalizeStoreKey(storeKey);
   const doc = await readStoresDocument();
   const before = doc.stores.length;
-  doc.stores = doc.stores.filter((store) => store.key !== key);
+  doc.stores = doc.stores.filter(
+    (store) => !(isStoreInScope(store, scope) && store.key === key),
+  );
   if (doc.stores.length === before) {
     throw new Error("店铺不存在或已被删除。");
   }
@@ -664,12 +687,13 @@ export async function deleteProductBatchStore(storeKey: string) {
   return { ok: true, deletedStoreKey: key };
 }
 
-export function cancelProductBatchPreview(jobId: string) {
+export function cancelProductBatchPreview(jobId: string, scope: ProductBatchScope) {
   const id = cleanJobId(jobId);
   const job = previewJobs.get(id);
   if (!job) {
     return { ok: false, cancelled: false, reason: "任务不存在或已经结束。" };
   }
+  assertPreviewJobInScope(job, scope);
   if (job.progress.done) {
     return { ok: false, cancelled: false, reason: "当前预览任务已经结束。" };
   }
@@ -686,6 +710,7 @@ export function cancelProductBatchPreview(jobId: string) {
 
 export function getProductBatchPreviewProgress(
   jobId: string,
+  scope: ProductBatchScope,
 ): ProductBatchPreviewProgress {
   const id = cleanJobId(jobId);
   const job = previewJobs.get(id);
@@ -708,6 +733,7 @@ export function getProductBatchPreviewProgress(
       error: null,
     };
   }
+  assertPreviewJobInScope(job, scope);
   return { ...job.progress, cancelled: job.cancelled || job.progress.cancelled };
 }
 
@@ -725,7 +751,9 @@ export function failProductBatchPreview(jobId: string, error: unknown) {
   });
 }
 
-export async function listProductBatchRuns(): Promise<ProductBatchRunSummary[]> {
+export async function listProductBatchRuns(
+  scope: ProductBatchScope,
+): Promise<ProductBatchRunSummary[]> {
   const root = getRunsRoot();
   try {
     const entries = await fs.readdir(root, { withFileTypes: true });
@@ -734,6 +762,7 @@ export async function listProductBatchRuns(): Promise<ProductBatchRunSummary[]> 
       if (!entry.isDirectory()) continue;
       try {
         const doc = await readProductBatchRun(entry.name);
+        if (!isRunInScope(doc, scope)) continue;
         runs.push(toRunSummary(doc));
       } catch {
         // Ignore broken or partial run directories.
@@ -748,13 +777,20 @@ export async function listProductBatchRuns(): Promise<ProductBatchRunSummary[]> 
 
 export async function readProductBatchRun(
   runId: string,
+  scope?: ProductBatchScope,
 ): Promise<ProductBatchRunDocument> {
   const filePath = getRunFilePath(runId);
   const raw = await fs.readFile(filePath, "utf8");
-  return JSON.parse(raw) as ProductBatchRunDocument;
+  const run = JSON.parse(raw) as ProductBatchRunDocument;
+  if (scope) assertRunInScope(run, scope);
+  return run;
 }
 
-export async function deleteProductBatchRun(runId: string) {
+export async function deleteProductBatchRun(
+  scope: ProductBatchScope,
+  runId: string,
+) {
+  await readProductBatchRun(runId, scope);
   const dir = getRunDir(runId);
   await fs.rm(dir, { recursive: true, force: true });
   return { ok: true };
@@ -762,6 +798,7 @@ export async function deleteProductBatchRun(runId: string) {
 
 export async function createProductBatchPreview(opts: {
   user: User;
+  deviceId: string;
   jobId?: string;
   storeKeys?: string[];
   query?: string;
@@ -774,8 +811,9 @@ export async function createProductBatchPreview(opts: {
 }): Promise<ProductBatchRunDocument> {
   assertWithinBudget(opts.user.id, opts.user.role);
 
-  const previewJob = createPreviewJob(opts.jobId);
-  const stores = await requireStoreTokens(opts.storeKeys);
+  const scope = { userId: opts.user.id, deviceId: opts.deviceId };
+  const previewJob = createPreviewJob(opts.jobId, scope);
+  const stores = await requireStoreTokens(scope, opts.storeKeys);
   const limit = clampInt(opts.limit ?? 10, 1, MAX_PREVIEW_LIMIT);
   const start = clampInt(opts.start ?? 0, 0, 100_000);
   const query = cleanText(opts.query || "status:active");
@@ -985,6 +1023,8 @@ export async function createProductBatchPreview(opts: {
   }));
   const run: ProductBatchRunDocument = {
     id: runId,
+    userId: opts.user.id,
+    deviceId: opts.deviceId,
     createdAt: now,
     updatedAt: now,
     shopDomain: runStores[0]?.shopDomain || "",
@@ -1028,6 +1068,7 @@ export async function createProductBatchPreview(opts: {
 
 export async function applyProductBatchRun(opts: {
   user: User;
+  deviceId: string;
   runId: string;
   selectedProductIds?: string[];
   selectedProposalKeys?: string[];
@@ -1035,8 +1076,12 @@ export async function applyProductBatchRun(opts: {
   applyFaq?: boolean;
   setDraft?: boolean;
 }): Promise<{ run: ProductBatchRunDocument; results: ProductBatchApplyResult[] }> {
-  const run = await readProductBatchRun(opts.runId);
-  const stores = await requireStoreTokens(run.storeKeys?.length ? run.storeKeys : undefined);
+  const scope = { userId: opts.user.id, deviceId: opts.deviceId };
+  const run = await readProductBatchRun(opts.runId, scope);
+  const stores = await requireStoreTokens(
+    scope,
+    run.storeKeys?.length ? run.storeKeys : undefined,
+  );
   const storeByKey = new Map(stores.map((store) => [store.key, store]));
 
   const selectedProposalKeys = new Set(opts.selectedProposalKeys || []);
@@ -1109,16 +1154,20 @@ export async function applyProductBatchRun(opts: {
   return { run, results };
 }
 
-async function requireStoreTokens(storeKeys?: string[]): Promise<ShopifyToken[]> {
+async function requireStoreTokens(
+  scope: ProductBatchScope,
+  storeKeys?: string[],
+): Promise<ShopifyToken[]> {
   const doc = await readStoresDocument();
-  await refreshProductBatchStoreNames(doc);
-  if (!doc.stores.length) {
+  await refreshProductBatchStoreNames(doc, scope);
+  const stores = getScopedStores(doc, scope);
+  if (!stores.length) {
     throw new Error("请先在产品批量优化里添加 Shopify 店铺。");
   }
   const wanted = new Set((storeKeys || []).map(normalizeStoreKey));
   const records = wanted.size
-    ? doc.stores.filter((store) => wanted.has(store.key))
-    : doc.stores;
+    ? stores.filter((store) => wanted.has(store.key))
+    : stores;
   if (!records.length) {
     throw new Error("没有找到选中的产品批量优化店铺。");
   }
@@ -1998,15 +2047,18 @@ function formatModelError(error: unknown) {
   return raw;
 }
 
-function createPreviewJob(jobId?: string): PreviewJobState | null {
+function createPreviewJob(jobId: string | undefined, scope: ProductBatchScope): PreviewJobState | null {
   if (!jobId) return null;
   const id = cleanJobId(jobId);
   const existing = previewJobs.get(id);
   if (existing && !existing.cancelled) {
+    assertPreviewJobInScope(existing, scope);
     throw new Error("同一个预览任务正在运行，请稍后再试。");
   }
   const job: PreviewJobState = {
     id,
+    userId: scope.userId,
+    deviceId: scope.deviceId,
     cancelled: false,
     controller: new AbortController(),
     createdAt: Date.now(),
@@ -2031,6 +2083,16 @@ function createPreviewJob(jobId?: string): PreviewJobState | null {
   return job;
 }
 
+function isPreviewJobInScope(job: PreviewJobState, scope: ProductBatchScope) {
+  return job.userId === scope.userId && job.deviceId === scope.deviceId;
+}
+
+function assertPreviewJobInScope(job: PreviewJobState, scope: ProductBatchScope) {
+  if (isPreviewJobInScope(job, scope)) return;
+  const error = new Error("预览任务不属于当前电脑。") as Error & { status?: number };
+  error.status = 404;
+  throw error;
+}
 function cleanJobId(value: string) {
   const id = String(value || "").trim();
   if (!/^[A-Za-z0-9_.:-]{8,120}$/.test(id)) {
@@ -2194,6 +2256,8 @@ function normalizeStoreRecord(
 ): ProductBatchStoreRecord {
   return {
     key: normalizeStoreKey(store.key),
+    userId: normalizeOptionalUserId(store.userId),
+    deviceId: normalizeOptionalDeviceId(store.deviceId),
     name: cleanInlineText(store.name || fallbackStoreName(store.shopDomain)),
     shopDomain: normalizeShopDomainInput(store.shopDomain),
     accessTokenEnc: store.accessTokenEnc,
@@ -2211,6 +2275,37 @@ function normalizeStoreRecord(
   };
 }
 
+function getScopedStores(
+  doc: ProductBatchStoresDocument,
+  scope: ProductBatchScope,
+) {
+  return doc.stores.filter((store) => isStoreInScope(store, scope));
+}
+
+function isStoreInScope(store: ProductBatchStoreRecord, scope: ProductBatchScope) {
+  return store.userId === scope.userId && store.deviceId === scope.deviceId;
+}
+
+function isRunInScope(run: ProductBatchRunDocument, scope: ProductBatchScope) {
+  return run.userId === scope.userId && run.deviceId === scope.deviceId;
+}
+
+function assertRunInScope(run: ProductBatchRunDocument, scope: ProductBatchScope) {
+  if (isRunInScope(run, scope)) return;
+  const error = new Error("运行记录不存在或不属于当前电脑。") as Error & { status?: number };
+  error.status = 404;
+  throw error;
+}
+
+function normalizeOptionalUserId(value: unknown) {
+  const number = Number(value);
+  return Number.isInteger(number) && number > 0 ? number : undefined;
+}
+
+function normalizeOptionalDeviceId(value: unknown) {
+  const text = String(value || "").trim();
+  return /^[A-Za-z0-9_-]{12,96}$/.test(text) ? text : undefined;
+}
 function toSafeStore(store: ProductBatchStoreRecord): ProductBatchStoreSafe {
   const issuedAtMs = store.tokenIssuedAt
     ? new Date(store.tokenIssuedAt).getTime()
@@ -2240,8 +2335,11 @@ function toSafeStore(store: ProductBatchStoreRecord): ProductBatchStoreSafe {
   };
 }
 
-async function refreshProductBatchStoreNames(doc: ProductBatchStoresDocument) {
-  const candidates = doc.stores.filter(shouldRefreshStoreName);
+async function refreshProductBatchStoreNames(
+  doc: ProductBatchStoresDocument,
+  scope: ProductBatchScope,
+) {
+  const candidates = getScopedStores(doc, scope).filter(shouldRefreshStoreName);
   if (!candidates.length) return;
 
   const refreshed = await Promise.all(candidates.map(async (store) => {
@@ -2432,6 +2530,8 @@ async function writeProductBatchRun(run: ProductBatchRunDocument) {
 function toRunSummary(run: ProductBatchRunDocument): ProductBatchRunSummary {
   return {
     id: run.id,
+    userId: run.userId,
+    deviceId: run.deviceId,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
     shopDomain: run.shopDomain,

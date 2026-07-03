@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { applyProductBatchRun } from "@/lib/product-batch-optimization";
+import { getShopifyDeviceIdFromRequest } from "@/lib/shopify-device";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -8,6 +9,7 @@ export const maxDuration = 300;
 export async function POST(req: NextRequest) {
   try {
     const user = await requireUser();
+    const deviceId = getShopifyDeviceIdFromRequest(req);
     const body = (await req.json()) as {
       runId?: string;
       selectedProductIds?: string[];
@@ -21,6 +23,7 @@ export async function POST(req: NextRequest) {
     }
     const result = await applyProductBatchRun({
       user,
+      deviceId,
       runId: body.runId,
       selectedProductIds: body.selectedProductIds,
       selectedProposalKeys: body.selectedProposalKeys,

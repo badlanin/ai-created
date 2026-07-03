@@ -1,17 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { deleteProductBatchStore } from "@/lib/product-batch-optimization";
+import { getShopifyDeviceIdFromRequest } from "@/lib/shopify-device";
 
 export const runtime = "nodejs";
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ key: string }> },
 ) {
   try {
-    await requireUser();
+    const user = await requireUser();
+    const deviceId = getShopifyDeviceIdFromRequest(req);
     const { key } = await params;
-    const result = await deleteProductBatchStore(key);
+    const result = await deleteProductBatchStore({ userId: user.id, deviceId }, key);
     return NextResponse.json(result);
   } catch (e) {
     const status = (e as { status?: number }).status || 500;

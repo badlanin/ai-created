@@ -4,6 +4,7 @@ import {
   createProductBatchPreview,
   failProductBatchPreview,
 } from "@/lib/product-batch-optimization";
+import { getShopifyDeviceIdFromRequest } from "@/lib/shopify-device";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -11,6 +12,7 @@ export const maxDuration = 300;
 export async function POST(req: NextRequest) {
   try {
     const user = await requireUser();
+    const deviceId = getShopifyDeviceIdFromRequest(req);
     const body = (await req.json()) as {
       jobId?: string;
       storeKeys?: string[];
@@ -25,6 +27,7 @@ export async function POST(req: NextRequest) {
     };
     const input = {
       user,
+      deviceId,
       jobId: body.jobId,
       storeKeys: body.storeKeys,
       query: body.query,
