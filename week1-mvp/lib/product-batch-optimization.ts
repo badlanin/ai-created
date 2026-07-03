@@ -95,7 +95,7 @@ const PRODUCT_BATCH_SYSTEM_PROMPT = `
 2. 标题必须重新优化，不得与原标题完全相同。
 3. 描述正文只使用自然段，不要生成项目符号、编号列表、参数表或属性清单。
 4. 描述 HTML 只能使用 p、strong、em、br 标签，不要把 FAQ 写进描述正文。
-5. SEO 标题控制在 70 字符以内；Meta 描述控制在 160 字符以内。SEO 标题和Meta 描述在限定字数内都必须保证句子的完整。
+5. SEO 标题控制在 70 字符以内；Meta 描述控制在 160 字符以内。SEO 标题和Meta 描述在限定字数内都必须保证句子的完整。SEO 标题必须同时输出 seoTitlePhrases 候选短语，Meta 描述必须同时输出 metaDescriptionSentences 候选短句；候选内容要短、完整、可由代码组合，不要依赖截断。
 6. 图片 Alt 简洁描述可见商品，不要重复 "image of"，不要堆砌关键词。
 7. categorySize 表示 Shopify 类别元字段中的尺寸；不要写固定默认值，只能根据用户输入、现有商品资料或可确认的商品信息生成。
 8. 如果 customInstructions 明确列出 categorySize/类别元字段尺寸的固定尺寸，categorySize 必须逐项复制这些值，不得新增、猜测或扩展未列出的尺寸。
@@ -113,7 +113,7 @@ const PRODUCT_BATCH_REPAIR_SYSTEM_PROMPT = `
 1. 只返回合法 JSON，必须匹配 schema。
 2. 不新增未经输入支持的商品事实，不新增材质、认证、折扣、物流、售后、库存、SKU、价格或变体信息。
 3. 保持商品标题、URL handle、标签、类别尺寸、模板样式尽量不变；除非这些字段本身存在残句，否则不要改动。
-4. 修复 descriptionHtml、metaDescription、FAQ、imageAltTexts 等自然语言字段，使每个句子完整，不得以介词、连词、逗号、冒号、破折号或半截短语结尾。
+4. 修复 descriptionHtml、seoTitle、seoTitlePhrases、metaDescription、metaDescriptionSentences、FAQ、imageAltTexts 等自然语言字段，使每个句子或短语完整，不得以介词、连词、逗号、冒号、破折号或半截短语结尾。
 5. 如果字符限制不够，必须改写成更短的完整句子，不得直接截断。
 `.trim();
 
@@ -124,7 +124,9 @@ const PRODUCT_BATCH_OUTPUT_SCHEMA = {
     handle: { type: "string" },
     descriptionHtml: { type: "string" },
     seoTitle: { type: "string" },
+    seoTitlePhrases: { type: "array", items: { type: "string" } },
     metaDescription: { type: "string" },
+    metaDescriptionSentences: { type: "array", items: { type: "string" } },
     tags: { type: "array", items: { type: "string" } },
     imageAltTexts: {
       type: "array",
@@ -158,7 +160,9 @@ const PRODUCT_BATCH_OUTPUT_SCHEMA = {
     "handle",
     "descriptionHtml",
     "seoTitle",
+    "seoTitlePhrases",
     "metaDescription",
+    "metaDescriptionSentences",
     "tags",
     "imageAltTexts",
     "categorySize",
@@ -1661,9 +1665,10 @@ function normalizeGeneratedProposal(
       normalizeProductHandle(raw.handle || raw.title) ||
       normalizeProductHandle(product.handle),
     descriptionHtml,
-    seoTitle: clampText(String(raw.seoTitle || ""), limits.seoTitleMaxChars),
-    metaDescription: clampText(
-      String(raw.metaDescription || ""),
+    seoTitle: composeSeoTitle(raw, product, limits.seoTitleMaxChars),
+    metaDescription: composeMetaDescription(
+      raw,
+      product,
       limits.metaDescriptionMaxChars,
     ),
     categorySize,
@@ -1674,6 +1679,94 @@ function normalizeGeneratedProposal(
     imageAltTexts,
     faq,
   });
+}
+
+function composeSeoTitle(
+  raw: Record<string, unknown>,
+  product: ShopifyProductNode,
+  maxChars: number,
+) {
+  const phrases = uniqueNonEmpty([
+    ...normalizeStringArray(raw.seoTitlePhrases),
+    ...splitTitlePhraseCandidates(raw.seoTitle),
+    ...splitTitlePhraseCandidates(product.title || ""),
+  ]).map(normalizeSeoTitlePhrase).filter(Boolean);
+
+  let title = "";
+  for (const phrase of phrases) {
+    const next = title ? `${title} - ${phrase}` : phrase;
+    if (next.length <= maxChars) title = next;
+  }
+
+  const fallback = normalizeSeoTitlePhrase(raw.seoTitle || product.title || "");
+  return clampTextToWordBoundary(title || fallback, maxChars);
+}
+
+function composeMetaDescription(
+  raw: Record<string, unknown>,
+  product: ShopifyProductNode,
+  maxChars: number,
+) {
+  const candidates = uniqueNonEmpty([
+    ...normalizeStringArray(raw.metaDescriptionSentences),
+    ...splitSentenceCandidates(raw.metaDescription),
+    ...splitSentenceCandidates(product.seo?.description || ""),
+  ])
+    .map((sentence) => normalizeCompleteSentenceText(sentence, maxChars))
+    .filter((sentence) => sentence && hasSentenceTerminal(sentence, false) && !hasDanglingEnding(sentence));
+
+  let description = "";
+  for (const sentence of candidates) {
+    const next = description ? `${description} ${sentence}` : sentence;
+    if (next.length <= maxChars) description = next;
+  }
+
+  if (description) return description;
+  return normalizeCompleteSentenceText(
+    String(raw.metaDescription || product.seo?.description || product.title || ""),
+    maxChars,
+  );
+}
+
+function splitTitlePhraseCandidates(value: unknown) {
+  return cleanInlineText(String(value || ""))
+    .split(/\s*(?:\||,|，|;|；|:)\s*|\s+[-–—]\s+/u)
+    .map((part) => cleanInlineText(part))
+    .filter(Boolean);
+}
+
+function normalizeSeoTitlePhrase(value: unknown) {
+  let text = cleanInlineText(String(value || ""))
+    .replace(/[.!?。！？]+$/u, "")
+    .replace(/[\s,;:，；：、\-–—]+$/u, "");
+  for (let index = 0; index < 5 && hasDanglingEnding(text); index += 1) {
+    const next = text.replace(/\s+\S+$/u, "").trim();
+    if (!next || next === text) break;
+    text = next.replace(/[\s,;:，；：、\-–—]+$/u, "");
+  }
+  return text;
+}
+
+function splitSentenceCandidates(value: unknown) {
+  const text = cleanInlineText(String(value || ""));
+  if (!text) return [];
+  const matches = Array.from(text.matchAll(/[^.!?。！？]+[.!?。！？]+(?:["'）)\]}]+)?/g))
+    .map((match) => cleanInlineText(match[0]))
+    .filter(Boolean);
+  return matches.length ? matches : [text];
+}
+
+function uniqueNonEmpty(values: string[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const text = cleanInlineText(value || "");
+    const key = text.toLowerCase();
+    if (!text || seen.has(key)) continue;
+    seen.add(key);
+    result.push(text);
+  }
+  return result;
 }
 
 function normalizeProposalCompleteness(proposed: ProductBatchProposed): ProductBatchProposed {
