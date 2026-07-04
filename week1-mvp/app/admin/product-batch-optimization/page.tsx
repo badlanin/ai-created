@@ -672,6 +672,7 @@ export default function ProductBatchOptimizationPage() {
           body: JSON.stringify({
             runId: activeRun.id,
             selectedProposalKeys: keys,
+            selectedStoreKeys: Array.from(selectedStoreKeys),
             applyFaq: true,
             skipImageAlt: !activeRun.targetFields?.includes("imageAltTexts"),
             setDraft: applyOptions.setDraft,
@@ -724,6 +725,7 @@ export default function ProductBatchOptimizationPage() {
           body: JSON.stringify({
             runId: source.id,
             selectedProposalKeys: keys,
+            selectedStoreKeys: Array.from(selectedStoreKeys),
             applyFaq: true,
             skipImageAlt: !source.targetFields?.includes("imageAltTexts"),
             setDraft: false,

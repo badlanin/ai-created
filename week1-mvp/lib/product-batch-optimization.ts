@@ -1141,27 +1141,41 @@ export async function applyProductBatchRun(opts: {
   runId: string;
   selectedProductIds?: string[];
   selectedProposalKeys?: string[];
+  selectedStoreKeys?: string[];
   skipImageAlt?: boolean;
   applyFaq?: boolean;
   setDraft?: boolean;
 }): Promise<{ run: ProductBatchRunDocument; results: ProductBatchApplyResult[] }> {
   const scope = { userId: opts.user.id, deviceId: opts.deviceId };
   const run = await readProductBatchRun(opts.runId, scope);
+  const selectedStoreKeys = normalizeOptionalStoreKeys(opts.selectedStoreKeys);
   const stores = await requireStoreTokens(
     scope,
-    run.storeKeys?.length ? run.storeKeys : undefined,
+    selectedStoreKeys.length
+      ? selectedStoreKeys
+      : run.storeKeys?.length
+        ? run.storeKeys
+        : undefined,
   );
   const storeByKey = new Map(stores.map((store) => [store.key, store]));
+  const storeByDomain = new Map(
+    stores.map((store) => [normalizeShopDomainInput(store.shopDomain), store] as const),
+  );
 
   const selectedProposalKeys = new Set(opts.selectedProposalKeys || []);
   const selectedProductIds = new Set(opts.selectedProductIds || []);
-  const proposals = selectedProposalKeys.size
+  let proposals = selectedProposalKeys.size
     ? run.proposals.filter((item) => selectedProposalKeys.has(getProposalKey(item)))
     : selectedProductIds.size
       ? run.proposals.filter((item) => selectedProductIds.has(item.product.id))
       : run.proposals;
+  if (selectedStoreKeys.length) {
+    proposals = proposals.filter((proposal) =>
+      resolveProposalStoreConnection(proposal, storeByKey, storeByDomain),
+    );
+  }
   if (!proposals.length) {
-    throw new Error("没有选中可应用的商品。");
+    throw new Error("没有选中当前勾选店铺下可应用的商品。");
   }
 
   const results: ProductBatchApplyResult[] = [];
@@ -1173,10 +1187,15 @@ export async function applyProductBatchRun(opts: {
       ok: false,
     };
     try {
-      const storeKey = proposal.store.key || run.storeKeys?.[0] || "";
-      const connection = storeByKey.get(storeKey);
+      const connection = resolveProposalStoreConnection(
+        proposal,
+        storeByKey,
+        storeByDomain,
+      );
       if (!connection) {
-        throw new Error(`店铺 ${storeKey || "未知"} 未绑定或 token 不存在。`);
+        throw new Error(
+          `店铺 ${proposal.store.key || proposal.store.shopDomain || "未知"} 未在当前勾选店铺中绑定或 token 不存在。`,
+        );
       }
       const targetFields = getProposalTargetFields(proposal, run.targetFields);
       assertProposalQuality(
@@ -1233,6 +1252,35 @@ export async function applyProductBatchRun(opts: {
   run.applyResults = [...(run.applyResults || []), ...results];
   await writeProductBatchRun(run);
   return { run, results };
+}
+
+function normalizeOptionalStoreKeys(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    const text = String(item || "").trim();
+    if (!text) continue;
+    const key = normalizeStoreKey(text);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(key);
+  }
+  return result;
+}
+
+function resolveProposalStoreConnection(
+  proposal: ProductBatchProposal,
+  storeByKey: Map<string, ShopifyToken>,
+  storeByDomain: Map<string, ShopifyToken>,
+) {
+  const key = String(proposal.store.key || "").trim();
+  if (key) {
+    const byKey = storeByKey.get(key);
+    if (byKey) return byKey;
+  }
+  const domain = normalizeShopDomainInput(proposal.store.shopDomain || "");
+  return storeByDomain.get(domain) || null;
 }
 
 async function requireStoreTokens(

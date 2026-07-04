@@ -14,6 +14,7 @@ export async function POST(req: NextRequest) {
       runId?: string;
       selectedProductIds?: string[];
       selectedProposalKeys?: string[];
+      selectedStoreKeys?: string[];
       skipImageAlt?: boolean;
       applyFaq?: boolean;
       setDraft?: boolean;
@@ -27,6 +28,7 @@ export async function POST(req: NextRequest) {
       runId: body.runId,
       selectedProductIds: body.selectedProductIds,
       selectedProposalKeys: body.selectedProposalKeys,
+      selectedStoreKeys: body.selectedStoreKeys,
       skipImageAlt: body.skipImageAlt !== false,
       applyFaq: body.applyFaq,
       setDraft: body.setDraft,

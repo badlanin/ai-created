@@ -788,6 +788,27 @@ type ShopifyProductsOrganizationResponse = {
   errors?: Array<{ message?: string }>;
 };
 
+type ShopifyThemeRestNode = {
+  id?: number | string | null;
+  role?: string | null;
+  updated_at?: string | null;
+};
+
+type ShopifyThemesRestResponse = {
+  themes?: ShopifyThemeRestNode[];
+  errors?: unknown;
+};
+
+type ShopifyThemeAssetRestNode = {
+  key?: string | null;
+  updated_at?: string | null;
+};
+
+type ShopifyThemeAssetsRestResponse = {
+  assets?: ShopifyThemeAssetRestNode[];
+  errors?: unknown;
+};
+
 type ShopifyCollectionCreateResponse = {
   data?: {
     collectionCreate?: {
@@ -2369,6 +2390,16 @@ export async function getShopifyProductOrganizationOptions(
     warnings.push(`读取 Shopify 标记失败：${err instanceof Error ? err.message : String(err)}`);
     return [] as ShopifyProductOrganizationOption[];
   });
+  const themeTemplateStylesPromise = readShopifyThemeProductTemplateOptions(
+    stored.shopDomain,
+    stored.accessToken,
+    warnings,
+  ).catch((err) => {
+    warnings.push(
+      `读取 Shopify 主题产品模板失败：${err instanceof Error ? err.message : String(err)}。如需读取最新主题模板，请确认 Shopify 授权包含 read_themes 并重新授权。`,
+    );
+    return [] as ShopifyProductOrganizationOption[];
+  });
   let after: string | null = null;
   let page = 0;
   const maxPages = 5;
@@ -2441,14 +2472,19 @@ export async function getShopifyProductOrganizationOptions(
   const resolved = await Promise.all([
     collectionsPromise,
     tagsPromise,
+    themeTemplateStylesPromise,
   ]);
 
   collections = resolved[0];
   tags = resolved[1];
+  const themeTemplateStyles = resolved[2];
 
   console.log(`[Shopify] 类别 ${categorySearchId} 模板样式收集结果: ${templateStyles.length} 个原始值 -> ${buildShopifyProductOrganizationStringOptions(templateStyles).length} 个选项`);
 
-  const templateStylesOptions = buildShopifyProductOrganizationStringOptions(templateStyles);
+  const templateStylesOptions = mergeShopifyProductOrganizationOptions(
+    themeTemplateStyles,
+    buildShopifyProductOrganizationStringOptions(templateStyles),
+  );
 
   return {
     productTypes: buildShopifyProductOrganizationStringOptions(productTypes),
@@ -2461,6 +2497,75 @@ export async function getShopifyProductOrganizationOptions(
       : SHOPIFY_DEFAULT_TEMPLATE_STYLES,
     warnings,
   };
+}
+
+async function readShopifyThemeProductTemplateOptions(
+  shopDomain: string,
+  accessToken: string,
+  warnings: string[],
+): Promise<ShopifyProductOrganizationOption[]> {
+  const themes = await shopifyRestGet<ShopifyThemesRestResponse>(
+    shopDomain,
+    accessToken,
+    "/themes.json",
+  );
+  const theme =
+    (themes.themes || []).find((item) => item.role === "main") ||
+    (themes.themes || [])[0];
+  const themeId = theme?.id ? String(theme.id) : "";
+  if (!themeId) return [];
+
+  const assets = await shopifyRestGet<ShopifyThemeAssetsRestResponse>(
+    shopDomain,
+    accessToken,
+    `/themes/${encodeURIComponent(themeId)}/assets.json`,
+  );
+  const templateAssets = (assets.assets || [])
+    .map((asset) => ({
+      suffix: normalizeShopifyProductTemplateAssetKey(asset.key || ""),
+      updatedAt: asset.updated_at || "",
+    }))
+    .filter((asset) => asset.suffix)
+    .sort((a, b) => {
+      const bTime = Date.parse(b.updatedAt || "");
+      const aTime = Date.parse(a.updatedAt || "");
+      if (Number.isFinite(bTime) && Number.isFinite(aTime) && bTime !== aTime) {
+        return bTime - aTime;
+      }
+      return a.suffix.localeCompare(b.suffix);
+    });
+
+  const options = buildShopifyProductOrganizationStringOptionsInOrder(
+    templateAssets.map((asset) => asset.suffix),
+  );
+  if (!options.length) {
+    warnings.push("当前主题未读取到自定义产品模板，已使用商品记录中的模板样式。");
+  }
+  return options;
+}
+
+function normalizeShopifyProductTemplateAssetKey(key: string): string {
+  const cleaned = cleanField(key);
+  const match = cleaned.match(/^templates\/product(?:\.([^/]+))?\.(json|liquid)$/i);
+  if (!match?.[1]) return "";
+  return normalizeShopifyTemplateSuffix(match[1]);
+}
+
+function mergeShopifyProductOrganizationOptions(
+  ...groups: ShopifyProductOrganizationOption[][]
+): ShopifyProductOrganizationOption[] {
+  const seen = new Set<string>();
+  const options: ShopifyProductOrganizationOption[] = [];
+  for (const group of groups) {
+    for (const option of group) {
+      const value = cleanField(option.value);
+      const key = value.toLowerCase();
+      if (!value || seen.has(key)) continue;
+      seen.add(key);
+      options.push({ ...option, value, label: option.label || value });
+    }
+  }
+  return options;
 }
 
 const SHOPIFY_DEFAULT_TEMPLATE_STYLES: ShopifyProductOrganizationOption[] = [
@@ -4229,6 +4334,37 @@ async function shopifyGraphql<T>(
   const text = await response.text();
   if (!response.ok) {
     console.error(`[Shopify GraphQL] HTTP ${response.status} 错误响应:`, text.slice(0, 500));
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(`Shopify 鉴权失败 (HTTP ${response.status})，请检查 Token 权限。响应: ${text.slice(0, 200)}`);
+    }
+    throw new Error(`Shopify 请求失败：HTTP ${response.status} ${text.slice(0, 300)}`);
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`Shopify 返回不是有效 JSON：${text.slice(0, 300)}`);
+  }
+}
+
+async function shopifyRestGet<T>(
+  shopDomain: string,
+  accessToken: string,
+  pathWithQuery: string,
+): Promise<T> {
+  const domain = normalizeShopDomain(shopDomain);
+  const path = pathWithQuery.startsWith("/") ? pathWithQuery : `/${pathWithQuery}`;
+  const endpoint = `https://${domain}/admin/api/${SHOPIFY_API_VERSION}${path}`;
+  const response = await fetch(endpoint, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shopify-Access-Token": accessToken,
+    },
+    signal: AbortSignal.timeout(30_000),
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    console.error(`[Shopify REST] HTTP ${response.status} 错误响应:`, text.slice(0, 500));
     if (response.status === 401 || response.status === 403) {
       throw new Error(`Shopify 鉴权失败 (HTTP ${response.status})，请检查 Token 权限。响应: ${text.slice(0, 200)}`);
     }
@@ -6909,6 +7045,14 @@ async function readShopifyCollectionOptions(
 function buildShopifyProductOrganizationStringOptions(
   values: string[],
 ): ShopifyProductOrganizationOption[] {
+  return sortShopifyProductOrganizationOptions(
+    buildShopifyProductOrganizationStringOptionsInOrder(values),
+  );
+}
+
+function buildShopifyProductOrganizationStringOptionsInOrder(
+  values: string[],
+): ShopifyProductOrganizationOption[] {
   const seen = new Set<string>();
   const options: ShopifyProductOrganizationOption[] = [];
   for (const value of values) {
@@ -6918,7 +7062,7 @@ function buildShopifyProductOrganizationStringOptions(
     seen.add(key);
     options.push({ value: cleaned, label: cleaned });
   }
-  return sortShopifyProductOrganizationOptions(options);
+  return options;
 }
 
 const SHOPIFY_COMMON_TAG_PRIORITY = [

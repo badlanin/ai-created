@@ -161,7 +161,8 @@ type ProductOrganizationPickerKey =
   | "productType"
   | "vendor"
   | "collections"
-  | "tags";
+  | "tags"
+  | "templateStyle";
 
 type SyncState = "idle" | "draft" | "syncing" | "synced";
 type SyncAction = "draft" | "publish" | null;
@@ -997,6 +998,23 @@ function sanitizeAiOutput(value: string): string {
     .trim();
 }
 
+function removeGeneratedImageSection(value: string): string {
+  const marker = "大模型生成图片";
+  const index = value.lastIndexOf(marker);
+  if (index < 0) return value;
+  const beforeMarker = value.slice(0, index);
+  const generatedSection = value.slice(index);
+  const hasGeneratedImageUrl =
+    /(?:https?:\/\/[^\s"'<>]+|\/assets\/[^\s"'<>]+?\.(?:png|jpe?g|webp|gif))(?:\?[^\s"'<>]*)?/i.test(
+      generatedSection,
+    );
+  return hasGeneratedImageUrl ? beforeMarker.trim() : value;
+}
+
+function sanitizeAiTextForFieldParsing(value: string): string {
+  return sanitizeAiOutput(removeGeneratedImageSection(value));
+}
+
 function stripMarkdownJsonFence(value: string): string {
   return value
     .trim()
@@ -1006,7 +1024,7 @@ function stripMarkdownJsonFence(value: string): string {
 }
 
 function parseAiOutputToForm(raw: string): Partial<ProductForm> {
-  const cleaned = sanitizeAiOutput(raw);
+  const cleaned = sanitizeAiTextForFieldParsing(raw);
   const json = parseAiJson(cleaned);
   const parsed = json
     ? mapObjectToProductForm(json)
@@ -1712,6 +1730,7 @@ function parseAiProductMetafieldValues(
   raw: string,
   definitions: ShopifyProductMetafieldDefinition[],
 ): Record<string, string> {
+  const cleaned = sanitizeAiTextForFieldParsing(raw);
   const values: Record<string, string> = {};
   const boundaryLabels = definitions.flatMap((definition) => [
     definition.name,
@@ -1726,7 +1745,7 @@ function parseAiProductMetafieldValues(
     ];
     const labelPattern = labels.map(escapeRegExp).join("|");
     const boundaryPattern = boundaryLabels.map(escapeRegExp).join("|");
-    const match = raw.match(
+    const match = cleaned.match(
       new RegExp(
         `(?:^|\\n)\\s*(?:[-•*]\\s*)?(?:${labelPattern})\\s*[：:]\\s*([\\s\\S]*?)(?=\\n\\s*(?:[-•*]\\s*)?(?:${boundaryPattern})\\s*[：:]|$)`,
         "i",
@@ -3018,9 +3037,10 @@ export default function ProductListingPage() {
 
   function applyAiToForm() {
     const cleaned = sanitizeAiOutput(aiRawText);
-    const parsed = parseAiOutputToForm(cleaned);
+    const fieldText = sanitizeAiTextForFieldParsing(cleaned);
+    const parsed = parseAiOutputToForm(fieldText);
     const parsedProductMetafields = parseAiProductMetafieldValues(
-      cleaned,
+      fieldText,
       productMetafieldDefinitions,
     );
     const nextForm: ProductForm = {
@@ -3053,7 +3073,7 @@ export default function ProductListingPage() {
     setVariantRows(buildDefaultSizeVariantRows(nextForm));
     setVariantOptionGroups([buildDefaultSizeVariantOptionGroup(nextForm)]);
     setAiRawText(cleaned);
-    setCleanedAiText(cleaned);
+    setCleanedAiText(fieldText);
     setSyncState("idle");
     setLastAction("大模型输出已清理并填入 Shopify 商品表单");
   }
@@ -9927,6 +9947,7 @@ function ProductStatusDropdown({
 function filterProductOrganizationOptions(
   options: ShopifyProductOrganizationOption[],
   search: string,
+  limit = 80,
 ): ShopifyProductOrganizationOption[] {
   const keyword = search.trim().toLowerCase();
   return options
@@ -9936,7 +9957,7 @@ function filterProductOrganizationOptions(
         value.toLowerCase().includes(keyword),
       );
     })
-    .slice(0, 80);
+    .slice(0, limit);
 }
 
 function ProductOrganizationOptionMenu({
@@ -9954,6 +9975,7 @@ function ProductOrganizationOptionMenu({
   wrapLabels,
   featuredLabel,
   optionsLabel,
+  initialVisibleLimit,
   onSelect,
   onAddSearch,
 }: {
@@ -9971,13 +9993,21 @@ function ProductOrganizationOptionMenu({
   wrapLabels?: boolean;
   featuredLabel?: string;
   optionsLabel?: string;
+  initialVisibleLimit?: number;
   onSelect: (value: string) => void;
   onAddSearch?: (value: string) => void;
 }) {
-  const filteredOptions = filterProductOrganizationOptions(options, search);
+  const visibleLimit =
+    initialVisibleLimit && !search.trim() ? initialVisibleLimit : 80;
+  const filteredOptions = filterProductOrganizationOptions(
+    options,
+    search,
+    visibleLimit,
+  );
   const filteredFeaturedOptions = filterProductOrganizationOptions(
     featuredOptions,
     search,
+    visibleLimit,
   );
   const featuredKeys = new Set(
     featuredOptions.map((option) => option.value.toLowerCase()),
@@ -10104,7 +10134,7 @@ function ProductOrganizationTextPicker({
   onOpen,
   menu,
 }: {
-  label: string;
+  label?: string;
   value: string;
   placeholder?: string;
   onChange: (value: string) => void;
@@ -10114,9 +10144,11 @@ function ProductOrganizationTextPicker({
 }) {
   return (
     <div className="relative" data-product-organization-picker>
-      <label className="mb-1 block text-xs font-medium text-gray-700">
-        {label}
-      </label>
+      {label ? (
+        <label className="mb-1 block text-xs font-medium text-gray-700">
+          {label}
+        </label>
+      ) : null}
       <div className="relative">
         <input
           value={value}
@@ -10206,6 +10238,7 @@ function SyncPanel({
     vendor: form.vendor ? [form.vendor] : [],
     collections: productCollections,
     tags: productTags,
+    templateStyle: form.templateStyle ? [form.templateStyle] : [],
   };
   const commonTagOptions = useMemo(() => {
     const tagByKey = new Map(
@@ -10540,26 +10573,40 @@ function SyncPanel({
       <ShopifySection>
         <div className="space-y-3">
           <ShopifySectionHeader title="模板样式" action={<Eye size={14} />} />
-          <Select
+          <ProductOrganizationTextPicker
+            label=""
             value={form.templateStyle}
-            onChange={(event) => onTemplateStyleChange(event.target.value)}
-            disabled={loadingOrganizationOptions}
-          >
-            <option value="">
-              {loadingOrganizationOptions ? "正在读取 Shopify 模板..." : "默认产品"}
-            </option>
-            {form.templateStyle &&
-            !organizationOptions.templateStyles.some(
-              (option) => option.value === form.templateStyle,
-            ) ? (
-              <option value={form.templateStyle}>{form.templateStyle}</option>
-            ) : null}
-            {organizationOptions.templateStyles.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </Select>
+            placeholder={
+              loadingOrganizationOptions ? "正在读取 Shopify 模板..." : "默认产品"
+            }
+            onChange={(value) =>
+              onTemplateStyleChange(normalizeProductTemplateStyle(value))
+            }
+            open={activeOrganizationPicker === "templateStyle"}
+            onOpen={() => openOrganizationPicker("templateStyle")}
+            menu={
+              <ProductOrganizationOptionMenu
+                search={organizationSearch}
+                onSearchChange={setOrganizationSearch}
+                options={organizationOptions.templateStyles}
+                selectedValues={selectedOrganizationValues.templateStyle}
+                loading={loadingOrganizationOptions}
+                error={organizationOptionsError}
+                searchPlaceholder="搜索模板样式"
+                emptyLabel="Shopify 后台暂无模板样式"
+                allowAdd
+                initialVisibleLimit={15}
+                onSelect={(value) => {
+                  onTemplateStyleChange(value);
+                  setActiveOrganizationPicker(null);
+                }}
+                onAddSearch={(value) => {
+                  onTemplateStyleChange(normalizeProductTemplateStyle(value));
+                  setActiveOrganizationPicker(null);
+                }}
+              />
+            }
+          />
           {organizationOptionsError ? (
             <p className="text-[11px] text-amber-600">{organizationOptionsError}</p>
           ) : null}
