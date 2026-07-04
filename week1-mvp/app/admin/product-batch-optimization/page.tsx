@@ -1777,6 +1777,7 @@ function ActiveRunPreviewControls({
             type="button"
             onClick={onApplyCurrentStoreSelected}
             className="btn btn-danger btn-sm justify-center"
+          style={{ backgroundImage: "linear-gradient(90deg, #DAD5EB 0%, #B5ABD9 100%)" }}
             disabled={applying || currentStoreSelectedProposalCount === 0}
           >
             提交当前店铺选中项
@@ -1785,6 +1786,7 @@ function ActiveRunPreviewControls({
             type="button"
             onClick={onApplyCurrentStore}
             className="btn btn-danger btn-sm justify-center"
+          style={{ backgroundImage: "linear-gradient(90deg, #DAD5EB 0%, #B5ABD9 100%)" }}
             disabled={applying || currentStoreProposalCount === 0}
           >
             自动提交当前店铺全部
@@ -1792,7 +1794,8 @@ function ActiveRunPreviewControls({
           <button
             type="button"
             onClick={onApplyAll}
-            className="btn btn-danger-outline btn-sm justify-center"
+            className="btn btn-danger btn-sm justify-center"
+          style={{ backgroundImage: "linear-gradient(90deg, #DAD5EB 0%, #B5ABD9 100%)" }}
             disabled={applying || allPreviewProposalCount === 0}
           >
             提交预览中的全部店铺
@@ -1800,7 +1803,8 @@ function ActiveRunPreviewControls({
           <button
             type="button"
             onClick={onClear}
-            className="btn btn-outline btn-sm justify-center"
+            className="btn btn-danger btn-sm justify-center"
+          style={{ backgroundImage: "linear-gradient(90deg, #DAD5EB 0%, #B5ABD9 100%)" }}
             disabled={applying || selectedProductCount === 0}
           >
             取消
