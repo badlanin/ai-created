@@ -52,6 +52,7 @@ type RunSummary = {
   prompt: string;
   limit: number;
   model: string;
+  targetFields?: TargetField[];
   proposalCount: number;
   failureCount: number;
   stopped?: boolean;
@@ -63,6 +64,29 @@ type FaqItem = {
   question: string;
   answer: string;
 };
+
+type TargetField =
+  | "title"
+  | "descriptionHtml"
+  | "seoTitle"
+  | "metaDescription"
+  | "tags"
+  | "templateStyle"
+  | "categorySize"
+  | "imageAltTexts"
+  | "faq";
+
+const ALL_TARGET_FIELDS: TargetField[] = [
+  "title",
+  "descriptionHtml",
+  "seoTitle",
+  "metaDescription",
+  "tags",
+  "templateStyle",
+  "categorySize",
+  "imageAltTexts",
+  "faq",
+];
 
 type Snapshot = {
   title: string;
@@ -93,6 +117,7 @@ type Proposal = {
   proposed: Snapshot & {
     imageAltTexts: Array<{ mediaId: string; altText: string }>;
   };
+  targetFields?: TargetField[];
   rationale: string;
   warnings: string[];
 };
@@ -648,7 +673,7 @@ export default function ProductBatchOptimizationPage() {
             runId: activeRun.id,
             selectedProposalKeys: keys,
             applyFaq: true,
-            skipImageAlt: true,
+            skipImageAlt: !activeRun.targetFields?.includes("imageAltTexts"),
             setDraft: applyOptions.setDraft,
           }),
         }),
@@ -700,7 +725,7 @@ export default function ProductBatchOptimizationPage() {
             runId: source.id,
             selectedProposalKeys: keys,
             applyFaq: true,
-            skipImageAlt: true,
+            skipImageAlt: !source.targetFields?.includes("imageAltTexts"),
             setDraft: false,
           }),
         }),
@@ -1986,6 +2011,7 @@ function ProposalCard({
           <SnapshotCompareGrid
             current={proposal.current}
             proposed={proposal.proposed}
+          targetFields={proposal.targetFields}
           />
 
           {(proposal.rationale || proposal.warnings.length) ? (
@@ -2016,40 +2042,83 @@ function ProposalCard({
 function SnapshotCompareGrid({
   current,
   proposed,
+  targetFields,
 }: {
   current: Snapshot;
   proposed: Snapshot;
+  targetFields?: TargetField[];
 }) {
+  const fields = new Set(targetFields?.length ? targetFields : ALL_TARGET_FIELDS);
+  const show = (field: TargetField) => fields.has(field);
+
   return (
     <section className="grid grid-cols-1 items-stretch gap-3 lg:grid-cols-2">
       <SnapshotCompareHeader title="旧内容" tone="current" />
       <SnapshotCompareHeader title="新内容" tone="proposed" />
-      <SnapshotField label="商品标题" value={current.title} tone="current" />
-      <SnapshotField label="商品标题" value={proposed.title} tone="proposed" />
-      <SnapshotField
-        label="商品描述"
-        value={htmlToText(current.descriptionHtml)}
-        tone="current"
-        tall
-      />
-      <SnapshotField
-        label="商品描述"
-        value={htmlToText(proposed.descriptionHtml)}
-        tone="proposed"
-        tall
-      />
-      <SnapshotTagList tags={current.tags} tone="current" />
-      <SnapshotTagList tags={proposed.tags} tone="proposed" />
-      <SnapshotField label="模板样式" value={current.templateStyle} tone="current" />
-      <SnapshotField label="模板样式" value={proposed.templateStyle} tone="proposed" />
-      <SnapshotField label="类别元字段尺寸" value={current.categorySize} tone="current" />
-      <SnapshotField label="类别元字段尺寸" value={proposed.categorySize} tone="proposed" />
-      <SnapshotFaqList faq={current.faq} tone="current" />
-      <SnapshotFaqList faq={proposed.faq} tone="proposed" />
-      <SnapshotField label="SEO 标题" value={current.seoTitle} tone="current" />
-      <SnapshotField label="SEO 标题" value={proposed.seoTitle} tone="proposed" />
-      <SnapshotField label="Meta 描述" value={current.metaDescription} tone="current" />
-      <SnapshotField label="Meta 描述" value={proposed.metaDescription} tone="proposed" />
+      {show("title") ? (
+        <>
+          <SnapshotField label="商品标题" value={current.title} tone="current" />
+          <SnapshotField label="商品标题" value={proposed.title} tone="proposed" />
+        </>
+      ) : null}
+      {show("descriptionHtml") ? (
+        <>
+          <SnapshotField
+            label="商品描述"
+            value={htmlToText(current.descriptionHtml)}
+            tone="current"
+            tall
+          />
+          <SnapshotField
+            label="商品描述"
+            value={htmlToText(proposed.descriptionHtml)}
+            tone="proposed"
+            tall
+          />
+        </>
+      ) : null}
+      {show("tags") ? (
+        <>
+          <SnapshotTagList tags={current.tags} tone="current" />
+          <SnapshotTagList tags={proposed.tags} tone="proposed" />
+        </>
+      ) : null}
+      {show("templateStyle") ? (
+        <>
+          <SnapshotField label="模板样式" value={current.templateStyle} tone="current" />
+          <SnapshotField label="模板样式" value={proposed.templateStyle} tone="proposed" />
+        </>
+      ) : null}
+      {show("categorySize") ? (
+        <>
+          <SnapshotField label="类别元字段尺寸" value={current.categorySize} tone="current" />
+          <SnapshotField label="类别元字段尺寸" value={proposed.categorySize} tone="proposed" />
+        </>
+      ) : null}
+      {show("imageAltTexts") ? (
+        <>
+          <SnapshotImageAltList imageAltTexts={current.imageAltTexts || []} tone="current" />
+          <SnapshotImageAltList imageAltTexts={proposed.imageAltTexts || []} tone="proposed" />
+        </>
+      ) : null}
+      {show("faq") ? (
+        <>
+          <SnapshotFaqList faq={current.faq} tone="current" />
+          <SnapshotFaqList faq={proposed.faq} tone="proposed" />
+        </>
+      ) : null}
+      {show("seoTitle") ? (
+        <>
+          <SnapshotField label="SEO 标题" value={current.seoTitle} tone="current" />
+          <SnapshotField label="SEO 标题" value={proposed.seoTitle} tone="proposed" />
+        </>
+      ) : null}
+      {show("metaDescription") ? (
+        <>
+          <SnapshotField label="Meta 描述" value={current.metaDescription} tone="current" />
+          <SnapshotField label="Meta 描述" value={proposed.metaDescription} tone="proposed" />
+        </>
+      ) : null}
     </section>
   );
 }
@@ -2126,6 +2195,36 @@ function SnapshotTagList({
           <span className="text-xs text-fg-tertiary">空</span>
         )}
       </div>
+    </div>
+  );
+}
+
+
+function SnapshotImageAltList({
+  imageAltTexts,
+  tone,
+}: {
+  imageAltTexts: Array<{ mediaId: string; altText: string }>;
+  tone: "current" | "proposed";
+}) {
+  return (
+    <div className={`h-full rounded-md border p-3 ${snapshotToneClass(tone)}`}>
+      <div className="mb-2 text-xs font-semibold text-fg-secondary">图片Alt</div>
+      {imageAltTexts.length ? (
+        <div className="max-h-48 space-y-2 overflow-y-auto">
+          {imageAltTexts.map((item, index) => (
+            <div
+              key={`${item.mediaId || "image-alt"}-${index}`}
+              className="text-xs leading-relaxed text-fg-secondary"
+            >
+              <div className="font-medium text-fg-primary">图片 {index + 1}</div>
+              <div className="mt-0.5 whitespace-pre-wrap">{item.altText || "空"}</div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <span className="text-xs text-fg-tertiary">空</span>
+      )}
     </div>
   );
 }

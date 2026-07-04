@@ -84,6 +84,17 @@ export const PRODUCT_BATCH_DEFAULT_PROMPT =
 const PRODUCT_BATCH_SYSTEM_PROMPT = `
 你是专业的 Shopify 商品 SEO/GEO 内容编辑。你会基于输入的商品资料，优化商品标题、商品描述、页面标题、元描述、标签、图片 Alt 文本和 FAQ。
 
+任务范围规则：
+1. 你必须严格服从 targetFields 和 forbiddenFields。只有 targetFields 中列出的字段允许改写。
+2. forbiddenFields 中列出的字段必须逐字复制 currentProduct/currentSnapshot 中的原值，不得优化、润色、翻译、补全或重新排序。
+3. customInstructions 只用于指导 targetFields，不得把用户没有点名的字段也一起优化。
+4. 即使 schema 要求返回完整 JSON，也不代表所有字段都可以改；完整 JSON 中非目标字段只能作为原值占位。
+5. 如果 customInstructions 和 targetFields 冲突，以 targetFields 为准。
+
+错误示例：
+用户只要求“优化标题和 FAQ”时，同时改写 descriptionHtml、seoTitle、metaDescription、tags、imageAltTexts 是错误的。
+正确做法：只改 title 和 faq；其他字段完全复制原值。
+
 事实规则：
 1. 只能使用输入资料中明确提供，或图片 URL/既有 alt/商品标题能合理支持的商品事实。
 2. 不得虚构材质、功能、认证、保证、折扣、医疗功效、兼容性、库存、物流时效、退换政策或其他未经证实的信息。
@@ -116,6 +127,7 @@ const PRODUCT_BATCH_REPAIR_SYSTEM_PROMPT = `
 4. 修复 title、descriptionHtml、seoTitle、seoTitlePhrases、metaDescription、metaDescriptionSentences、tags、FAQ、imageAltTexts 等自然语言字段，使每个句子或短语为英文且完整，不得以介词、连词、逗号、冒号、破折号或半截短语结尾。
 5. 如果字符限制不够，必须改写成更短的完整句子，不得直接截断。
 6. categorySize 只能保留阿拉伯数字尺寸列表，例如 "2, 4, 6, 8"；不得输出中文数字、英文单词或说明文字。
+7. 只修复 targetFields 中列出的字段；forbiddenFields 中的字段必须逐字复制 currentSnapshot/currentProduct 原值，不得借修复机会改写。
 `.trim();
 
 const PRODUCT_BATCH_OUTPUT_SCHEMA = {
@@ -187,6 +199,36 @@ export type ProductBatchFaqItem = {
   answer: string;
 };
 
+export type ProductBatchTargetField =
+  | "title"
+  | "descriptionHtml"
+  | "seoTitle"
+  | "metaDescription"
+  | "tags"
+  | "templateStyle"
+  | "categorySize"
+  | "imageAltTexts"
+  | "faq";
+
+const PRODUCT_BATCH_TARGET_FIELDS: ProductBatchTargetField[] = [
+  "title",
+  "descriptionHtml",
+  "seoTitle",
+  "metaDescription",
+  "tags",
+  "templateStyle",
+  "categorySize",
+  "imageAltTexts",
+  "faq",
+];
+
+function getForbiddenTargetFields(
+  targetFields: ProductBatchTargetField[],
+): ProductBatchTargetField[] {
+  const targets = new Set(targetFields);
+  return PRODUCT_BATCH_TARGET_FIELDS.filter((field) => !targets.has(field));
+}
+
 export type ProductBatchSnapshot = {
   title: string;
   handle: string;
@@ -237,6 +279,7 @@ export type ProductBatchProposal = {
   };
   current: ProductBatchSnapshot;
   proposed: ProductBatchProposed;
+  targetFields?: ProductBatchTargetField[];
   changeSummary: Record<string, boolean | number>;
   rationale: string;
   warnings: string[];
@@ -257,6 +300,7 @@ export type ProductBatchRunSummary = {
   prompt: string;
   limit: number;
   model: string;
+  targetFields?: ProductBatchTargetField[];
   proposalCount: number;
   failureCount: number;
   stopped?: boolean;
@@ -840,6 +884,7 @@ export async function createProductBatchPreview(opts: {
   const start = clampInt(opts.start ?? 0, 0, 100_000);
   const query = cleanText(opts.query || "status:active");
   const prompt = cleanText(opts.prompt || PRODUCT_BATCH_DEFAULT_PROMPT);
+  const targetFields = detectTargetFieldsFromPrompt(prompt);
   const includeImages = opts.includeImages !== false;
   const includeApplied = Boolean(opts.includeApplied);
   const model = resolveModelId("vision", opts.model || undefined);
@@ -971,6 +1016,7 @@ export async function createProductBatchPreview(opts: {
               connection: store,
               product,
               prompt,
+              targetFields,
               includeImages,
               model,
               signal: previewJob?.controller.signal,
@@ -1058,6 +1104,7 @@ export async function createProductBatchPreview(opts: {
     prompt,
     limit,
     model,
+    targetFields,
     proposalCount: proposals.length,
     failureCount: failures.length,
     stopped,
@@ -1131,26 +1178,31 @@ export async function applyProductBatchRun(opts: {
       if (!connection) {
         throw new Error(`店铺 ${storeKey || "未知"} 未绑定或 token 不存在。`);
       }
+      const targetFields = getProposalTargetFields(proposal, run.targetFields);
       assertProposalQuality(
         proposal.proposed,
-        validateProposalQuality(proposal.proposed),
+        validateProposalQualityForTargetFields(proposal.proposed, targetFields),
         "写回前内容质量校验失败",
       );
-      result.productUpdate = await updateProduct(connection, proposal);
-      if (opts.applyFaq !== false) {
+      result.productUpdate = await updateProduct(connection, proposal, targetFields);
+      if (targetFields.includes("faq") && opts.applyFaq !== false) {
         result.faqUpdate = await updateFaqMetafields(
           connection,
           proposal.product.id,
           proposal.proposed.faq,
         );
       }
-      if (opts.skipImageAlt === false && proposal.proposed.imageAltTexts.length) {
+      if (
+        targetFields.includes("imageAltTexts") &&
+        opts.skipImageAlt === false &&
+        proposal.proposed.imageAltTexts.length
+      ) {
         result.imageAltUpdate = await updateImageAltTexts(
           connection,
           proposal.proposed.imageAltTexts,
         );
       }
-      if (proposal.proposed.categorySize) {
+      if (targetFields.includes("categorySize") && proposal.proposed.categorySize) {
         result.categorySizeUpdate = await updateCategorySizeMetafield(
           connection,
           proposal,
@@ -1163,10 +1215,12 @@ export async function applyProductBatchRun(opts: {
           "DRAFT",
         );
       }
-      result.appliedTagUpdate = await markProductApplied(
-        connection,
-        proposal.product.id,
-      );
+      if (targetFields.includes("tags")) {
+        result.appliedTagUpdate = await markProductApplied(
+          connection,
+          proposal.product.id,
+        );
+      }
       result.ok = true;
     } catch (err) {
       result.error = err instanceof Error ? err.message : String(err);
@@ -1287,6 +1341,7 @@ async function generateProductProposal(opts: {
   connection: ShopifyToken;
   product: ShopifyProductNode;
   prompt: string;
+  targetFields: ProductBatchTargetField[];
   includeImages: boolean;
   model: string;
   signal?: AbortSignal;
@@ -1295,6 +1350,8 @@ async function generateProductProposal(opts: {
     throw new Error("已强制停止");
   }
   const images = getProductImages(opts.product).slice(0, 8);
+  const current = getCurrentSnapshot(opts.product, images);
+  const forbiddenFields = getForbiddenTargetFields(opts.targetFields);
   const promptData = {
     store: {
       key: opts.connection.key,
@@ -1330,8 +1387,33 @@ async function generateProductProposal(opts: {
         height: image.height || null,
       })),
     },
+    currentSnapshot: current,
     rules: PRODUCT_BATCH_RULES,
+    targetFields: opts.targetFields,
+    forbiddenFields,
+    targetFieldInstruction:
+      "Only optimize and change fields listed in targetFields. Fields listed in forbiddenFields must be copied exactly from currentSnapshot/currentProduct and must not be rewritten, translated, reordered, expanded, or polished.",
+    complianceExamples: [
+      {
+        userInstruction: "优化标题和 FAQ",
+        targetFields: ["title", "faq"],
+        correct:
+          "Rewrite only title and faq. Copy descriptionHtml, seoTitle, metaDescription, tags, templateStyle, categorySize, imageAltTexts, and handle from the original values.",
+        wrong:
+          "Changing descriptionHtml, seoTitle, metaDescription, tags, imageAltTexts, or any other field not listed in targetFields.",
+      },
+      {
+        userInstruction: "只优化图片 Alt",
+        targetFields: ["imageAltTexts"],
+        correct:
+          "Rewrite only imageAltTexts. Copy title, descriptionHtml, seoTitle, metaDescription, tags, templateStyle, categorySize, faq, and handle from the original values.",
+        wrong:
+          "Improving title, SEO title, Meta description, description, tags, or FAQ because they look related.",
+      },
+    ],
     customInstructions: opts.prompt,
+    finalInstruction:
+      "Return complete JSON for the schema, but only targetFields may differ from the original product. Repeat: forbiddenFields must be exact original-value placeholders.",
   };
 
   const client = buildGenaiClient();
@@ -1349,8 +1431,9 @@ async function generateProductProposal(opts: {
                 parts: [
                   {
                     text:
-                      "Rewrite this Shopify product for SEO and GEO. Return only JSON that matches the schema.\n\n" +
-                      JSON.stringify(promptData, null, 2),
+                      "Rewrite this Shopify product for SEO and GEO. Return only JSON that matches the schema. Obey targetFields and forbiddenFields strictly.\n\n" +
+                      JSON.stringify(promptData, null, 2) +
+                      "\n\nFinal reminder: only targetFields may change; forbiddenFields must stay exactly as currentSnapshot/currentProduct.",
                   },
                 ],
               },
@@ -1359,7 +1442,7 @@ async function generateProductProposal(opts: {
               systemInstruction: PRODUCT_BATCH_SYSTEM_PROMPT,
               responseMimeType: "application/json",
               responseSchema: PRODUCT_BATCH_OUTPUT_SCHEMA,
-              temperature: 0.25,
+              temperature: 0.15,
             },
           });
         },
@@ -1410,24 +1493,38 @@ async function generateProductProposal(opts: {
 
   const rawText = response.text || "";
   const raw = parseJsonObject(rawText);
-  const current = getCurrentSnapshot(opts.product, images);
-  let proposed = normalizeGeneratedProposal(raw, opts.product, images, opts.prompt);
-  let qualityIssues = validateProposalQuality(proposed);
+  let proposed = constrainProposalToTargetFields(
+    normalizeGeneratedProposal(raw, opts.product, images, opts.prompt),
+    current,
+    opts.targetFields,
+  );
+  let qualityIssues = validateProposalQualityForTargetFields(
+    proposed,
+    opts.targetFields,
+  );
   let repairedForQuality = false;
   if (qualityIssues.length) {
-    proposed = await repairProposalCompleteness({
-      user: opts.user,
-      connection: opts.connection,
-      product: opts.product,
-      images,
-      prompt: opts.prompt,
-      model: opts.model,
-      proposed,
-      issues: qualityIssues,
-      signal: opts.signal,
-    });
+    proposed = constrainProposalToTargetFields(
+      await repairProposalCompleteness({
+        user: opts.user,
+        connection: opts.connection,
+        product: opts.product,
+        images,
+        prompt: opts.prompt,
+        model: opts.model,
+        proposed,
+        issues: qualityIssues,
+        targetFields: opts.targetFields,
+        signal: opts.signal,
+      }),
+      current,
+      opts.targetFields,
+    );
     repairedForQuality = true;
-    qualityIssues = validateProposalQuality(proposed);
+    qualityIssues = validateProposalQualityForTargetFields(
+      proposed,
+      opts.targetFields,
+    );
   }
   assertProposalQuality(
     proposed,
@@ -1455,7 +1552,8 @@ async function generateProductProposal(opts: {
     },
     current,
     proposed,
-    changeSummary: summarizeChanges(current, proposed),
+    targetFields: opts.targetFields,
+    changeSummary: summarizeChanges(current, proposed, opts.targetFields),
     rationale: cleanText(String(raw.rationale || "")),
     warnings: [
       ...normalizeStringArray(raw.warnings),
@@ -1475,11 +1573,14 @@ async function repairProposalCompleteness(opts: {
   model: string;
   proposed: ProductBatchProposed;
   issues: ProductBatchCompletenessIssue[];
+  targetFields: ProductBatchTargetField[];
   signal?: AbortSignal;
 }): Promise<ProductBatchProposed> {
   if (opts.signal?.aborted) {
     throw new Error("已强制停止");
   }
+  const currentSnapshot = getCurrentSnapshot(opts.product, opts.images);
+  const forbiddenFields = getForbiddenTargetFields(opts.targetFields);
   const repairData = {
     store: {
       shopDomain: opts.connection.shopDomain,
@@ -1505,9 +1606,14 @@ async function repairProposalCompleteness(opts: {
         url: image.url,
       })),
     },
+    currentSnapshot,
     proposed: opts.proposed,
     qualityIssues: opts.issues,
     rules: PRODUCT_BATCH_RULES,
+    targetFields: opts.targetFields,
+    forbiddenFields,
+    targetFieldInstruction:
+      "Repair only fields listed in targetFields. Fields listed in forbiddenFields must remain exact original-value placeholders from currentSnapshot/currentProduct.",
     customInstructions: opts.prompt,
   };
 
@@ -1525,8 +1631,9 @@ async function repairProposalCompleteness(opts: {
                 parts: [
                   {
                     text:
-                      "Repair the incomplete, non-English, or incorrectly formatted Shopify product optimization JSON. Return only the repaired JSON.\n\n" +
-                      JSON.stringify(repairData, null, 2),
+                      "Repair the incomplete, non-English, or incorrectly formatted Shopify product optimization JSON. Return only the repaired JSON. Obey targetFields and forbiddenFields strictly.\n\n" +
+                      JSON.stringify(repairData, null, 2) +
+                      "\n\nFinal reminder: repair targetFields only; forbiddenFields must stay exactly as currentSnapshot/currentProduct.",
                   },
                 ],
               },
@@ -1535,7 +1642,7 @@ async function repairProposalCompleteness(opts: {
               systemInstruction: PRODUCT_BATCH_REPAIR_SYSTEM_PROMPT,
               responseMimeType: "application/json",
               responseSchema: PRODUCT_BATCH_OUTPUT_SCHEMA,
-              temperature: 0.1,
+              temperature: 0.05,
             },
           });
         },
@@ -1854,6 +1961,28 @@ function validateProposalQuality(
   ].slice(0, 32);
 }
 
+function validateProposalQualityForTargetFields(
+  proposed: ProductBatchProposed,
+  targetFields: ProductBatchTargetField[],
+): ProductBatchCompletenessIssue[] {
+  const targets = new Set(targetFields);
+  return validateProposalQuality(proposed).filter((issue) =>
+    targets.has(getIssueTargetField(issue.field)),
+  );
+}
+
+function getIssueTargetField(field: string): ProductBatchTargetField {
+  if (field.startsWith("descriptionHtml")) return "descriptionHtml";
+  if (field.startsWith("seoTitle")) return "seoTitle";
+  if (field.startsWith("metaDescription")) return "metaDescription";
+  if (field.startsWith("categorySize")) return "categorySize";
+  if (field.startsWith("templateStyle")) return "templateStyle";
+  if (field.startsWith("imageAltTexts")) return "imageAltTexts";
+  if (field.startsWith("faq")) return "faq";
+  if (field.startsWith("tags")) return "tags";
+  return "title";
+}
+
 function validateProposalEnglish(
   proposed: ProductBatchProposed,
 ): ProductBatchCompletenessIssue[] {
@@ -2143,50 +2272,71 @@ function normalizeCategorySize(
 function summarizeChanges(
   current: ProductBatchSnapshot,
   proposed: ProductBatchProposed,
+  targetFields: ProductBatchTargetField[] = PRODUCT_BATCH_TARGET_FIELDS,
 ) {
+  const targets = new Set(targetFields);
   return {
-    titleChanged: current.title !== proposed.title,
-    handleChanged: current.handle !== proposed.handle,
-    descriptionChanged: current.descriptionHtml !== proposed.descriptionHtml,
-    seoTitleChanged: current.seoTitle !== proposed.seoTitle,
-    metaDescriptionChanged: current.metaDescription !== proposed.metaDescription,
-    categorySizeChanged: current.categorySize !== proposed.categorySize,
-    templateStyleChanged: current.templateStyle !== proposed.templateStyle,
-    tagsChanged: JSON.stringify(current.tags) !== JSON.stringify(proposed.tags),
-    faqChanged: JSON.stringify(current.faq) !== JSON.stringify(proposed.faq),
-    imageAltTextUpdates: proposed.imageAltTexts.length,
+    titleChanged: targets.has("title") && current.title !== proposed.title,
+    handleChanged: targets.has("title") && current.handle !== proposed.handle,
+    descriptionChanged:
+      targets.has("descriptionHtml") &&
+      current.descriptionHtml !== proposed.descriptionHtml,
+    seoTitleChanged: targets.has("seoTitle") && current.seoTitle !== proposed.seoTitle,
+    metaDescriptionChanged:
+      targets.has("metaDescription") &&
+      current.metaDescription !== proposed.metaDescription,
+    categorySizeChanged:
+      targets.has("categorySize") && current.categorySize !== proposed.categorySize,
+    templateStyleChanged:
+      targets.has("templateStyle") && current.templateStyle !== proposed.templateStyle,
+    tagsChanged:
+      targets.has("tags") && JSON.stringify(current.tags) !== JSON.stringify(proposed.tags),
+    faqChanged:
+      targets.has("faq") && JSON.stringify(current.faq) !== JSON.stringify(proposed.faq),
+    imageAltTextUpdates: targets.has("imageAltTexts")
+      ? proposed.imageAltTexts.length
+      : 0,
   };
 }
 
 async function updateProduct(
   connection: ShopifyToken,
   proposal: ProductBatchProposal,
+  targetFields: ProductBatchTargetField[],
 ) {
-  const hasTemplateStyle = Object.prototype.hasOwnProperty.call(
-    proposal.proposed,
-    "templateStyle",
-  );
-  const templateSuffix = normalizeProductTemplateStyle(
-    proposal.proposed.templateStyle ?? proposal.current.templateStyle ?? "",
-  );
+  const targets = new Set(targetFields);
+  const product: Record<string, unknown> = { id: proposal.product.id };
+  const seo: Record<string, string> = {};
+
+  if (targets.has("title")) product.title = proposal.proposed.title;
+  if (targets.has("descriptionHtml")) {
+    product.descriptionHtml = proposal.proposed.descriptionHtml;
+  }
+  if (targets.has("seoTitle")) seo.title = proposal.proposed.seoTitle;
+  if (targets.has("metaDescription")) {
+    seo.description = proposal.proposed.metaDescription;
+  }
+  if (Object.keys(seo).length) product.seo = seo;
+  if (targets.has("templateStyle")) {
+    const templateSuffix = normalizeProductTemplateStyle(
+      proposal.proposed.templateStyle ?? proposal.current.templateStyle ?? "",
+    );
+    product.templateSuffix = templateSuffix || null;
+  }
+  if (targets.has("tags")) {
+    product.tags = stripAppliedTag(proposal.proposed.tags);
+  }
+
+  if (Object.keys(product).length === 1) {
+    return { skipped: true, reason: "no product fields selected" };
+  }
+
   const data = await shopifyGraphql<{
     productUpdate: {
       product: unknown;
       userErrors: Array<{ field?: string[]; message?: string }>;
     };
-  }>(connection, PRODUCT_UPDATE_MUTATION, {
-    product: {
-      id: proposal.product.id,
-      title: proposal.proposed.title,
-      descriptionHtml: proposal.proposed.descriptionHtml,
-      seo: {
-        title: proposal.proposed.seoTitle,
-        description: proposal.proposed.metaDescription,
-      },
-      ...(hasTemplateStyle ? { templateSuffix: templateSuffix || null } : {}),
-      tags: stripAppliedTag(proposal.proposed.tags),
-    },
-  });
+  }>(connection, PRODUCT_UPDATE_MUTATION, { product });
   const errors = normalizeUserErrors(data.productUpdate?.userErrors);
   if (errors.length) throw new Error(errors.join("；"));
   return { ok: true, product: data.productUpdate?.product || null };
@@ -3158,6 +3308,93 @@ function cleanText(value: string) {
     .replace(/\n[ \t]+/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function detectTargetFieldsFromPrompt(prompt: string): ProductBatchTargetField[] {
+  const text = cleanInlineText(prompt).toLowerCase();
+  if (!text) return [...PRODUCT_BATCH_TARGET_FIELDS];
+
+  const fields = new Set<ProductBatchTargetField>();
+  const add = (field: ProductBatchTargetField) => fields.add(field);
+  const has = (pattern: RegExp) => pattern.test(text);
+  const textWithoutSeoTitle = text.replace(/seo\s*标题|seo标题|页面标题/gu, "");
+  const textWithoutMetaDescription = text.replace(
+    /meta\s*描述|meta描述|元描述|meta\s*description/giu,
+    "",
+  );
+
+  if (
+    has(/商品标题|产品标题|product\s*title/i) ||
+    textWithoutSeoTitle.includes("标题")
+  ) {
+    add("title");
+  }
+  if (
+    has(/商品描述|产品描述|descriptionhtml|product\s*description/i) ||
+    textWithoutMetaDescription.includes("描述") ||
+    (has(/description/i) && !has(/meta\s*description/i))
+  ) {
+    add("descriptionHtml");
+  }
+  if (has(/seo\s*标题|seo标题|页面标题|page\s*title|seo\s*title/i)) add("seoTitle");
+  if (has(/meta\s*描述|meta描述|元描述|meta\s*description/i)) add("metaDescription");
+  if (has(/标签|tags?\b/i)) add("tags");
+  if (has(/模板样式|模板|template/i)) add("templateStyle");
+  if (has(/类别元字段尺寸|类别尺寸|category\s*size|尺寸/i)) add("categorySize");
+  if (has(/图片\s*alt|图片alt|替代文本|image\s*alt|alt\b/i)) add("imageAltTexts");
+  if (has(/faq|问答|常见问题/i)) add("faq");
+
+  if (
+    !fields.size ||
+    has(/全部|所有字段|全字段|完整优化|整体优化|全部优化|全量|all\s*fields/i)
+  ) {
+    return [...PRODUCT_BATCH_TARGET_FIELDS];
+  }
+
+  return PRODUCT_BATCH_TARGET_FIELDS.filter((field) => fields.has(field));
+}
+
+function getProposalTargetFields(
+  proposal: ProductBatchProposal,
+  runTargetFields?: ProductBatchTargetField[],
+): ProductBatchTargetField[] {
+  const fields = proposal.targetFields?.length ? proposal.targetFields : runTargetFields;
+  if (!fields?.length) return [...PRODUCT_BATCH_TARGET_FIELDS];
+  const valid = new Set(PRODUCT_BATCH_TARGET_FIELDS);
+  return fields.filter((field): field is ProductBatchTargetField => valid.has(field));
+}
+
+function constrainProposalToTargetFields(
+  proposed: ProductBatchProposed,
+  current: ProductBatchSnapshot,
+  targetFields: ProductBatchTargetField[],
+): ProductBatchProposed {
+  const targets = new Set(targetFields);
+  return {
+    title: targets.has("title") ? proposed.title : current.title,
+    handle: current.handle,
+    descriptionHtml: targets.has("descriptionHtml")
+      ? proposed.descriptionHtml
+      : current.descriptionHtml,
+    seoTitle: targets.has("seoTitle") ? proposed.seoTitle : current.seoTitle,
+    metaDescription: targets.has("metaDescription")
+      ? proposed.metaDescription
+      : current.metaDescription,
+    categorySize: targets.has("categorySize")
+      ? proposed.categorySize
+      : current.categorySize,
+    templateStyle: targets.has("templateStyle")
+      ? proposed.templateStyle
+      : current.templateStyle,
+    tags: targets.has("tags") ? proposed.tags : current.tags,
+    imageAltTexts: targets.has("imageAltTexts")
+      ? proposed.imageAltTexts
+      : current.imageAltTexts.map((item) => ({
+          mediaId: item.mediaId,
+          altText: item.altText,
+        })),
+    faq: targets.has("faq") ? proposed.faq : current.faq,
+  };
 }
 
 function cleanInlineText(value: string) {
