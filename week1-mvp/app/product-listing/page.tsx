@@ -2014,6 +2014,14 @@ function appendProductTag(value: string, tag: string): string {
   return [...tags, tag].join(", ");
 }
 
+function preserveFixedProductTag(currentValue: string, nextValue: string): string {
+  const hasFixedTag = splitProductTags(currentValue).some(
+    (tag) => tag.toLowerCase() === FIXED_PRODUCT_TAG,
+  );
+  if (!hasFixedTag) return nextValue;
+  return appendProductTag(nextValue, FIXED_PRODUCT_TAG);
+}
+
 function removeProductTag(value: string, tag: string): string {
   return splitProductTags(value)
     .filter((item) => item.toLowerCase() !== tag.toLowerCase())
@@ -3025,6 +3033,7 @@ export default function ProductListingPage() {
     nextForm.templateStyle = normalizeProductTemplateStyle(
       nextForm.templateStyle,
     );
+    nextForm.tags = preserveFixedProductTag(form.tags, nextForm.tags);
     if (
       !parsed.shopifyCategoryId &&
       (!nextForm.shopifyCategoryId ||
