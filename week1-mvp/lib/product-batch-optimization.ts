@@ -3740,7 +3740,7 @@ function getImageExtension(url: string) {
 }
 
 function buildProductImageFilename(title: string, index: number, sourceUrl: string) {
-  const base = normalizeProductHandle(title).slice(0, 120) || "product-image";
+  const base = normalizeFileName(title).slice(0, 120) || "product-image";
   return normalizeFileName(`${base}-${index + 1}${getImageExtension(sourceUrl)}`);
 }
 
