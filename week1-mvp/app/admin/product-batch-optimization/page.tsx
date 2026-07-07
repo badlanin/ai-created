@@ -22,6 +22,7 @@ import {
   Tags,
   Trash2,
   Upload,
+  WandSparkles,
   X,
 } from "lucide-react";
 
@@ -936,16 +937,25 @@ export default function ProductBatchOptimizationPage() {
 
   return (
     <main className="mx-auto max-w-7xl p-4 md:p-8">
-      <header className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-        <div>
-          <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-border-subtle bg-bg-secondary px-3 py-1 text-xs text-fg-tertiary">
-            <Sparkles size={13} />
-            团队管理
+      <header className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
+          <span
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-white"
+            style={{
+              background: "var(--brand-gradient)",
+              boxShadow: "0 0 16px var(--brand-glow)",
+            }}
+          >
+            <WandSparkles size={18} strokeWidth={2.2} />
+          </span>
+          <div className="min-w-0">
+            <h1 className="text-[22px] font-bold tracking-tight text-fg-primary">
+              产品批量优化
+            </h1>
+            <p className="mt-0.5 text-[13px] text-fg-tertiary">
+              使用本功能独立添加的 Shopify 店铺生成 SEO/GEO 优化预览，再选择写回。
+            </p>
           </div>
-          <h1 className="text-2xl font-bold text-fg-primary">产品批量优化</h1>
-          <p className="mt-1 text-sm text-fg-tertiary">
-            使用本功能独立添加的 Shopify 店铺生成 SEO/GEO 优化预览，再选择写回。
-          </p>
         </div>
         <button
           type="button"
