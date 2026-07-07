@@ -17,6 +17,7 @@ export async function POST(req: NextRequest) {
       jobId?: string;
       storeKeys?: string[];
       query?: string;
+      sortOrder?: "newest" | "oldest";
       start?: number;
       limit?: number;
       prompt?: string;
@@ -31,6 +32,7 @@ export async function POST(req: NextRequest) {
       jobId: body.jobId,
       storeKeys: body.storeKeys,
       query: body.query,
+      sortOrder: body.sortOrder,
       start: body.start,
       limit: body.limit,
       prompt: body.prompt,

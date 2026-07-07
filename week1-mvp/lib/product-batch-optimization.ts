@@ -210,6 +210,8 @@ export type ProductBatchTargetField =
   | "imageAltTexts"
   | "faq";
 
+export type ProductBatchSortOrder = "newest" | "oldest";
+
 const PRODUCT_BATCH_TARGET_FIELDS: ProductBatchTargetField[] = [
   "title",
   "descriptionHtml",
@@ -297,6 +299,7 @@ export type ProductBatchRunSummary = {
   stores: Array<{ key: string; name: string | null; shopDomain: string }>;
   start: number;
   query: string;
+  sortOrder?: ProductBatchSortOrder;
   prompt: string;
   limit: number;
   model: string;
@@ -337,6 +340,7 @@ export type ProductBatchPreviewProgress = {
     | "idle"
     | "starting"
     | "fetching"
+    | "waiting"
     | "generating"
     | "stopping"
     | "stopped"
@@ -356,6 +360,19 @@ export type ProductBatchPreviewProgress = {
   updatedAt: number;
   runId?: string | null;
   error?: string | null;
+  shopifyThrottle?: ProductBatchShopifyThrottleProgress | null;
+};
+
+export type ProductBatchShopifyThrottleProgress = {
+  retryAt: number;
+  retryAfterMs: number;
+  attempt: number;
+  maxAttempts: number;
+  currentlyAvailable?: number;
+  restoreRate?: number;
+  maximumAvailable?: number;
+  requestedQueryCost?: number;
+  source: "shopify" | "fallback";
 };
 
 type ShopifyToken = {
@@ -461,6 +478,17 @@ type ShopifyProductNode = {
 type ShopifyGraphqlEnvelope<T> = {
   data?: T;
   errors?: Array<{ message?: string }>;
+  extensions?: {
+    cost?: {
+      requestedQueryCost?: number;
+      actualQueryCost?: number;
+      throttleStatus?: {
+        maximumAvailable?: number;
+        currentlyAvailable?: number;
+        restoreRate?: number;
+      };
+    };
+  };
 };
 
 type ShopifyProductsQueryData = {
@@ -479,8 +507,8 @@ type ShopifyShopQueryData = {
 };
 
 const PRODUCTS_QUERY = `
-query Products($first: Int!, $after: String, $query: String) {
-  products(first: $first, after: $after, query: $query, sortKey: CREATED_AT, reverse: true) {
+query Products($first: Int!, $after: String, $query: String, $reverse: Boolean!) {
+  products(first: $first, after: $after, query: $query, sortKey: CREATED_AT, reverse: $reverse) {
     edges {
       cursor
       node {
@@ -868,6 +896,7 @@ export async function createProductBatchPreview(opts: {
   jobId?: string;
   storeKeys?: string[];
   query?: string;
+  sortOrder?: ProductBatchSortOrder;
   start?: number;
   limit?: number;
   prompt?: string;
@@ -883,6 +912,8 @@ export async function createProductBatchPreview(opts: {
   const limit = clampInt(opts.limit ?? 10, 1, MAX_PREVIEW_LIMIT);
   const start = clampInt(opts.start ?? 0, 0, 100_000);
   const query = cleanText(opts.query || "status:active");
+  const sortOrder: ProductBatchSortOrder =
+    opts.sortOrder === "oldest" ? "oldest" : "newest";
   const prompt = cleanText(opts.prompt || PRODUCT_BATCH_DEFAULT_PROMPT);
   const targetFields = detectTargetFieldsFromPrompt(prompt);
   const includeImages = opts.includeImages !== false;
@@ -937,11 +968,25 @@ export async function createProductBatchPreview(opts: {
         const batch = await fetchProducts({
           connection: store,
           query,
+          sortOrder,
           start: storeSkip,
           limit: batchLimit,
           after: storeAfter,
           includeApplied,
           signal: previewJob?.controller.signal,
+          onThrottle: (throttle) => {
+            const retrySeconds = Math.max(
+              1,
+              Math.ceil((throttle.retryAt - Date.now()) / 1000),
+            );
+            updatePreviewProgress(previewJob, {
+              phase: "waiting",
+              message: `${storeLabel}：Shopify GraphQL 限流，额度恢复中，预计 ${retrySeconds} 秒后重试。`,
+              currentStore: storeLabel,
+              currentProduct: null,
+              shopifyThrottle: throttle,
+            });
+          },
         });
         products = batch.products;
         storeAfter = batch.endCursor;
@@ -1101,6 +1146,7 @@ export async function createProductBatchPreview(opts: {
     stores: runStores,
     start,
     query,
+    sortOrder,
     prompt,
     limit,
     model,
@@ -1331,11 +1377,13 @@ function getValidStoreAccessToken(store: ProductBatchStoreRecord) {
 async function fetchProducts(opts: {
   connection: ShopifyToken;
   query: string;
+  sortOrder: ProductBatchSortOrder;
   start: number;
   limit: number;
   after?: string | null;
   includeApplied: boolean;
   signal?: AbortSignal;
+  onThrottle?: (throttle: ProductBatchShopifyThrottleProgress) => void;
 }): Promise<{
   products: ShopifyProductNode[];
   endCursor: string | null;
@@ -1361,7 +1409,10 @@ async function fetchProducts(opts: {
       ),
       after,
       query: opts.query || null,
-    }, opts.signal);
+      reverse: opts.sortOrder !== "oldest",
+    }, opts.signal, {
+      onThrottle: opts.onThrottle,
+    });
     const productsConnection = pageData.products;
     for (const edge of productsConnection.edges || []) {
       const product = edge.node;
@@ -2580,40 +2631,141 @@ async function shopifyGraphql<T>(
   query: string,
   variables?: Record<string, unknown>,
   signal?: AbortSignal,
+  options?: {
+    maxThrottleRetries?: number;
+    onThrottle?: (throttle: ProductBatchShopifyThrottleProgress) => void;
+  },
 ): Promise<T> {
   const domain = normalizeShopDomainInput(connection.shopDomain);
   const endpoint = `https://${domain}/admin/api/${connection.apiVersion || SHOPIFY_API_VERSION}/graphql.json`;
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Shopify-Access-Token": connection.accessToken,
-    },
-    body: JSON.stringify({ query, variables }),
-    signal: withTimeoutSignal(60_000, signal),
+  const maxThrottleRetries = options?.maxThrottleRetries ?? 5;
+  for (let attemptIndex = 0; attemptIndex <= maxThrottleRetries; attemptIndex += 1) {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": connection.accessToken,
+      },
+      body: JSON.stringify({ query, variables }),
+      signal: withTimeoutSignal(60_000, signal),
+    });
+    const text = await response.text();
+    let json: ShopifyGraphqlEnvelope<T>;
+    try {
+      json = text ? (JSON.parse(text) as ShopifyGraphqlEnvelope<T>) : {};
+    } catch {
+      throw new Error(
+        `Shopify 返回非 JSON 响应（HTTP ${response.status}）：${truncate(text, 300)}`,
+      );
+    }
+
+    const throttled =
+      response.status === 429 ||
+      (json.errors || []).some((err) => /throttled/i.test(err.message || ""));
+    if (throttled && attemptIndex < maxThrottleRetries) {
+      const throttle = buildShopifyThrottleProgress(
+        json,
+        response,
+        attemptIndex,
+        maxThrottleRetries,
+      );
+      options?.onThrottle?.(throttle);
+      await waitWithAbort(throttle.retryAfterMs, signal);
+      continue;
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        `Shopify 请求失败：HTTP ${response.status} ${truncate(JSON.stringify(json), 500)}`,
+      );
+    }
+    if (json.errors?.length) {
+      throw new Error(
+        `Shopify GraphQL 错误：${json.errors
+          .map((err) => err.message || "未知错误")
+          .join("；")}`,
+      );
+    }
+    return (json.data || {}) as T;
+  }
+  throw new Error("Shopify GraphQL 错误：Throttled");
+}
+
+function buildShopifyThrottleProgress<T>(
+  json: ShopifyGraphqlEnvelope<T>,
+  response: Response,
+  attemptIndex: number,
+  maxAttempts: number,
+): ProductBatchShopifyThrottleProgress {
+  const cost = json.extensions?.cost;
+  const throttleStatus = cost?.throttleStatus;
+  const retryAfterHeaderMs = parseRetryAfterMs(response.headers.get("retry-after"));
+  const requested = Number(cost?.requestedQueryCost);
+  const current = Number(throttleStatus?.currentlyAvailable);
+  const restoreRate = Number(throttleStatus?.restoreRate);
+  const shopifyWaitMs =
+    Number.isFinite(requested) &&
+    Number.isFinite(current) &&
+    Number.isFinite(restoreRate) &&
+    restoreRate > 0
+      ? Math.ceil((Math.max(0, requested - current) / restoreRate) * 1000) + 1000
+      : null;
+  const fallbackWaitMs = Math.min(30_000, 3000 * 2 ** attemptIndex);
+  const retryAfterMs = clampNumber(
+    retryAfterHeaderMs || shopifyWaitMs || fallbackWaitMs,
+    1000,
+    30_000,
+  );
+  return {
+    retryAt: Date.now() + retryAfterMs,
+    retryAfterMs,
+    attempt: attemptIndex + 1,
+    maxAttempts,
+    currentlyAvailable: toFiniteNumber(throttleStatus?.currentlyAvailable),
+    restoreRate: toFiniteNumber(throttleStatus?.restoreRate),
+    maximumAvailable: toFiniteNumber(throttleStatus?.maximumAvailable),
+    requestedQueryCost: toFiniteNumber(cost?.requestedQueryCost),
+    source: shopifyWaitMs || retryAfterHeaderMs ? "shopify" : "fallback",
+  };
+}
+
+function parseRetryAfterMs(value: string | null) {
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds > 0) return seconds * 1000;
+  const dateMs = Date.parse(value);
+  if (Number.isFinite(dateMs)) return Math.max(0, dateMs - Date.now());
+  return null;
+}
+
+function toFiniteNumber(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function waitWithAbort(ms: number, signal?: AbortSignal) {
+  if (!signal) {
+    return new Promise<void>((resolve) => setTimeout(resolve, ms));
+  }
+  if (signal.aborted) return Promise.reject(abortReason(signal, "已取消"));
+  return new Promise<void>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout>;
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      reject(abortReason(signal, "已取消"));
+    };
+    timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
   });
-  const text = await response.text();
-  let json: ShopifyGraphqlEnvelope<T>;
-  try {
-    json = text ? (JSON.parse(text) as ShopifyGraphqlEnvelope<T>) : {};
-  } catch {
-    throw new Error(
-      `Shopify 返回非 JSON 响应（HTTP ${response.status}）：${truncate(text, 300)}`,
-    );
-  }
-  if (!response.ok) {
-    throw new Error(
-      `Shopify 请求失败：HTTP ${response.status} ${truncate(JSON.stringify(json), 500)}`,
-    );
-  }
-  if (json.errors?.length) {
-    throw new Error(
-      `Shopify GraphQL 错误：${json.errors
-        .map((err) => err.message || "未知错误")
-        .join("；")}`,
-    );
-  }
-  return (json.data || {}) as T;
 }
 
 function getProductImages(product: ShopifyProductNode): ProductBatchImageSnapshot[] {
@@ -2724,7 +2876,7 @@ function flattenRichText(node: unknown): string {
 
 function hasAppliedTag(product: ShopifyProductNode) {
   return (product.tags || []).some(
-    (tag) => String(tag || "").toLowerCase() === APPLIED_TAG,
+    (tag) => String(tag || "").trim().toLowerCase() === APPLIED_TAG,
   );
 }
 
@@ -2736,7 +2888,7 @@ function stripAppliedTag(tags: unknown): string[] {
 }
 
 function withAppliedTag(tags: string[]) {
-  if (tags.some((tag) => tag.toLowerCase() === APPLIED_TAG)) return tags;
+  if (tags.some((tag) => tag.trim().toLowerCase() === APPLIED_TAG)) return tags;
   return [...tags, APPLIED_TAG];
 }
 

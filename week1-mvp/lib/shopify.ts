@@ -1966,6 +1966,16 @@ export async function getShopifyCategoryMetafieldOptions(
     return buildFallbackShopifyCategoryMetafieldOptions(cleanedCategoryId);
   }
 
+  const customDefinitionsPromise = fetchShopifyProductCustomMetafieldDefinitions(
+    stored.shopDomain,
+    stored.accessToken,
+    warnings,
+  ).catch((err) => {
+    warnings.push(
+      `读取 Shopify 产品自定义元字段失败：${err instanceof Error ? err.message : String(err)}`,
+    );
+    return [] as ShopifyMetafieldDefinitionNode[];
+  });
   const [definitions, templates, customDefinitions, attributeGroups] = await Promise.all([
     fetchShopifyCategoryMetafieldDefinitionsForHierarchy(
       stored.shopDomain,
@@ -1979,11 +1989,7 @@ export async function getShopifyCategoryMetafieldOptions(
       cleanedCategoryId,
       warnings,
     ),
-    fetchShopifyProductCustomMetafieldDefinitions(
-      stored.shopDomain,
-      stored.accessToken,
-      warnings,
-    ),
+    customDefinitionsPromise,
     fetchShopifyTaxonomyCategoryAttributeGroupsForHierarchy(
       stored.shopDomain,
       stored.accessToken,

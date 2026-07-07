@@ -49,6 +49,7 @@ type RunSummary = {
   stores: Array<{ key: string; name: string | null; shopDomain: string }>;
   start: number;
   query: string;
+  sortOrder?: ProductBatchSortOrder;
   prompt: string;
   limit: number;
   model: string;
@@ -75,6 +76,8 @@ type TargetField =
   | "categorySize"
   | "imageAltTexts"
   | "faq";
+
+type ProductBatchSortOrder = "newest" | "oldest";
 
 const ALL_TARGET_FIELDS: TargetField[] = [
   "title",
@@ -154,6 +157,7 @@ type PreviewProgress = {
     | "idle"
     | "starting"
     | "fetching"
+    | "waiting"
     | "generating"
     | "stopping"
     | "stopped"
@@ -173,6 +177,17 @@ type PreviewProgress = {
   updatedAt: number;
   runId?: string | null;
   error?: string | null;
+  shopifyThrottle?: {
+    retryAt: number;
+    retryAfterMs: number;
+    attempt: number;
+    maxAttempts: number;
+    currentlyAvailable?: number;
+    restoreRate?: number;
+    maximumAvailable?: number;
+    requestedQueryCost?: number;
+    source: "shopify" | "fallback";
+  } | null;
 };
 
 type ProductBatchPromptPreset = {
@@ -181,6 +196,7 @@ type ProductBatchPromptPreset = {
   createdAt: number;
   form: {
     query: string;
+    sortOrder?: ProductBatchSortOrder;
     limit: number;
     start: number;
     prompt: string;
@@ -233,6 +249,7 @@ export default function ProductBatchOptimizationPage() {
   const presetMenuRef = useRef<HTMLDivElement | null>(null);
   const [form, setForm] = useState({
     query: "status:active",
+    sortOrder: "newest" as ProductBatchSortOrder,
     limit: 10,
     start: 0,
     prompt: FALLBACK_PROMPT,
@@ -598,6 +615,7 @@ export default function ProductBatchOptimizationPage() {
       createdAt: Date.now(),
       form: {
         query: form.query,
+        sortOrder: form.sortOrder,
         limit: normalizeLimitInput(limitInput, form.limit),
         start: Math.max(0, Number(form.start) || 0),
         prompt: form.prompt,
@@ -623,6 +641,7 @@ export default function ProductBatchOptimizationPage() {
     setForm((prev) => ({
       ...prev,
       query: preset.form.query,
+      sortOrder: preset.form.sortOrder || "newest",
       limit: nextLimit,
       start: preset.form.start,
       prompt: preset.form.prompt,
@@ -1040,7 +1059,7 @@ export default function ProductBatchOptimizationPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-[92px_110px_1fr]">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-[92px_110px_150px_1fr]">
               <label className="text-xs font-medium text-fg-secondary">
                 数量
                 <input
@@ -1074,6 +1093,23 @@ export default function ProductBatchOptimizationPage() {
                     }))
                   }
                 />
+              </label>
+              <label className="text-xs font-medium text-fg-secondary">
+                读取顺序
+                <select
+                  className="input mt-1"
+                  value={form.sortOrder}
+                  onChange={(e) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      sortOrder:
+                        e.target.value === "oldest" ? "oldest" : "newest",
+                    }))
+                  }
+                >
+                  <option value="newest">最新商品优先</option>
+                  <option value="oldest">最旧商品优先</option>
+                </select>
               </label>
               <label className="text-xs font-medium text-fg-secondary">
                 Shopify 查询
@@ -1699,6 +1735,7 @@ function readProductBatchPromptPresets(): ProductBatchPromptPreset[] {
         createdAt: Number(preset.createdAt) || 0,
         form: {
           query: String(preset.form.query || "status:active"),
+          sortOrder: preset.form.sortOrder === "oldest" ? "oldest" : "newest",
           limit: Number(preset.form.limit) || 1,
           start: Math.max(0, Number(preset.form.start) || 0),
           prompt: String(preset.form.prompt || ""),
@@ -2378,9 +2415,17 @@ function PreviewProgressCard({
   generating: boolean;
 }) {
   const percent = clampPercent(progress?.percent ?? 0);
-  const message = progress?.message || "等待生成预览。";
+  const throttle = progress?.shopifyThrottle || null;
+  const retrySeconds = throttle
+    ? Math.max(0, Math.ceil((throttle.retryAt - Date.now()) / 1000))
+    : null;
+  const message =
+    progress?.phase === "waiting" && retrySeconds !== null
+      ? (progress.message || "").replace(/预计 \d+ 秒后重试。?/, `预计 ${retrySeconds} 秒后重试。`)
+      : progress?.message || "等待生成预览。";
   const phaseLabel = progress ? progressPhaseLabel(progress.phase) : "未开始";
   const isFailed = progress?.phase === "failed";
+  const isWaiting = progress?.phase === "waiting";
   const isDone =
     progress?.phase === "completed" ||
     progress?.phase === "finished" ||
@@ -2390,7 +2435,9 @@ function PreviewProgressCard({
     <div className="card p-4">
       <div className="mb-3 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-sm font-semibold text-fg-primary">
-          {generating ? (
+          {isWaiting ? (
+            <Loader2 size={16} className="animate-spin text-amber-500" />
+          ) : generating ? (
             <Loader2 size={16} className="animate-spin text-brand-400" />
           ) : isFailed ? (
             <AlertTriangle size={16} className="text-danger" />
@@ -2403,7 +2450,7 @@ function PreviewProgressCard({
         </div>
         <span
           className={`text-lg font-semibold ${
-            isFailed ? "text-danger" : "text-brand-400"
+            isFailed ? "text-danger" : isWaiting ? "text-amber-600" : "text-brand-400"
           }`}
         >
           {percent}%
@@ -2413,14 +2460,26 @@ function PreviewProgressCard({
       <div className="h-2 overflow-hidden rounded-full bg-bg-tertiary">
         <div
           className={`h-full rounded-full transition-all duration-500 ${
-            isFailed ? "bg-[var(--danger)]" : "bg-[var(--brand-400)]"
+            isFailed
+              ? "bg-[var(--danger)]"
+              : isWaiting
+                ? "bg-amber-500"
+                : "bg-[var(--brand-400)]"
           }`}
           style={{ width: `${percent}%` }}
         />
       </div>
 
       <div className="mt-3 flex items-center justify-between gap-3 text-xs">
-        <span className="chip chip-brand">{phaseLabel}</span>
+        <span
+          className={
+            isWaiting
+              ? "rounded-full border border-amber-200 bg-[var(--warn-bg)] px-2 py-0.5 text-amber-700"
+              : "chip chip-brand"
+          }
+        >
+          {phaseLabel}
+        </span>
         <span className="text-fg-tertiary">
           {progress?.total ? `${progress.completed}/${progress.total}` : "0/0"}
         </span>
@@ -2436,6 +2495,31 @@ function PreviewProgressCard({
       {progress?.currentProduct ? (
         <div className="mt-1 truncate text-[11px] text-fg-tertiary">
           商品：{progress.currentProduct}
+        </div>
+      ) : null}
+      {isWaiting && throttle ? (
+        <div className="mt-3 space-y-1 rounded-lg border border-amber-200 bg-[var(--warn-bg)] px-3 py-2 text-[11px] text-amber-800">
+          <div className="flex items-center justify-between gap-3">
+            <span>当前可用点数</span>
+            <span className="font-medium">
+              {formatOptionalNumber(throttle.currentlyAvailable)}
+            </span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span>每秒恢复</span>
+            <span className="font-medium">
+              {formatOptionalNumber(throttle.restoreRate)}
+            </span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span>重试次数</span>
+            <span className="font-medium">
+              {throttle.attempt}/{throttle.maxAttempts}
+            </span>
+          </div>
+          <div className="pt-1 text-amber-700">
+            系统会自动继续，无需重新点击生成预览。
+          </div>
         </div>
       ) : null}
     </div>
@@ -2490,6 +2574,7 @@ function progressPhaseLabel(phase: PreviewProgress["phase"]) {
     idle: "未开始",
     starting: "准备中",
     fetching: "读取商品",
+    waiting: "等待重试",
     generating: "生成预览",
     stopping: "停止中",
     stopped: "已停止",
@@ -2504,6 +2589,10 @@ function progressPhaseLabel(phase: PreviewProgress["phase"]) {
 function clampPercent(value: number) {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function formatOptionalNumber(value: number | undefined) {
+  return Number.isFinite(value) ? String(value) : "--";
 }
 
 function parseShopifyCredentials(text: string) {
