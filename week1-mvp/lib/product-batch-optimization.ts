@@ -304,6 +304,7 @@ export type ProductBatchRunSummary = {
   shopName: string | null;
   storeKeys: string[];
   stores: Array<{ key: string; name: string | null; shopDomain: string }>;
+  proposalStores?: Array<{ key: string; name: string | null; shopDomain: string }>;
   start: number;
   query: string;
   sortOrder?: ProductBatchSortOrder;
@@ -3542,6 +3543,7 @@ function toRunSummary(run: ProductBatchRunDocument): ProductBatchRunSummary {
     shopName: run.shopName,
     storeKeys: run.storeKeys || [],
     stores: run.stores || [],
+    proposalStores: getRunProposalStores(run),
     start: run.start || 0,
     query: run.query,
     prompt: run.prompt,
@@ -3553,6 +3555,20 @@ function toRunSummary(run: ProductBatchRunDocument): ProductBatchRunSummary {
     stopReason: run.stopReason || null,
     lastApplyAt: run.lastApplyAt || null,
   };
+}
+
+function getRunProposalStores(run: ProductBatchRunDocument) {
+  const stores = new Map<string, { key: string; name: string | null; shopDomain: string }>();
+  for (const proposal of run.proposals || []) {
+    const key = String(proposal.store?.key || "").trim();
+    if (!key || stores.has(key)) continue;
+    stores.set(key, {
+      key,
+      name: proposal.store?.name || null,
+      shopDomain: proposal.store?.shopDomain || "",
+    });
+  }
+  return Array.from(stores.values());
 }
 
 function createRunId() {

@@ -39,6 +39,8 @@ type StoreSafe = {
   defaultProductQuery: string;
 };
 
+type RunStoreRef = { key: string; name: string | null; shopDomain: string };
+
 type RunSummary = {
   id: string;
   createdAt: number;
@@ -46,7 +48,8 @@ type RunSummary = {
   shopDomain: string;
   shopName: string | null;
   storeKeys: string[];
-  stores: Array<{ key: string; name: string | null; shopDomain: string }>;
+  stores: RunStoreRef[];
+  proposalStores?: RunStoreRef[];
   start: number;
   query: string;
   sortOrder?: ProductBatchSortOrder;
@@ -288,7 +291,7 @@ export default function ProductBatchOptimizationPage() {
   const previewStoreOptions = useMemo(() => {
     const map = new Map<string, { key: string; label: string; count: number }>();
     for (const run of runs) {
-      for (const store of run.stores || []) {
+      for (const store of runFilterStores(run)) {
         const key = store.key;
         if (!key) continue;
         const current = map.get(key);
@@ -311,8 +314,7 @@ export default function ProductBatchOptimizationPage() {
       runs.filter(
         (run) =>
           isRunOnDate(run.createdAt, previewFilterDate) &&
-          (previewFilterStoreKey === "__all__" ||
-            run.stores?.some((store) => store.key === previewFilterStoreKey)),
+          runMatchesStoreFilter(run, previewFilterStoreKey),
       ),
     [runs, previewFilterDate, previewFilterStoreKey],
   );
@@ -2654,6 +2656,7 @@ function toSummary(run: RunDocument): RunSummary {
     shopName: run.shopName,
     storeKeys: run.storeKeys || [],
     stores: run.stores || [],
+    proposalStores: run.proposalStores || getRunProposalStores(run),
     start: run.start || 0,
     query: run.query,
     prompt: run.prompt,
@@ -2665,6 +2668,20 @@ function toSummary(run: RunDocument): RunSummary {
     stopReason: run.stopReason || null,
     lastApplyAt: run.lastApplyAt,
   };
+}
+
+function getRunProposalStores(run: Pick<RunDocument, "proposals">): RunStoreRef[] {
+  const stores = new Map<string, RunStoreRef>();
+  for (const proposal of run.proposals || []) {
+    const key = proposal.store?.key || "";
+    if (!key || stores.has(key)) continue;
+    stores.set(key, {
+      key,
+      name: proposal.store?.name || null,
+      shopDomain: proposal.store?.shopDomain || "",
+    });
+  }
+  return Array.from(stores.values());
 }
 
 function isRunSubmitted(run: Pick<RunSummary, "lastApplyAt">) {
@@ -2688,10 +2705,21 @@ function storePickerLabel(selected: StoreSafe[], all: StoreSafe[]) {
 }
 
 function runStoreLabel(run: Pick<RunSummary, "stores" | "shopName" | "shopDomain">) {
-  const stores = run.stores || [];
+  const stores = runFilterStores(run);
   if (stores.length > 1) return `${stores.length} 个店铺`;
   if (stores.length === 1) return stores[0].name || stores[0].shopDomain;
   return run.shopName || run.shopDomain || "未知店铺";
+}
+
+function runFilterStores(run: Pick<RunSummary, "stores" | "proposalStores">) {
+  return run.proposalStores?.length ? run.proposalStores : run.stores || [];
+}
+
+function runMatchesStoreFilter(
+  run: Pick<RunSummary, "stores" | "proposalStores">,
+  storeKey: string,
+) {
+  return storeKey === "__all__" || runFilterStores(run).some((store) => store.key === storeKey);
 }
 
 function buildRunDisplayLabels(runs: RunSummary[], storeKey: string) {
@@ -2710,10 +2738,10 @@ function buildRunDisplayLabels(runs: RunSummary[], storeKey: string) {
 }
 
 function runDisplayStoreName(
-  run: Pick<RunSummary, "stores" | "shopName" | "shopDomain">,
+  run: Pick<RunSummary, "stores" | "proposalStores" | "shopName" | "shopDomain">,
   storeKey: string,
 ) {
-  const stores = run.stores || [];
+  const stores = runFilterStores(run);
   const matchedStore =
     storeKey !== "__all__" ? stores.find((store) => store.key === storeKey) : null;
   const store = matchedStore || stores[0];
