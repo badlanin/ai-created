@@ -189,9 +189,16 @@ const PRODUCT_BATCH_OUTPUT_SCHEMA = {
 export type ProductBatchImageSnapshot = {
   mediaId: string;
   altText: string;
+  filename?: string;
   url: string;
   width?: number | null;
   height?: number | null;
+};
+
+export type ProductBatchImageUpdate = {
+  mediaId: string;
+  altText: string;
+  filename?: string;
 };
 
 export type ProductBatchFaqItem = {
@@ -253,7 +260,7 @@ export type ProductBatchProposed = {
   categorySize: string;
   templateStyle: string;
   tags: string[];
-  imageAltTexts: Array<{ mediaId: string; altText: string }>;
+  imageAltTexts: ProductBatchImageUpdate[];
   faq: ProductBatchFaqItem[];
 };
 
@@ -1708,6 +1715,7 @@ async function repairProposalCompleteness(opts: {
       templateStyle: opts.product.templateSuffix || "",
       images: opts.images.map((image) => ({
         mediaId: image.mediaId,
+        existingFilename: image.filename,
         existingAltText: image.altText,
         url: image.url,
       })),
@@ -1832,16 +1840,38 @@ function normalizeGeneratedProposal(
 ): ProductBatchProposed {
   const limits = PRODUCT_BATCH_RULES.contentRules;
   const imageIds = new Set(images.map((image) => image.mediaId));
+  const imageById = new Map(
+    images.map((image, index) => [image.mediaId, { image, index }]),
+  );
+  const proposedTitle = clampText(
+    String(raw.title || product.title || ""),
+    limits.productTitleMaxChars,
+  );
+  const targetFields = detectTargetFieldsFromPrompt(prompt);
+  const filenameTitle = targetFields.includes("title")
+    ? proposedTitle
+    : String(product.title || "");
   const imageAltTexts = Array.isArray(raw.imageAltTexts)
     ? raw.imageAltTexts
         .filter((item): item is Record<string, unknown> => Boolean(item))
-        .map((item) => ({
-          mediaId: cleanText(String(item.mediaId || "")),
-          altText: clampText(
-            String(item.altText || ""),
-            limits.imageAltTextMaxChars,
-          ),
-        }))
+        .map((item) => {
+          const mediaId = cleanText(String(item.mediaId || ""));
+          const source = imageById.get(mediaId);
+          return {
+            mediaId,
+            altText: clampText(
+              String(item.altText || ""),
+              limits.imageAltTextMaxChars,
+            ),
+            filename: source
+              ? buildProductImageFilename(
+                  filenameTitle,
+                  source.index,
+                  source.image.url,
+                )
+              : undefined,
+          };
+        })
         .filter((item) => imageIds.has(item.mediaId) && item.altText)
     : [];
 
@@ -1874,7 +1904,7 @@ function normalizeGeneratedProposal(
   );
 
   return normalizeProposalCompleteness({
-    title: clampText(String(raw.title || product.title || ""), limits.productTitleMaxChars),
+    title: proposedTitle,
     handle:
       normalizeProductHandle(raw.handle || raw.title) ||
       normalizeProductHandle(product.handle),
@@ -1999,6 +2029,7 @@ function normalizeProposalCompleteness(proposed: ProductBatchProposed): ProductB
         item.altText,
         limits.imageAltTextMaxChars,
       ),
+      filename: normalizeFileName(item.filename || ""),
     })).filter((item) => item.mediaId && item.altText),
     faq: proposed.faq.map((item) => ({
       question: normalizeQuestionText(item.question),
@@ -2486,11 +2517,15 @@ async function markProductApplied(connection: ShopifyToken, productId: string) {
 
 async function updateImageAltTexts(
   connection: ShopifyToken,
-  imageAltTexts: Array<{ mediaId: string; altText: string }>,
+  imageAltTexts: ProductBatchImageUpdate[],
 ) {
   const files = imageAltTexts
     .filter((item) => item.mediaId && item.altText)
-    .map((item) => ({ id: item.mediaId, alt: item.altText }));
+    .map((item) => ({
+      id: item.mediaId,
+      alt: item.altText,
+      ...(item.filename ? { filename: item.filename } : {}),
+    }));
   if (!files.length) return { skipped: true, reason: "no image alt text" };
   const data = await shopifyGraphql<{
     fileUpdate: {
@@ -2804,10 +2839,12 @@ function getProductImages(product: ShopifyProductNode): ProductBatchImageSnapsho
     .filter((node): node is ShopifyMediaNode => Boolean(node))
     .map((node) => {
       const image = node.image || node.preview?.image || null;
+      const url = image?.url || "";
       return {
         mediaId: node.id || "",
         altText: node.image?.altText || node.alt || "",
-        url: image?.url || "",
+        filename: getFilenameFromUrl(url),
+        url,
         width: node.image?.width || null,
         height: node.image?.height || null,
       };
@@ -3621,6 +3658,7 @@ function constrainProposalToTargetFields(
       : current.imageAltTexts.map((item) => ({
           mediaId: item.mediaId,
           altText: item.altText,
+          filename: item.filename,
         })),
     faq: targets.has("faq") ? proposed.faq : current.faq,
   };
@@ -3645,6 +3683,43 @@ function normalizeProductHandle(value: unknown) {
     .replace(/^-+|-+$/g, "")
     .replace(/-{2,}/g, "-")
     .slice(0, 255);
+}
+
+function normalizeFileName(value: unknown) {
+  return String(value || "")
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 255);
+}
+
+function getFilenameFromUrl(url: string) {
+  const rawPath = (() => {
+    try {
+      return new URL(url).pathname;
+    } catch {
+      return String(url || "").split(/[?#]/)[0];
+    }
+  })();
+  const filename = rawPath.split("/").filter(Boolean).pop() || "";
+  try {
+    return normalizeFileName(decodeURIComponent(filename));
+  } catch {
+    return normalizeFileName(filename);
+  }
+}
+
+function getImageExtension(url: string) {
+  const filename = getFilenameFromUrl(url);
+  const match = filename.match(/\.(?:jpg|jpeg|png|webp|gif|avif)$/i);
+  return match ? match[0].toLowerCase() : ".jpg";
+}
+
+function buildProductImageFilename(title: string, index: number, sourceUrl: string) {
+  const base = normalizeProductHandle(title).slice(0, 120) || "product-image";
+  return normalizeFileName(`${base}-${index + 1}${getImageExtension(sourceUrl)}`);
 }
 
 function normalizeStringArray(value: unknown) {

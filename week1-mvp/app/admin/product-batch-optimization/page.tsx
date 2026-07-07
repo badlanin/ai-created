@@ -66,6 +66,12 @@ type FaqItem = {
   answer: string;
 };
 
+type ImageTextItem = {
+  mediaId: string;
+  altText: string;
+  filename?: string;
+};
+
 type TargetField =
   | "title"
   | "descriptionHtml"
@@ -101,7 +107,7 @@ type Snapshot = {
   templateStyle: string;
   tags: string[];
   faq: FaqItem[];
-  imageAltTexts?: Array<{ mediaId: string; altText: string }>;
+  imageAltTexts?: ImageTextItem[];
 };
 
 type Proposal = {
@@ -118,7 +124,7 @@ type Proposal = {
   };
   current: Snapshot;
   proposed: Snapshot & {
-    imageAltTexts: Array<{ mediaId: string; altText: string }>;
+    imageAltTexts: ImageTextItem[];
   };
   targetFields?: TargetField[];
   rationale: string;
@@ -2243,12 +2249,12 @@ function SnapshotImageAltList({
   imageAltTexts,
   tone,
 }: {
-  imageAltTexts: Array<{ mediaId: string; altText: string }>;
+  imageAltTexts: ImageTextItem[];
   tone: "current" | "proposed";
 }) {
   return (
     <div className={`h-full rounded-md border p-3 ${snapshotToneClass(tone)}`}>
-      <div className="mb-2 text-xs font-semibold text-fg-secondary">图片Alt</div>
+      <div className="mb-2 text-xs font-semibold text-fg-secondary">图片</div>
       {imageAltTexts.length ? (
         <div className="max-h-48 space-y-2 overflow-y-auto">
           {imageAltTexts.map((item, index) => (
@@ -2257,7 +2263,16 @@ function SnapshotImageAltList({
               className="text-xs leading-relaxed text-fg-secondary"
             >
               <div className="font-medium text-fg-primary">图片 {index + 1}</div>
-              <div className="mt-0.5 whitespace-pre-wrap">{item.altText || "空"}</div>
+              <div className="mt-1 grid gap-1">
+                <div className="whitespace-pre-wrap">
+                  <span className="font-medium text-fg-primary">名称：</span>
+                  {item.filename || "空"}
+                </div>
+                <div className="whitespace-pre-wrap">
+                  <span className="font-medium text-fg-primary">替换文本：</span>
+                  {item.altText || "空"}
+                </div>
+              </div>
             </div>
           ))}
         </div>
