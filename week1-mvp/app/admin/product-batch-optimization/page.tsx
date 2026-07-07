@@ -2429,6 +2429,10 @@ function PreviewProgressCard({
     progress?.phase === "completed" ||
     progress?.phase === "finished" ||
     progress?.phase === "stopped";
+  const quotaMayBeInsufficient =
+    hasFiniteNumber(throttle?.requestedQueryCost) &&
+    hasFiniteNumber(throttle?.currentlyAvailable) &&
+    Number(throttle?.requestedQueryCost) > Number(throttle?.currentlyAvailable);
 
   return (
     <div className="card p-4">
@@ -2501,6 +2505,11 @@ function PreviewProgressCard({
             {formatQuotaRecoveryTime(retrySeconds)}
           </span>
         </div>
+        {quotaMayBeInsufficient ? (
+          <div className="rounded-md border border-amber-200 bg-[var(--warn-bg)] px-2.5 py-2 text-amber-700">
+            当前 Shopify API 可用点数可能不足，系统会自动等待额度恢复后继续。
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -2573,6 +2582,10 @@ function clampPercent(value: number) {
 
 function formatOptionalNumber(value: number | undefined) {
   return Number.isFinite(value) ? String(value) : "--";
+}
+
+function hasFiniteNumber(value: number | undefined) {
+  return Number.isFinite(value);
 }
 
 function formatQuotaRestoreRate(value: number | undefined) {

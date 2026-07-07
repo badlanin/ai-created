@@ -987,6 +987,11 @@ export async function createProductBatchPreview(opts: {
               shopifyThrottle: throttle,
             });
           },
+          onCost: (throttle) => {
+            updatePreviewProgress(previewJob, {
+              shopifyThrottle: throttle,
+            });
+          },
         });
         products = batch.products;
         storeAfter = batch.endCursor;
@@ -1384,6 +1389,7 @@ async function fetchProducts(opts: {
   includeApplied: boolean;
   signal?: AbortSignal;
   onThrottle?: (throttle: ProductBatchShopifyThrottleProgress) => void;
+  onCost?: (throttle: ProductBatchShopifyThrottleProgress) => void;
 }): Promise<{
   products: ShopifyProductNode[];
   endCursor: string | null;
@@ -1412,6 +1418,7 @@ async function fetchProducts(opts: {
       reverse: opts.sortOrder !== "oldest",
     }, opts.signal, {
       onThrottle: opts.onThrottle,
+      onCost: opts.onCost,
     });
     const productsConnection = pageData.products;
     for (const edge of productsConnection.edges || []) {
@@ -2634,6 +2641,7 @@ async function shopifyGraphql<T>(
   options?: {
     maxThrottleRetries?: number;
     onThrottle?: (throttle: ProductBatchShopifyThrottleProgress) => void;
+    onCost?: (throttle: ProductBatchShopifyThrottleProgress) => void;
   },
 ): Promise<T> {
   const domain = normalizeShopDomainInput(connection.shopDomain);
@@ -2686,9 +2694,30 @@ async function shopifyGraphql<T>(
           .join("；")}`,
       );
     }
+    const costProgress = buildShopifyCostProgress(json);
+    if (costProgress) options?.onCost?.(costProgress);
     return (json.data || {}) as T;
   }
   throw new Error("Shopify GraphQL 错误：Throttled");
+}
+
+function buildShopifyCostProgress<T>(
+  json: ShopifyGraphqlEnvelope<T>,
+): ProductBatchShopifyThrottleProgress | null {
+  const cost = json.extensions?.cost;
+  const throttleStatus = cost?.throttleStatus;
+  if (!throttleStatus) return null;
+  return {
+    retryAt: Date.now(),
+    retryAfterMs: 0,
+    attempt: 0,
+    maxAttempts: 0,
+    currentlyAvailable: toFiniteNumber(throttleStatus.currentlyAvailable),
+    restoreRate: toFiniteNumber(throttleStatus.restoreRate),
+    maximumAvailable: toFiniteNumber(throttleStatus.maximumAvailable),
+    requestedQueryCost: toFiniteNumber(cost?.requestedQueryCost),
+    source: "shopify",
+  };
 }
 
 function buildShopifyThrottleProgress<T>(
