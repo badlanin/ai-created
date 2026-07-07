@@ -866,24 +866,30 @@ export default function ProductBatchOptimizationPage() {
   }
 
   function toggleStore(key: string) {
-    setSelectedStoreKeys((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-      }
-      return next;
-    });
+    const next = new Set(selectedStoreKeys);
+    if (next.has(key)) {
+      next.delete(key);
+    } else {
+      next.add(key);
+    }
+    setSelectedStoreKeys(next);
+    if (next.size === 1) {
+      const [onlyKey] = Array.from(next);
+      setPreviewFilterStoreKey(onlyKey);
+    } else if (previewFilterStoreKey !== "__all__" && !next.has(previewFilterStoreKey)) {
+      setPreviewFilterStoreKey("__all__");
+    }
   }
 
   function selectSingleStore(key: string) {
     setSelectedStoreKeys(new Set([key]));
+    setPreviewFilterStoreKey(key);
     setStoreMenuOpen(false);
   }
 
   function selectAllStores() {
     setSelectedStoreKeys(new Set(stores.map((store) => store.key)));
+    setPreviewFilterStoreKey("__all__");
   }
 
   function toggleProduct(key: string) {

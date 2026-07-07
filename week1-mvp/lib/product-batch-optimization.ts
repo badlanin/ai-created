@@ -3607,7 +3607,13 @@ function detectTargetFieldsFromPrompt(prompt: string): ProductBatchTargetField[]
   if (has(/标签|tags?\b/i)) add("tags");
   if (has(/模板样式|模板|template/i)) add("templateStyle");
   if (has(/类别元字段尺寸|类别尺寸|category\s*size|尺寸/i)) add("categorySize");
-  if (has(/图片\s*alt|图片alt|替代文本|image\s*alt|alt\b/i)) add("imageAltTexts");
+  if (
+    has(
+      /图片\s*alt|图片alt|图片\s*(?:名称|名字|文件名)|替代文本|替换文本|image\s*(?:alt|name)|file\s*name|filename|alt\b/i,
+    )
+  ) {
+    add("imageAltTexts");
+  }
   if (has(/faq|问答|常见问题/i)) add("faq");
 
   if (
