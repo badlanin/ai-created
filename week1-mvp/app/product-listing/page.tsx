@@ -2332,6 +2332,7 @@ export default function ProductListingPage() {
   const [loadingBinding, setLoadingBinding] = useState(true);
   const [testing, setTesting] = useState(false);
   const [savingBinding, setSavingBinding] = useState(false);
+  const [reauthorizingShopify, setReauthorizingShopify] = useState(false);
   const [switchingShopifyAccount, setSwitchingShopifyAccount] = useState(false);
   const [unbinding, setUnbinding] = useState(false);
   const [confirmUnbind, setConfirmUnbind] = useState(false);
@@ -2611,6 +2612,27 @@ export default function ProductListingPage() {
       setConnectionMessage(e instanceof Error ? e.message : String(e));
     } finally {
       setSavingBinding(false);
+    }
+  }
+
+  async function reauthorizeShopify() {
+    if (!binding?.shopDomain) return;
+    setReauthorizingShopify(true);
+    setConnectionMessage(null);
+    try {
+      const res = await fetchWithShopifyDevice("/api/shopify/oauth/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shopDomain: binding.shopDomain }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      setConnectionMessage("正在跳转到 Shopify 重新授权页面...");
+      window.location.href = data.authorizeUrl;
+    } catch (e) {
+      setConnectionMessage(e instanceof Error ? e.message : String(e));
+    } finally {
+      setReauthorizingShopify(false);
     }
   }
 
@@ -3585,8 +3607,10 @@ export default function ProductListingPage() {
             binding={binding as ShopifyBinding}
             connectionMessage={connectionMessage}
             testing={testing}
+            reauthorizing={reauthorizingShopify}
             unbinding={unbinding}
             onTestConnection={testConnection}
+            onReauthorize={reauthorizeShopify}
             onConfirmUnbind={() => setConfirmUnbind(true)}
             onSwitchAccount={switchShopifyAccount}
           />
@@ -4245,16 +4269,20 @@ function BoundStatusCard({
   binding,
   connectionMessage,
   testing,
+  reauthorizing,
   unbinding,
   onTestConnection,
+  onReauthorize,
   onConfirmUnbind,
   onSwitchAccount,
 }: {
   binding: ShopifyBinding;
   connectionMessage: string | null;
   testing: boolean;
+  reauthorizing: boolean;
   unbinding: boolean;
   onTestConnection: () => void;
+  onReauthorize: () => void;
   onConfirmUnbind: () => void;
   onSwitchAccount: () => void;
 }) {
@@ -4327,6 +4355,15 @@ function BoundStatusCard({
             onClick={onTestConnection}
           >
             测试连接
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            leftIcon={<KeyRound size={13} />}
+            loading={reauthorizing}
+            onClick={onReauthorize}
+          >
+            重新授权
           </Button>
           <Button
             variant="secondary"
