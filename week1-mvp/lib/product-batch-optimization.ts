@@ -3709,11 +3709,13 @@ function normalizeProductHandle(value: unknown) {
 
 function normalizeFileName(value: unknown) {
   return String(value || "")
+    .normalize("NFKD")
     .trim()
-    .replace(/[\\/:*?"<>|]+/g, "-")
-    .replace(/\s+/g, "-")
+    .replace(/&/g, " and ")
+    .replace(/['’]/g, "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
     .replace(/-+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replace(/^[.-]+|[.-]+$/g, "")
     .slice(0, 255);
 }
 

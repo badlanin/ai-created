@@ -1719,7 +1719,7 @@ function extractByLabels(text: string, labels: string[]): string {
   const labelPattern = labels.map(escapeRegExp).join("|");
   const match = text.match(
     new RegExp(
-      `(?:^|\\n)\\s*(?:[-•*]\\s*)?(?:${labelPattern})\\s*[：:]\\s*([\\s\\S]*?)(?=\\n\\s*(?:[-•*]\\s*)?[\\u4e00-\\u9fa5A-Za-z ]{2,24}\\s*[：:]|$)`,
+      `(?:^|\\n)\\s*(?:[-•*]\\s*)?(?:${labelPattern})\\s*[：:]\\s*([\\s\\S]*?)(?=\\n\\s*(?:[-•*]\\s*)?[\\u4e00-\\u9fa5A-Za-z0-9_. ]{2,48}\\s*[：:]|$)`,
       "i",
     ),
   );
