@@ -1,37 +1,84 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
-import { exchangeShopifyClientCredentialsToken, maskToken } from "@/lib/shopify";
-import { saveShopifyOAuthCredentials } from "@/lib/shopify-oauth-env";
+import {
+  exchangeShopifyClientCredentialsToken,
+  getShopifyConnection,
+  getShopifyConnections,
+  maskToken,
+  saveShopifyConnection,
+  testShopifyConnection,
+} from "@/lib/shopify";
+import { getShopifyDeviceIdFromRequest } from "@/lib/shopify-device";
+import {
+  readShopifyOAuthCredentials,
+  saveShopifyOAuthCredentials,
+} from "@/lib/shopify-oauth-env";
 
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
   try {
-    await requireUser();
+    const user = await requireUser();
+    const deviceId = getShopifyDeviceIdFromRequest(req);
     const body = (await req.json()) as {
+      useStored?: boolean;
       shopDomain?: string;
       clientId?: string;
       clientSecret?: string;
     };
     const shopDomain = String(body.shopDomain || "");
-    const clientId = String(body.clientId || "");
-    const clientSecret = String(body.clientSecret || "");
+    const storedCredentials = body.useStored
+      ? await readShopifyOAuthCredentials(shopDomain)
+      : null;
+    const clientId =
+      String(body.clientId || "").trim() || storedCredentials?.clientId || "";
+    const clientSecret =
+      String(body.clientSecret || "").trim() ||
+      storedCredentials?.clientSecret ||
+      "";
     const token = await exchangeShopifyClientCredentialsToken({
       shopDomain,
       clientId,
       clientSecret,
     });
-    const oauthCredentials = await saveShopifyOAuthCredentials({
-      shopDomain,
-      clientId,
-      clientSecret,
-    });
+    const expiresAt =
+      token.expiresIn && token.expiresIn > 0
+        ? Math.floor(Date.now() / 1000) + token.expiresIn
+        : null;
+    const oauthCredentials = body.useStored
+      ? { written: false }
+      : await saveShopifyOAuthCredentials({
+          shopDomain,
+          clientId,
+          clientSecret,
+        });
+    if (body.useStored) {
+      const testResult = await testShopifyConnection({
+        authMode: "access_token",
+        shopDomain,
+        accessToken: token.accessToken,
+      });
+      saveShopifyConnection({
+        userId: user.id,
+        deviceId,
+        authMode: "access_token",
+        shopDomain,
+        accessToken: token.accessToken,
+        tokenExpiresAt: expiresAt,
+        testResult,
+      });
+    }
     return NextResponse.json({
       ok: true,
       accessToken: token.accessToken,
       expiresIn: token.expiresIn,
+      tokenExpiresAt: expiresAt,
       tokenPreview: maskToken(token.accessToken),
       oauthCredentialsSaved: oauthCredentials.written,
+      connection: body.useStored ? getShopifyConnection(user.id, deviceId) : null,
+      connections: body.useStored
+        ? getShopifyConnections(user.id, deviceId)
+        : undefined,
     });
   } catch (e) {
     const status = (e as { status?: number }).status || 400;

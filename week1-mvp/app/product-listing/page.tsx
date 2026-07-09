@@ -2620,6 +2620,28 @@ export default function ProductListingPage() {
     setReauthorizingShopify(true);
     setConnectionMessage(null);
     try {
+      if (binding.authMode === "access_token" && binding.tokenExpiresAt) {
+        const res = await fetchWithShopifyDevice(
+          "/api/shopify/client-credentials-token",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              useStored: true,
+              shopDomain: binding.shopDomain,
+            }),
+          },
+        );
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || res.statusText);
+        if (data.connection) setBinding(data.connection as ShopifyBinding);
+        if (Array.isArray(data.connections)) {
+          setShopifyAccounts(data.connections as ShopifyBinding[]);
+        }
+        setConnectionMessage("Token 已重新兑换并保存。");
+        return;
+      }
+
       const res = await fetchWithShopifyDevice("/api/shopify/oauth/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
