@@ -2634,11 +2634,24 @@ export default function ProductListingPage() {
         );
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || res.statusText);
-        if (data.connection) setBinding(data.connection as ShopifyBinding);
+        const refreshedExpiresAt =
+          typeof data.tokenExpiresAt === "number" && data.tokenExpiresAt > 0
+            ? Math.floor(data.tokenExpiresAt)
+            : null;
+        if (data.connection) {
+          setBinding({
+            ...(data.connection as ShopifyBinding),
+            tokenExpiresAt:
+              refreshedExpiresAt ??
+              (data.connection as ShopifyBinding).tokenExpiresAt,
+          });
+        } else if (refreshedExpiresAt) {
+          setBinding({ ...binding, tokenExpiresAt: refreshedExpiresAt });
+        }
         if (Array.isArray(data.connections)) {
           setShopifyAccounts(data.connections as ShopifyBinding[]);
         }
-        setConnectionMessage("Token 已重新兑换并保存。");
+        setConnectionMessage("Token 已重新兑换，并已更新当前店铺绑定。");
         return;
       }
 
@@ -4318,6 +4331,7 @@ function BoundStatusCard({
 
   useEffect(() => {
     if (tokenExpiresAtMs === null) return;
+    setTokenClock(Date.now());
     const timer = window.setInterval(() => setTokenClock(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [tokenExpiresAtMs]);

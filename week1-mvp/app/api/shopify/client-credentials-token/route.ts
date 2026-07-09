@@ -41,10 +41,9 @@ export async function POST(req: NextRequest) {
       clientId,
       clientSecret,
     });
-    const expiresAt =
-      token.expiresIn && token.expiresIn > 0
-        ? Math.floor(Date.now() / 1000) + token.expiresIn
-        : null;
+    const expiresIn =
+      token.expiresIn && token.expiresIn > 0 ? token.expiresIn : 24 * 60 * 60;
+    const expiresAt = Math.floor(Date.now() / 1000) + expiresIn;
     const oauthCredentials = body.useStored
       ? { written: false }
       : await saveShopifyOAuthCredentials({
@@ -71,7 +70,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       accessToken: token.accessToken,
-      expiresIn: token.expiresIn,
+      expiresIn,
       tokenExpiresAt: expiresAt,
       tokenPreview: maskToken(token.accessToken),
       oauthCredentialsSaved: oauthCredentials.written,
