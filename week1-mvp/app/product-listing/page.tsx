@@ -4359,6 +4359,7 @@ function BoundStatusCard({
           <Button
             variant="secondary"
             size="sm"
+            className="min-w-[92px]"
             leftIcon={<KeyRound size={13} />}
             loading={reauthorizing}
             onClick={onReauthorize}
@@ -4377,6 +4378,7 @@ function BoundStatusCard({
           <Button
             variant="danger-outline"
             size="sm"
+            className="min-w-[92px]"
             onClick={onConfirmUnbind}
           >
             解除绑定
