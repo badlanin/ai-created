@@ -960,6 +960,10 @@ const shopifyTaxonomyCategoryAttributesCache = new Map<
   Promise<ShopifyTaxonomyAttributeNode[]>
 >();
 
+function shopifyTokenCacheKeyPart(accessToken: string) {
+  return crypto.createHash("sha256").update(accessToken).digest("hex").slice(0, 16);
+}
+
 export function normalizeShopDomain(input: string): string {
   const raw = input.trim();
   if (!raw) throw new Error("店铺域名不能为空");
@@ -5607,7 +5611,7 @@ async function fetchShopifyTaxonomyCategoryAttributes(
   categoryId: string,
   warnings: string[],
 ): Promise<ShopifyTaxonomyAttributeNode[]> {
-  const cacheKey = `${shopDomain}:${categoryId}`;
+  const cacheKey = `${shopDomain}:${categoryId}:${shopifyTokenCacheKeyPart(accessToken)}`;
   let cached = shopifyTaxonomyCategoryAttributesCache.get(cacheKey);
   if (!cached) {
     cached = fetchShopifyTaxonomyCategoryAttributesUncached(
@@ -5615,7 +5619,10 @@ async function fetchShopifyTaxonomyCategoryAttributes(
       accessToken,
       categoryId,
       warnings,
-    );
+    ).catch((err) => {
+      shopifyTaxonomyCategoryAttributesCache.delete(cacheKey);
+      throw err;
+    });
     shopifyTaxonomyCategoryAttributesCache.set(cacheKey, cached);
   }
   return cached;
