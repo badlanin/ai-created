@@ -7,28 +7,9 @@ import {
   SHOPIFY_OAUTH_SCOPES,
 } from "@/lib/shopify";
 import { getShopifyDeviceIdFromRequest } from "@/lib/shopify-device";
+import { readShopifyOAuthCredentials } from "@/lib/shopify-oauth-env";
 
 export const runtime = "nodejs";
-
-function getShopifyOAuthClientId(value?: string) {
-  return (
-    String(value || "").trim() ||
-    process.env.SHOPIFY_CLIENT_ID?.trim() ||
-    process.env.SHOPIFY_API_KEY?.trim() ||
-    process.env.SHOPIFY_APP_CLIENT_ID?.trim() ||
-    ""
-  );
-}
-
-function getShopifyOAuthClientSecret(value?: string) {
-  return (
-    String(value || "").trim() ||
-    process.env.SHOPIFY_CLIENT_SECRET?.trim() ||
-    process.env.SHOPIFY_API_SECRET?.trim() ||
-    process.env.SHOPIFY_APP_CLIENT_SECRET?.trim() ||
-    ""
-  );
-}
 
 function getShopifyAppOrigin(req: NextRequest) {
   const configuredUrl = (
@@ -58,13 +39,15 @@ export async function POST(req: NextRequest) {
       clientSecret?: string;
     };
     const shopDomain = normalizeShopDomain(String(body.shopDomain || ""));
-    const clientId = getShopifyOAuthClientId(body.clientId);
-    const clientSecret = getShopifyOAuthClientSecret(body.clientSecret);
+    const storedCredentials = await readShopifyOAuthCredentials(shopDomain);
+    const clientId = String(body.clientId || "").trim() || storedCredentials.clientId;
+    const clientSecret =
+      String(body.clientSecret || "").trim() || storedCredentials.clientSecret;
     if (!clientId) {
-      throw new Error("客户端 ID 不能为空，请填写或配置 SHOPIFY_CLIENT_ID/SHOPIFY_API_KEY");
+      throw new Error("客户端 ID 不能为空，请先上传 Shopify 配置文件兑换 Token，或配置 SHOPIFY_CLIENT_ID/SHOPIFY_API_KEY");
     }
     if (!clientSecret) {
-      throw new Error("客户端密钥不能为空，请填写或配置 SHOPIFY_CLIENT_SECRET/SHOPIFY_API_SECRET");
+      throw new Error("客户端密钥不能为空，请先上传 Shopify 配置文件兑换 Token，或配置 SHOPIFY_CLIENT_SECRET/SHOPIFY_API_SECRET");
     }
 
     const origin = getShopifyAppOrigin(req);

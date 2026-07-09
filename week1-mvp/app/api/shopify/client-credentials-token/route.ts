@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { exchangeShopifyClientCredentialsToken, maskToken } from "@/lib/shopify";
+import { saveShopifyOAuthCredentials } from "@/lib/shopify-oauth-env";
 
 export const runtime = "nodejs";
 
@@ -12,16 +13,25 @@ export async function POST(req: NextRequest) {
       clientId?: string;
       clientSecret?: string;
     };
+    const shopDomain = String(body.shopDomain || "");
+    const clientId = String(body.clientId || "");
+    const clientSecret = String(body.clientSecret || "");
     const token = await exchangeShopifyClientCredentialsToken({
-      shopDomain: String(body.shopDomain || ""),
-      clientId: String(body.clientId || ""),
-      clientSecret: String(body.clientSecret || ""),
+      shopDomain,
+      clientId,
+      clientSecret,
+    });
+    const oauthCredentials = await saveShopifyOAuthCredentials({
+      shopDomain,
+      clientId,
+      clientSecret,
     });
     return NextResponse.json({
       ok: true,
       accessToken: token.accessToken,
       expiresIn: token.expiresIn,
       tokenPreview: maskToken(token.accessToken),
+      oauthCredentialsSaved: oauthCredentials.written,
     });
   } catch (e) {
     const status = (e as { status?: number }).status || 400;
