@@ -34,13 +34,30 @@ function envPath() {
   return path.join(process.cwd(), ".env.local");
 }
 
-async function readEnvLocalText() {
+function persistentEnvPath() {
+  return path.join(
+    process.env.DATA_DIR || path.join(process.cwd(), "data"),
+    "shopify-oauth.env",
+  );
+}
+
+async function readTextFile(filePath: string) {
   try {
-    return await fs.readFile(envPath(), "utf8");
+    return await fs.readFile(filePath, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
     throw error;
   }
+}
+
+async function readEnvLocalText() {
+  return readTextFile(envPath());
+}
+
+async function readCredentialEnvText() {
+  return [await readEnvLocalText(), await readTextFile(persistentEnvPath())]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function parseEnvText(text: string) {
@@ -63,7 +80,7 @@ export async function readShopifyOAuthCredentials(shopDomain: string): Promise<{
   clientSecret: string;
 }> {
   const prefix = shopEnvPrefix(shopDomain);
-  const text = await readEnvLocalText();
+  const text = await readCredentialEnvText();
   const fileValues = parseEnvText(text);
   const clientId =
     clean(fileValues.get(`SHOPIFY_OAUTH_${prefix}_CLIENT_ID`)) ||
@@ -97,7 +114,8 @@ export async function saveShopifyOAuthCredentials(
   const prefix = shopEnvPrefix(shopDomain);
   const clientIdKey = `SHOPIFY_OAUTH_${prefix}_CLIENT_ID`;
   const clientSecretKey = `SHOPIFY_OAUTH_${prefix}_CLIENT_SECRET`;
-  const text = await readEnvLocalText();
+  const filePath = persistentEnvPath();
+  const text = await readTextFile(filePath);
   const lines = text ? text.replace(/\r\n/g, "\n").split("\n") : [];
   const values = parseEnvText(text);
   const same =
@@ -115,6 +133,7 @@ export async function saveShopifyOAuthCredentials(
   nextLines.push(`# Shopify OAuth credentials for ${shopDomain}`);
   nextLines.push(`${clientIdKey}=${quoteEnvValue(clientId)}`);
   nextLines.push(`${clientSecretKey}=${quoteEnvValue(clientSecret)}`);
-  await fs.writeFile(envPath(), `${nextLines.join("\n").replace(/\n+$/g, "")}\n`, "utf8");
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, `${nextLines.join("\n").replace(/\n+$/g, "")}\n`, "utf8");
   return { written: true };
 }
