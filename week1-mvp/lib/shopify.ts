@@ -5640,13 +5640,22 @@ async function resolveShopifyTaxonomyValueId(
   );
   if (!attributes.length) return null;
 
-  const candidates = buildShopifyTaxonomyValueCandidates(rawValue, inferredValue);
+  const candidates = buildShopifyTaxonomyValueCandidates(
+    rawValue,
+    inferredValue,
+    type,
+    fieldKey,
+  );
   const hintedAttributes = attributes.filter((attribute) =>
     shopifyTaxonomyAttributeMatchesField(attribute, fieldKey, type),
   );
 
   if (hintedAttributes.length) {
-    return findShopifyTaxonomyValueInAttributes(hintedAttributes, candidates)?.id || null;
+    const hintedMatch = findShopifyTaxonomyValueInAttributes(
+      hintedAttributes,
+      candidates,
+    );
+    if (hintedMatch?.id) return hintedMatch.id;
   }
   return findShopifyTaxonomyValueInAttributes(attributes, candidates)?.id || null;
 }
@@ -5789,6 +5798,8 @@ async function fetchShopifyTaxonomyCategoryName(
 function buildShopifyTaxonomyValueCandidates(
   rawValue: string,
   inferredValue: string,
+  type: string,
+  fieldKey: string,
 ): string[] {
   return Array.from(
     new Set(
@@ -5797,11 +5808,68 @@ function buildShopifyTaxonomyValueCandidates(
         ...getCategoryValueCandidates(inferredValue),
         rawValue,
         ...getCategoryValueCandidates(rawValue),
+        ...getShopifyTaxonomyFallbackCandidates(type, fieldKey, rawValue, inferredValue),
       ]
         .map(cleanField)
         .filter(Boolean),
     ),
   );
+}
+
+function getShopifyTaxonomyFallbackCandidates(
+  type: string,
+  fieldKey: string,
+  rawValue: string,
+  inferredValue: string,
+): string[] {
+  const text = normalizeMetafieldMatchText(`${rawValue} ${inferredValue}`);
+  const normalizedType = normalizeMetafieldMatchText(type);
+  const normalizedFieldKey = normalizeMetafieldMatchText(fieldKey);
+  const candidates: string[] = [];
+
+  if (
+    normalizedType.includes("colorpattern") &&
+    (normalizedFieldKey === "taxonomyreference" || normalizedFieldKey.includes("pattern"))
+  ) {
+    candidates.push(inferShopifyCategoryBaseValue(type, "base_pattern", rawValue));
+    candidates.push("Solid");
+  }
+
+  if (normalizedType.includes("dressoccasion") || normalizedFieldKey.includes("occasion")) {
+    if (/prom|homecoming/.test(text)) candidates.push("Special Occasion", "Formal");
+    if (/evening|formal|gala|specialoccasion/.test(text)) {
+      candidates.push("Special Occasion", "Formal");
+    }
+    if (/wedding|bridal|bride|bridesmaid|guest/.test(text)) {
+      candidates.push("Wedding", "Special Occasion");
+    }
+    if (/party|cocktail/.test(text)) candidates.push("Party", "Special Occasion");
+  }
+
+  if (normalizedType.includes("neckline") || normalizedFieldKey.includes("neckline")) {
+    if (/spaghetti|strap/.test(text)) candidates.push("Strapless", "Other");
+    if (/vneck/.test(text)) candidates.push("V-Neck", "V Neck");
+    if (/offshoulder|offtheshoulder/.test(text)) candidates.push("Off Shoulder", "Off-shoulder");
+  }
+
+  if (
+    normalizedType.includes("skirtdresslengthtype") ||
+    normalizedType.includes("dresslength") ||
+    normalizedFieldKey.includes("dresslength")
+  ) {
+    if (/floor|full|ankle|long|maxi/.test(text)) candidates.push("Maxi", "Long", "Other");
+    if (/tea|midi/.test(text)) candidates.push("Midi");
+    if (/knee/.test(text)) candidates.push("Knee", "Knee Length");
+    if (/mini|short/.test(text)) candidates.push("Mini", "Short");
+  }
+
+  if (normalizedType.includes("sleevelengthtype") || normalizedFieldKey.includes("sleevelength")) {
+    if (/sleeveless|strapless/.test(text)) candidates.push("Sleeveless");
+    if (/short/.test(text)) candidates.push("Short Sleeve", "Short");
+    if (/long/.test(text)) candidates.push("Long Sleeve", "Long");
+  }
+
+  return candidates;
 }
 
 function findShopifyTaxonomyValueInAttributes(
@@ -6121,6 +6189,9 @@ function inferShopifyColorPatternFieldValue(
     normalizedFieldKey.includes("colourcode")
   ) {
     return inferShopifyColorHex(value);
+  }
+  if (normalizedFieldKey === "taxonomyreference" || normalizedFieldKey === "basepattern") {
+    return inferShopifyCategoryBaseValue(type, "base_pattern", value);
   }
   return inferShopifyCategoryBaseValue(type, fieldKey, value);
 }
