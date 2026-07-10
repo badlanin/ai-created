@@ -4535,37 +4535,47 @@ async function syncShopifyCategoryMetafields(
     }
 
     if (!metafields.length) return;
-    const json = await shopifyGraphql<ShopifyMetafieldsSetResponse>(
-      shopDomain,
-      accessToken,
-      `mutation SetBuqiqiCategoryMetafields($metafields: [MetafieldsSetInput!]!) {
-        metafieldsSet(metafields: $metafields) {
-          metafields {
-            id
-            namespace
-            key
-            value
+
+    let syncedCount = 0;
+    for (const metafield of metafields) {
+      const json = await shopifyGraphql<ShopifyMetafieldsSetResponse>(
+        shopDomain,
+        accessToken,
+        `mutation SetBuqiqiCategoryMetafield($metafields: [MetafieldsSetInput!]!) {
+          metafieldsSet(metafields: $metafields) {
+            metafields {
+              id
+              namespace
+              key
+              value
+            }
+            userErrors {
+              field
+              message
+            }
           }
-          userErrors {
-            field
-            message
-          }
-        }
-      }`,
-      { metafields },
-    );
-    const topLevelErrors = formatGraphqlMessages(json.errors);
-    if (topLevelErrors) {
-      warnings.push(`Shopify 类别元字段同步失败：${topLevelErrors}`);
-      return;
+        }`,
+        { metafields: [metafield] },
+      );
+      const topLevelErrors = formatGraphqlMessages(json.errors);
+      if (topLevelErrors) {
+        warnings.push(
+          `Shopify category metafield ${metafield.key} sync failed, skipped: ${topLevelErrors}`,
+        );
+        continue;
+      }
+      const userErrors = normalizeUserErrors(json.data?.metafieldsSet?.userErrors);
+      if (userErrors.length) {
+        warnings.push(
+          `Shopify category metafield ${metafield.key} sync failed, skipped: ${userErrors.join("; ")}`,
+        );
+        continue;
+      }
+      syncedCount += json.data?.metafieldsSet?.metafields?.length || 0;
     }
-    const userErrors = normalizeUserErrors(json.data?.metafieldsSet?.userErrors);
-    if (userErrors.length) {
-      warnings.push(`Shopify 类别元字段同步失败：${userErrors.join("；")}`);
-      return;
+    if (syncedCount > 0) {
+      warnings.push(`Synced ${syncedCount} Shopify category metafields.`);
     }
-    const syncedCount = json.data?.metafieldsSet?.metafields?.length || 0;
-    warnings.push(`已同步 ${syncedCount} 项 Shopify 类别元字段。`);
   } catch (e) {
     warnings.push(
       `Shopify 类别元字段同步失败：${formatUnknownError(e)}。如果提示 Access denied，请在应用权限中加入 read/write_metaobjects 与 read/write_metaobject_definitions 后重新授权。`,
@@ -4604,7 +4614,7 @@ async function ensureShopifyCategoryMetafieldDefinitions(
   mappings: ReadonlyArray<(typeof SHOPIFY_CATEGORY_METAFIELD_MAPPINGS)[number]>,
   warnings: string[],
 ): Promise<ShopifyMetafieldDefinitionNode[]> {
-  const definitions = await fetchShopifyCategoryMetafieldDefinitionsForHierarchy(
+  const definitions = await fetchShopifyCategoryMetafieldDefinitions(
     shopDomain,
     accessToken,
     categoryId,
@@ -4616,7 +4626,7 @@ async function ensureShopifyCategoryMetafieldDefinitions(
   );
   if (!missing.length) return dedupeShopifyMetafieldDefinitions(definitions);
 
-  const templates = await fetchShopifyCategoryMetafieldDefinitionTemplatesForHierarchy(
+  const templates = await fetchShopifyCategoryMetafieldDefinitionTemplates(
     shopDomain,
     accessToken,
     categoryId,
