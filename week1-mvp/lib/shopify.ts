@@ -5427,6 +5427,84 @@ function getShopifyMetaobjectDisplayFieldKey(
   return firstTextField?.key || "label";
 }
 
+type ShopifyCategoryMetaobjectFieldInput = { key: string; value: string };
+
+type ShopifyCategoryMetaobjectCreateRecipe = {
+  name: string;
+  matches: (normalizedType: string) => boolean;
+  baseFieldKeys: (type: string) => string[];
+  inferFieldValue: (type: string, fieldKey: string, value: string) => string;
+  shouldSkipField: (type: string, fieldKey: string, value: string) => boolean;
+};
+
+const DEFAULT_SHOPIFY_CATEGORY_METAOBJECT_CREATE_RECIPE: ShopifyCategoryMetaobjectCreateRecipe = {
+  name: "generic",
+  matches: () => true,
+  baseFieldKeys: getShopifyCategoryBaseFieldKeys,
+  inferFieldValue: inferShopifyCategoryBaseValue,
+  shouldSkipField: shouldSkipShopifyCategoryMetaobjectField,
+};
+
+function createShopifyBaseMetaobjectRecipe(
+  name: string,
+  typeHints: string[],
+  baseFieldKeys: string[],
+): ShopifyCategoryMetaobjectCreateRecipe {
+  return {
+    name,
+    matches: (normalizedType) =>
+      typeHints.some((hint) => normalizedType.includes(hint)),
+    baseFieldKeys: () => [...baseFieldKeys],
+    inferFieldValue: inferShopifyCategoryBaseValue,
+    shouldSkipField: () => false,
+  };
+}
+
+const SHOPIFY_CATEGORY_METAOBJECT_CREATE_RECIPES: ShopifyCategoryMetaobjectCreateRecipe[] = [
+  {
+    name: "color-pattern",
+    matches: (normalizedType) => normalizedType.includes("colorpattern"),
+    baseFieldKeys: () => ["base_color", "base_pattern"],
+    inferFieldValue: inferShopifyColorPatternFieldValue,
+    shouldSkipField: () => false,
+  },
+  createShopifyBaseMetaobjectRecipe("fabric", ["fabric", "material"], [
+    "base_fabric",
+  ]),
+  createShopifyBaseMetaobjectRecipe("age-group", ["agegroup"], [
+    "base_age_group",
+  ]),
+  createShopifyBaseMetaobjectRecipe("dress-occasion", ["dressoccasion"], [
+    "base_dress_occasion",
+  ]),
+  createShopifyBaseMetaobjectRecipe("dress-style", ["dressstyle"], [
+    "base_dress_style",
+  ]),
+  createShopifyBaseMetaobjectRecipe("neckline", ["neckline"], [
+    "base_neckline",
+  ]),
+  createShopifyBaseMetaobjectRecipe(
+    "skirt-dress-length-type",
+    ["skirtdresslengthtype", "dresslengthtype", "dresslength"],
+    ["base_skirt_dress_length_type"],
+  ),
+  createShopifyBaseMetaobjectRecipe("sleeve-length-type", ["sleevelengthtype"], [
+    "base_sleeve_length_type",
+  ]),
+  DEFAULT_SHOPIFY_CATEGORY_METAOBJECT_CREATE_RECIPE,
+];
+
+function getShopifyCategoryMetaobjectCreateRecipe(
+  type: string,
+): ShopifyCategoryMetaobjectCreateRecipe {
+  const normalizedType = normalizeMetafieldMatchText(type);
+  return (
+    SHOPIFY_CATEGORY_METAOBJECT_CREATE_RECIPES.find((recipe) =>
+      recipe.matches(normalizedType),
+    ) || DEFAULT_SHOPIFY_CATEGORY_METAOBJECT_CREATE_RECIPE
+  );
+}
+
 async function buildShopifyCategoryMetaobjectFields(
   shopDomain: string,
   accessToken: string,
@@ -5435,7 +5513,8 @@ async function buildShopifyCategoryMetaobjectFields(
   type: string,
   value: string,
   warnings: string[],
-): Promise<Array<{ key: string; value: string }>> {
+): Promise<ShopifyCategoryMetaobjectFieldInput[]> {
+  const recipe = getShopifyCategoryMetaobjectCreateRecipe(type);
   const fields = new Map<string, string>();
   const displayFieldKey = getShopifyMetaobjectDisplayFieldKey(definition);
   const displayValue = cleanField(value);
@@ -5449,7 +5528,7 @@ async function buildShopifyCategoryMetaobjectFields(
     if (!key) continue;
     if (field.required) requiredKeys.add(key);
   }
-  for (const key of getShopifyCategoryBaseFieldKeys(type)) {
+  for (const key of recipe.baseFieldKeys(type)) {
     if (
       !hasFieldDefinitions ||
       fieldDefinitions.some((field) => cleanField(field.key) === key)
@@ -5460,12 +5539,12 @@ async function buildShopifyCategoryMetaobjectFields(
 
   for (const key of requiredKeys) {
     if (key === displayFieldKey && fields.get(key)) continue;
-    if (shouldSkipShopifyCategoryMetaobjectField(type, key, value)) continue;
+    if (recipe.shouldSkipField(type, key, value)) continue;
     const fieldDefinition = fieldDefinitions.find(
       (field) => cleanField(field.key) === key,
     );
     const fieldType = cleanField(fieldDefinition?.type?.name);
-    const inferredValue = inferShopifyCategoryBaseValue(type, key, value);
+    const inferredValue = recipe.inferFieldValue(type, key, value);
     const fieldValue = await buildShopifyCategoryMetaobjectFieldValue(
       shopDomain,
       accessToken,
@@ -6028,6 +6107,24 @@ function hasShopifyPatternHint(value: string): boolean {
   );
 }
 
+function inferShopifyColorPatternFieldValue(
+  type: string,
+  fieldKey: string,
+  value: string,
+): string {
+  const normalizedFieldKey = normalizeMetafieldMatchText(fieldKey);
+  if (
+    normalizedFieldKey === "color" ||
+    normalizedFieldKey === "colour" ||
+    normalizedFieldKey.includes("hex") ||
+    normalizedFieldKey.includes("colorcode") ||
+    normalizedFieldKey.includes("colourcode")
+  ) {
+    return inferShopifyColorHex(value);
+  }
+  return inferShopifyCategoryBaseValue(type, fieldKey, value);
+}
+
 function inferShopifyCategoryBaseValue(
   type: string,
   fieldKey: string,
@@ -6168,6 +6265,48 @@ function inferShopifyBaseColor(value: string): string {
   if (/orange|cinnamon|terracotta|marigold|橙/.test(text)) return "Orange";
   if (/brown|mocha|espresso|棕|咖/.test(text)) return "Brown";
   return value;
+}
+
+function inferShopifyColorHex(value: string): string {
+  const cleaned = cleanField(value);
+  const hexMatch = cleaned.match(/#?([0-9a-f]{6}|[0-9a-f]{3})\b/i);
+  if (hexMatch) {
+    const hex = hexMatch[1];
+    if (hex.length === 3) {
+      return `#${hex[0]}${hex[0]}${hex[1]}${hex[1]}${hex[2]}${hex[2]}`.toUpperCase();
+    }
+    return `#${hex}`.toUpperCase();
+  }
+
+  const text = normalizeMetafieldMatchText(cleaned);
+  const palette: Array<[RegExp, string]> = [
+    [/coralpink|pinkcoral/, "#F88379"],
+    [/burgundy|cabernet|wine/, "#800020"],
+    [/dustyblue/, "#6E8FA3"],
+    [/navy/, "#000080"],
+    [/royalblue/, "#4169E1"],
+    [/skyblue/, "#87CEEB"],
+    [/lavender/, "#E6E6FA"],
+    [/lilac/, "#C8A2C8"],
+    [/mauve/, "#E0B0FF"],
+    [/champagne/, "#F7E7CE"],
+    [/ivory/, "#FFFFF0"],
+    [/blush|petal|rose/, "#F4C2C2"],
+    [/pink/, "#FFC0CB"],
+    [/red/, "#FF0000"],
+    [/purple|plum/, "#800080"],
+    [/green|emerald|sage|mint|olive/, "#008000"],
+    [/yellow|lemon|butter/, "#FFFF00"],
+    [/orange|terracotta|cinnamon/, "#FFA500"],
+    [/brown|mocha|espresso/, "#8B4513"],
+    [/beige|nude|sand|apricot/, "#F5F5DC"],
+    [/gold/, "#D4AF37"],
+    [/silver|gray|grey/, "#C0C0C0"],
+    [/black/, "#000000"],
+    [/white/, "#FFFFFF"],
+    [/blue|teal/, "#0000FF"],
+  ];
+  return palette.find(([pattern]) => pattern.test(text))?.[1] || cleaned;
 }
 
 function inferShopifyBaseSize(value: string): string {
