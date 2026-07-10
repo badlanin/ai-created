@@ -483,9 +483,12 @@ type ShopifyProductNode = {
   media?: { edges?: Array<{ node?: ShopifyMediaNode | null }> | null } | null;
 };
 
+type ShopifyGraphqlError = { message?: string; [key: string]: unknown };
+type ShopifyGraphqlErrorPayload = ShopifyGraphqlError[] | ShopifyGraphqlError | string | null;
+
 type ShopifyGraphqlEnvelope<T> = {
   data?: T;
-  errors?: Array<{ message?: string }>;
+  errors?: ShopifyGraphqlErrorPayload;
   extensions?: {
     cost?: {
       requestedQueryCost?: number;
@@ -2703,9 +2706,10 @@ async function shopifyGraphql<T>(
       );
     }
 
+    const graphqlErrors = normalizeShopifyGraphqlErrors(json.errors);
     const throttled =
       response.status === 429 ||
-      (json.errors || []).some((err) => /throttled/i.test(err.message || ""));
+      graphqlErrors.some((message) => /throttled/i.test(message));
     if (throttled && attemptIndex < maxThrottleRetries) {
       const throttle = buildShopifyThrottleProgress(
         json,
@@ -2723,12 +2727,8 @@ async function shopifyGraphql<T>(
         `Shopify 请求失败：HTTP ${response.status} ${truncate(JSON.stringify(json), 500)}`,
       );
     }
-    if (json.errors?.length) {
-      throw new Error(
-        `Shopify GraphQL 错误：${json.errors
-          .map((err) => err.message || "未知错误")
-          .join("；")}`,
-      );
+    if (graphqlErrors.length) {
+      throw new Error(`Shopify GraphQL 错误：${graphqlErrors.join("；")}`);
     }
     const costProgress = buildShopifyCostProgress(json);
     if (costProgress) options?.onCost?.(costProgress);
@@ -3761,6 +3761,26 @@ function extractFaqNumber(label: string) {
   if (!/faq|question|answer|问题|答案|问答/.test(label)) return 0;
   const match = label.match(/[1-5]/);
   return match ? Number(match[0]) : 0;
+}
+
+function normalizeShopifyGraphqlErrors(errors: ShopifyGraphqlErrorPayload | undefined): string[] {
+  if (!errors) return [];
+  if (Array.isArray(errors)) {
+    return errors
+      .map((err) => err?.message || JSON.stringify(err))
+      .filter(Boolean);
+  }
+  if (typeof errors === "string") return [errors].filter(Boolean);
+  if (typeof errors === "object") {
+    const message = typeof errors.message === "string" ? errors.message : "";
+    if (message) return [message];
+    try {
+      return [JSON.stringify(errors)];
+    } catch {
+      return ["未知错误"];
+    }
+  }
+  return [String(errors)];
 }
 
 function normalizeUserErrors(
