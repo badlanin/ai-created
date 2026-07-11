@@ -438,6 +438,10 @@ type ShopifyMetaobjectDefinitionNode = {
     name?: string | null;
     required?: boolean | null;
     type?: { name?: string | null } | null;
+    validations?: Array<{
+      name?: string | null;
+      value?: string | null;
+    }> | null;
   }> | null;
 };
 
@@ -4898,6 +4902,7 @@ async function buildShopifyCategoryMetafieldValue(
         value,
         inferredValue,
         warnings,
+        getShopifyProductTaxonomyAttributeHandle(definition.validations),
       );
       if (id) ids.push(id);
     }
@@ -5087,6 +5092,10 @@ async function ensureShopifyCategoryMetaobjectDefinition(
               type {
                 name
               }
+              validations {
+                name
+                value
+              }
             }
           }
           userErrors {
@@ -5150,6 +5159,10 @@ async function fetchShopifyCategoryMetaobjectDefinition(
           type {
             name
           }
+          validations {
+            name
+            value
+          }
         }
       }
     }`,
@@ -5183,6 +5196,10 @@ async function fetchShopifyMetaobjectDefinitionById(
           required
           type {
             name
+          }
+          validations {
+            name
+            value
           }
         }
       }
@@ -5618,6 +5635,7 @@ async function buildShopifyCategoryMetaobjectFields(
       value,
       inferredValue,
       warnings,
+      getShopifyProductTaxonomyAttributeHandle(fieldDefinition?.validations),
     );
     if (!fieldValue) return [];
     fields.set(key, fieldValue);
@@ -5638,6 +5656,7 @@ async function buildShopifyCategoryMetaobjectFieldValue(
   rawValue: string,
   inferredValue: string,
   warnings: string[],
+  taxonomyAttributeHandle = "",
 ): Promise<string | null> {
   const value = cleanField(inferredValue);
   if (!value) return null;
@@ -5656,6 +5675,7 @@ async function buildShopifyCategoryMetaobjectFieldValue(
     taxonomyRawValue,
     value,
     warnings,
+    taxonomyAttributeHandle,
   );
   if (!taxonomyValueId) {
     warnings.push(
@@ -5685,6 +5705,20 @@ function isShopifyTaxonomyValueId(value: string): boolean {
   return /^gid:\/\/shopify\/TaxonomyValue\//.test(cleanField(value));
 }
 
+function getShopifyProductTaxonomyAttributeHandle(
+  validations?: Array<{
+    name?: string | null;
+    value?: string | null;
+  }> | null,
+): string {
+  const validation = validations?.find(
+    (item) =>
+      normalizeMetafieldMatchText(item.name) ===
+      "producttaxonomyattributehandle",
+  );
+  return cleanField(validation?.value);
+}
+
 async function resolveShopifyTaxonomyValueId(
   shopDomain: string,
   accessToken: string,
@@ -5694,6 +5728,7 @@ async function resolveShopifyTaxonomyValueId(
   rawValue: string,
   inferredValue: string,
   warnings: string[],
+  taxonomyAttributeHandle = "",
 ): Promise<string | null> {
   const attributes = await fetchShopifyTaxonomyCategoryAttributesForHierarchy(
     shopDomain,
@@ -5709,9 +5744,25 @@ async function resolveShopifyTaxonomyValueId(
     type,
     fieldKey,
   );
-  const hintedAttributes = attributes.filter((attribute) =>
-    shopifyTaxonomyAttributeMatchesField(attribute, fieldKey, type),
+  const normalizedAttributeHandle = normalizeMetafieldMatchText(
+    taxonomyAttributeHandle,
   );
+  const attributeHints = getShopifyTaxonomyAttributeHints(fieldKey, type);
+  const exactHintedAttributes = attributes.filter((attribute) => {
+    const name = normalizeMetafieldMatchText(attribute.name);
+    if (!name) return false;
+    if (normalizedAttributeHandle) return name === normalizedAttributeHandle;
+    return attributeHints.some(
+      (hint) => name === normalizeMetafieldMatchText(hint),
+    );
+  });
+  const hintedAttributes = exactHintedAttributes.length
+    ? exactHintedAttributes
+    : normalizedAttributeHandle
+      ? []
+      : attributes.filter((attribute) =>
+          shopifyTaxonomyAttributeMatchesField(attribute, fieldKey, type),
+        );
 
   if (hintedAttributes.length) {
     const hintedMatch = findShopifyTaxonomyValueInAttributes(
@@ -5719,6 +5770,9 @@ async function resolveShopifyTaxonomyValueId(
       candidates,
     );
     if (hintedMatch?.id) return hintedMatch.id;
+  }
+  if (normalizedAttributeHandle || cleanField(fieldKey).startsWith("base_")) {
+    return null;
   }
   return findShopifyTaxonomyValueInAttributes(attributes, candidates)?.id || null;
 }
@@ -6132,6 +6186,9 @@ function getShopifyTaxonomyAttributeHints(
     base_sleeve_length_type: ["sleeve length type", "sleeve length"],
     base_target_gender: ["target gender", "gender"],
   };
+  const directHints = hints[cleanField(fieldKey).toLowerCase()];
+  if (directHints?.length) return directHints;
+
   const normalizedFieldKey = normalizeMetafieldMatchText(fieldKey);
   const keyHints =
     normalizedFieldKey.includes("agegroup")
@@ -6186,7 +6243,6 @@ function getShopifyTaxonomyAttributeHints(
                         : [];
   return Array.from(
     new Set([
-      ...(hints[fieldKey] || []),
       ...keyHints,
       ...typeHints,
       fieldKey.replace(/^base_/, "").replace(/_/g, " "),
