@@ -5684,9 +5684,15 @@ async function buildShopifyCategoryMetaobjectFields(
       (field) => cleanField(field.key) === key,
     );
     const fieldType = cleanField(fieldDefinition?.type?.name);
+    const usesPairedBaseValue =
+      Boolean(baseValue) &&
+      (key.startsWith("base_") ||
+        normalizeMetafieldMatchText(key) === "taxonomyreference" ||
+        isShopifyTaxonomyValueReferenceType(fieldType));
+    const sourceValue = usesPairedBaseValue ? baseValue : value;
     const inferredValue =
-      baseValue && key.startsWith("base_")
-        ? baseValue
+      usesPairedBaseValue
+        ? recipe.inferFieldValue(type, key, baseValue) || baseValue
         : recipe.name === "color-pattern" && key === "base_color"
           ? inferShopifyBaseColorWithHex(value, normalizedColorHex)
           : recipe.inferFieldValue(type, key, value);
@@ -5697,7 +5703,7 @@ async function buildShopifyCategoryMetaobjectFields(
       type,
       key,
       fieldType,
-      value,
+      sourceValue,
       inferredValue,
       warnings,
       getShopifyProductTaxonomyAttributeHandle(fieldDefinition?.validations),
