@@ -198,13 +198,21 @@ type ProductForm = {
   categoryColorHex: string;
   categorySize: string;
   categoryFabric: string;
+  categoryFabricBaseValue: string;
   categoryAgeGroup: string;
+  categoryAgeGroupBaseValue: string;
   categoryOccasion: string;
+  categoryOccasionBaseValue: string;
   categoryDressStyle: string;
+  categoryDressStyleBaseValue: string;
   categoryNeckline: string;
+  categoryNecklineBaseValue: string;
   categoryDressLengthType: string;
+  categoryDressLengthTypeBaseValue: string;
   categorySleeveLengthType: string;
+  categorySleeveLengthTypeBaseValue: string;
   categoryTargetGender: string;
+  categoryTargetGenderBaseValue: string;
   seoTitle: string;
   seoDescription: string;
   variantOptionName: string;
@@ -225,7 +233,43 @@ type CategoryMetafieldFormKey =
   | "categorySleeveLengthType"
   | "categoryTargetGender";
 
+type CategoryMetaobjectMetafieldFormKey = Exclude<
+  CategoryMetafieldFormKey,
+  "categoryColor" | "categorySize"
+>;
+
+const CATEGORY_METAOBJECT_BASE_VALUE_FIELD_BY_KEY = {
+  categoryFabric: "categoryFabricBaseValue",
+  categoryAgeGroup: "categoryAgeGroupBaseValue",
+  categoryOccasion: "categoryOccasionBaseValue",
+  categoryDressStyle: "categoryDressStyleBaseValue",
+  categoryNeckline: "categoryNecklineBaseValue",
+  categoryDressLengthType: "categoryDressLengthTypeBaseValue",
+  categorySleeveLengthType: "categorySleeveLengthTypeBaseValue",
+  categoryTargetGender: "categoryTargetGenderBaseValue",
+} as const satisfies Record<CategoryMetaobjectMetafieldFormKey, keyof ProductForm>;
+
+const EMPTY_CATEGORY_METAOBJECT_BASE_VALUES = {
+  categoryFabricBaseValue: "",
+  categoryAgeGroupBaseValue: "",
+  categoryOccasionBaseValue: "",
+  categoryDressStyleBaseValue: "",
+  categoryNecklineBaseValue: "",
+  categoryDressLengthTypeBaseValue: "",
+  categorySleeveLengthTypeBaseValue: "",
+  categoryTargetGenderBaseValue: "",
+} as const;
+
 type CategoryMetafieldMemory = Partial<Record<CategoryMetafieldFormKey, string[]>>;
+
+type CategoryMetafieldAiCandidateSet = {
+  metaobjectValues: string[];
+  taxonomyValues: string[];
+};
+
+type CategoryMetafieldAiCandidates = Partial<
+  Record<CategoryMetafieldFormKey, CategoryMetafieldAiCandidateSet>
+>;
 
 type ShopifyCategoryMetafieldOption = {
   id: string;
@@ -382,6 +426,7 @@ const PRODUCT_TAG_QUICK_OPTIONS = [
 const CATEGORY_METAFIELD_MEMORY_STORAGE_KEY =
   "buqiqi_product_listing_category_metafield_memory_v1";
 const CATEGORY_METAFIELD_MEMORY_LIMIT = 20;
+const CATEGORY_METAFIELD_AI_CANDIDATE_LIMIT = 250;
 const SHOPIFY_PRODUCT_STATUS_OPTIONS: Array<{
   value: ProductStatus;
   label: string;
@@ -601,13 +646,21 @@ const EMPTY_FORM: ProductForm = {
   categoryColorHex: "",
   categorySize: "",
   categoryFabric: "",
+  categoryFabricBaseValue: "",
   categoryAgeGroup: "",
+  categoryAgeGroupBaseValue: "",
   categoryOccasion: "",
+  categoryOccasionBaseValue: "",
   categoryDressStyle: "",
+  categoryDressStyleBaseValue: "",
   categoryNeckline: "",
+  categoryNecklineBaseValue: "",
   categoryDressLengthType: "",
+  categoryDressLengthTypeBaseValue: "",
   categorySleeveLengthType: "",
+  categorySleeveLengthTypeBaseValue: "",
   categoryTargetGender: "",
+  categoryTargetGenderBaseValue: "",
   seoTitle: "",
   seoDescription: "",
   variantOptionName: "size",
@@ -1226,6 +1279,12 @@ function mapObjectToProductForm(source: Record<string, unknown>): Partial<Produc
       "categoryFabric",
       "category_fabric",
     ),
+    categoryFabricBaseValue: readCategoryMetafield(
+      "类别元字段织物基础值",
+      "织物基础值",
+      "categoryFabricBaseValue",
+      "category_fabric_base_value",
+    ),
     categoryAgeGroup: readCategoryMetafield(
       "类别元字段年龄段",
       "年龄段",
@@ -1233,6 +1292,12 @@ function mapObjectToProductForm(source: Record<string, unknown>): Partial<Produc
       "ageGroup",
       "categoryAgeGroup",
       "category_age_group",
+    ),
+    categoryAgeGroupBaseValue: readCategoryMetafield(
+      "类别元字段年龄段基础值",
+      "年龄段基础值",
+      "categoryAgeGroupBaseValue",
+      "category_age_group_base_value",
     ),
     categoryOccasion: readCategoryMetafield(
       "类别元字段穿着场合",
@@ -1242,6 +1307,12 @@ function mapObjectToProductForm(source: Record<string, unknown>): Partial<Produc
       "categoryOccasion",
       "category_occasion",
     ),
+    categoryOccasionBaseValue: readCategoryMetafield(
+      "类别元字段穿着场合基础值",
+      "穿着场合基础值",
+      "categoryOccasionBaseValue",
+      "category_occasion_base_value",
+    ),
     categoryDressStyle: readCategoryMetafield(
       "类别元字段裙子风格",
       "裙子风格",
@@ -1250,6 +1321,12 @@ function mapObjectToProductForm(source: Record<string, unknown>): Partial<Produc
       "categoryDressStyle",
       "category_dress_style",
     ),
+    categoryDressStyleBaseValue: readCategoryMetafield(
+      "类别元字段裙子风格基础值",
+      "裙子风格基础值",
+      "categoryDressStyleBaseValue",
+      "category_dress_style_base_value",
+    ),
     categoryNeckline: readCategoryMetafield(
       "类别元字段领口",
       "领口",
@@ -1257,6 +1334,12 @@ function mapObjectToProductForm(source: Record<string, unknown>): Partial<Produc
       "Neckline",
       "categoryNeckline",
       "category_neckline",
+    ),
+    categoryNecklineBaseValue: readCategoryMetafield(
+      "类别元字段领口基础值",
+      "领口基础值",
+      "categoryNecklineBaseValue",
+      "category_neckline_base_value",
     ),
     categoryDressLengthType: readCategoryMetafield(
       "类别元字段裙子/连衣裙长度类型",
@@ -1267,6 +1350,13 @@ function mapObjectToProductForm(source: Record<string, unknown>): Partial<Produc
       "categoryDressLengthType",
       "category_dress_length_type",
     ),
+    categoryDressLengthTypeBaseValue: readCategoryMetafield(
+      "类别元字段裙子/连衣裙长度类型基础值",
+      "裙子/连衣裙长度类型基础值",
+      "裙长基础值",
+      "categoryDressLengthTypeBaseValue",
+      "category_dress_length_type_base_value",
+    ),
     categorySleeveLengthType: readCategoryMetafield(
       "类别元字段袖长类型",
       "袖长类型",
@@ -1275,6 +1365,12 @@ function mapObjectToProductForm(source: Record<string, unknown>): Partial<Produc
       "categorySleeveLengthType",
       "category_sleeve_length_type",
     ),
+    categorySleeveLengthTypeBaseValue: readCategoryMetafield(
+      "类别元字段袖长类型基础值",
+      "袖长类型基础值",
+      "categorySleeveLengthTypeBaseValue",
+      "category_sleeve_length_type_base_value",
+    ),
     categoryTargetGender: readCategoryMetafield(
       "类别元字段目标性别",
       "目标性别",
@@ -1282,6 +1378,12 @@ function mapObjectToProductForm(source: Record<string, unknown>): Partial<Produc
       "Target gender",
       "categoryTargetGender",
       "category_target_gender",
+    ),
+    categoryTargetGenderBaseValue: readCategoryMetafield(
+      "类别元字段目标性别基础值",
+      "目标性别基础值",
+      "categoryTargetGenderBaseValue",
+      "category_target_gender_base_value",
     ),
     seoTitle: read("SEO标题", "SEO 标题", "seoTitle", "seo_title"),
     seoDescription: read("SEO描述", "SEO 描述", "seoDescription", "seo_description"),
@@ -1362,10 +1464,15 @@ function mapKeyValueTextToProductForm(value: string): Partial<ProductForm> {
     ],
     categorySize: ["类别元字段尺寸", "尺寸", "Size"],
     categoryFabric: ["类别元字段织物", "织物", "面料材质", "材质", "Fabric", "Material"],
+    categoryFabricBaseValue: ["类别元字段织物基础值", "织物基础值", "Fabric base value"],
     categoryAgeGroup: ["类别元字段年龄段", "年龄段", "Age group"],
+    categoryAgeGroupBaseValue: ["类别元字段年龄段基础值", "年龄段基础值", "Age group base value"],
     categoryOccasion: ["类别元字段穿着场合", "穿着场合", "场合", "Occasion"],
+    categoryOccasionBaseValue: ["类别元字段穿着场合基础值", "穿着场合基础值", "Occasion base value"],
     categoryDressStyle: ["类别元字段裙子风格", "裙子风格", "裙型", "Dress style"],
+    categoryDressStyleBaseValue: ["类别元字段裙子风格基础值", "裙子风格基础值", "Dress style base value"],
     categoryNeckline: ["类别元字段领口", "领口", "领口设计", "Neckline"],
+    categoryNecklineBaseValue: ["类别元字段领口基础值", "领口基础值", "Neckline base value"],
     categoryDressLengthType: [
       "类别元字段裙子/连衣裙长度类型",
       "类别元字段裙长",
@@ -1373,13 +1480,29 @@ function mapKeyValueTextToProductForm(value: string): Partial<ProductForm> {
       "裙长",
       "Dress length type",
     ],
+    categoryDressLengthTypeBaseValue: [
+      "类别元字段裙子/连衣裙长度类型基础值",
+      "裙子/连衣裙长度类型基础值",
+      "裙长基础值",
+      "Dress length type base value",
+    ],
     categorySleeveLengthType: [
       "类别元字段袖长类型",
       "袖长类型",
       "袖长",
       "Sleeve length type",
     ],
+    categorySleeveLengthTypeBaseValue: [
+      "类别元字段袖长类型基础值",
+      "袖长类型基础值",
+      "Sleeve length type base value",
+    ],
     categoryTargetGender: ["类别元字段目标性别", "目标性别", "性别", "Target gender"],
+    categoryTargetGenderBaseValue: [
+      "类别元字段目标性别基础值",
+      "目标性别基础值",
+      "Target gender base value",
+    ],
     seoTitle: ["SEO标题", "SEO 标题", "SEO Title"],
     seoDescription: ["SEO描述", "SEO 描述", "SEO Description"],
     variantOptionName: ["多属性名称", "选项名称", "Option name", "Variant option"],
@@ -1919,7 +2042,10 @@ function getCategoryMetafieldOptionForValue(
   });
 }
 
-function sanitizeCategoryMetafieldMemoryItems(value: unknown): string[] {
+function sanitizeCategoryMetafieldMemoryItems(
+  value: unknown,
+  limit = CATEGORY_METAFIELD_MEMORY_LIMIT,
+): string[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
   const items: string[] = [];
@@ -1932,7 +2058,7 @@ function sanitizeCategoryMetafieldMemoryItems(value: unknown): string[] {
     if (seen.has(key)) continue;
     seen.add(key);
     items.push(normalized);
-    if (items.length >= CATEGORY_METAFIELD_MEMORY_LIMIT) break;
+    if (items.length >= limit) break;
   }
 
   return items;
@@ -1980,18 +2106,34 @@ function saveCategoryMetafieldMemory(memory: CategoryMetafieldMemory) {
 
 function buildCategoryMetafieldCandidates(
   shopifyFields: ShopifyCategoryMetafieldFields = {},
-): CategoryMetafieldMemory {
-  const candidates: CategoryMetafieldMemory = {};
+): CategoryMetafieldAiCandidates {
+  const candidates: CategoryMetafieldAiCandidates = {};
   for (const { key } of CATEGORY_METAFIELD_ROWS) {
-    const shopifyItems = (shopifyFields[key]?.options || []).flatMap((option) => {
+    const field = shopifyFields[key];
+    const metaobjectItems: string[] = [];
+    const taxonomyItems: string[] = [];
+    for (const option of field?.options || []) {
       const values = [option.label];
       if (option.value && !option.value.startsWith("gid://shopify/")) {
         values.push(option.value);
       }
-      return values;
-    });
-    const items = sanitizeCategoryMetafieldMemoryItems(shopifyItems);
-    if (items.length) candidates[key] = items;
+      if (/^gid:\/\/shopify\/TaxonomyValue\//.test(option.id)) {
+        taxonomyItems.push(...values);
+      } else {
+        metaobjectItems.push(...values);
+      }
+    }
+    const metaobjectValues = sanitizeCategoryMetafieldMemoryItems(
+      metaobjectItems,
+      CATEGORY_METAFIELD_AI_CANDIDATE_LIMIT,
+    );
+    const taxonomyValues = sanitizeCategoryMetafieldMemoryItems(
+      taxonomyItems,
+      CATEGORY_METAFIELD_AI_CANDIDATE_LIMIT,
+    );
+    if (metaobjectValues.length || taxonomyValues.length) {
+      candidates[key] = { metaobjectValues, taxonomyValues };
+    }
   }
   return candidates;
 }
@@ -2378,7 +2520,7 @@ export default function ProductListingPage() {
     ProductVariantOptionGroup[]
   >(() => [buildDefaultSizeVariantOptionGroup()]);
   const [categoryMetafieldCandidatesForAi, setCategoryMetafieldCandidatesForAi] =
-    useState<CategoryMetafieldMemory>({});
+    useState<CategoryMetafieldAiCandidates>({});
   const [productMetafieldDefinitions, setProductMetafieldDefinitions] =
     useState<ShopifyProductMetafieldDefinition[]>([]);
   const [productMetafieldValues, setProductMetafieldValues] = useState<
@@ -5583,7 +5725,7 @@ function ProductFormPanel({
   onApplyWatermark: () => void;
   onAdjustWatermark: (item: ProductListingMediaItem) => void;
   onCategoryMetafieldCandidatesChange: (
-    candidates: CategoryMetafieldMemory,
+    candidates: CategoryMetafieldAiCandidates,
   ) => void;
   productMetafieldDefinitions: ShopifyProductMetafieldDefinition[];
   productMetafieldValues: Record<string, string>;
@@ -6230,6 +6372,18 @@ function ProductFormPanel({
       }));
       return;
     }
+    if (key in CATEGORY_METAOBJECT_BASE_VALUE_FIELD_BY_KEY) {
+      const baseValueField =
+        CATEGORY_METAOBJECT_BASE_VALUE_FIELD_BY_KEY[
+          key as CategoryMetaobjectMetafieldFormKey
+        ];
+      setForm((prev) => ({
+        ...prev,
+        [key]: value,
+        [baseValueField]: "",
+      }));
+      return;
+    }
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
@@ -6272,6 +6426,7 @@ function ProductFormPanel({
     const category = findShopifyCategoryById(id);
     setForm((prev) => ({
       ...prev,
+      ...EMPTY_CATEGORY_METAOBJECT_BASE_VALUES,
       shopifyCategoryId: category?.id || SHOPIFY_UNCATEGORIZED_CATEGORY_ID,
       shopifyCategoryName: category?.zh || "未分类",
     }));
@@ -6283,6 +6438,7 @@ function ProductFormPanel({
       findShopifyCategoryById(SHOPIFY_APPAREL_ACCESSORIES_CATEGORY_ID);
     setForm((prev) => ({
       ...prev,
+      ...EMPTY_CATEGORY_METAOBJECT_BASE_VALUES,
       shopifyCategoryId:
         category?.id || SHOPIFY_APPAREL_ACCESSORIES_CATEGORY_ID,
       shopifyCategoryName: category?.zh || "服饰与配饰",
@@ -6295,6 +6451,7 @@ function ProductFormPanel({
       findShopifyCategoryById(SHOPIFY_CLOTHING_CATEGORY_ID);
     setForm((prev) => ({
       ...prev,
+      ...EMPTY_CATEGORY_METAOBJECT_BASE_VALUES,
       shopifyCategoryId: category?.id || SHOPIFY_CLOTHING_CATEGORY_ID,
       shopifyCategoryName: category?.zh || "服装",
     }));
@@ -7631,12 +7788,14 @@ function ProductFormPanel({
       if (!category) {
         return {
           ...prev,
+          ...EMPTY_CATEGORY_METAOBJECT_BASE_VALUES,
           shopifyCategoryId: SHOPIFY_UNCATEGORIZED_CATEGORY_ID,
           shopifyCategoryName: "未分类",
         };
       }
       return {
         ...prev,
+        ...EMPTY_CATEGORY_METAOBJECT_BASE_VALUES,
         shopifyCategoryId: category.id,
         shopifyCategoryName: category.zh,
       };
@@ -7856,6 +8015,7 @@ function ProductFormPanel({
             onChange={(category) =>
               setForm((prev) => ({
                 ...prev,
+                ...EMPTY_CATEGORY_METAOBJECT_BASE_VALUES,
                 shopifyCategoryId: category.id,
                 shopifyCategoryName: category.name,
               }))

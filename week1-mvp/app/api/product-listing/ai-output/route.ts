@@ -47,8 +47,13 @@ type CategoryMetafieldCandidateKey =
   | "categorySleeveLengthType"
   | "categoryTargetGender";
 
+type CategoryMetafieldCandidateSet = {
+  metaobjectValues: string[];
+  taxonomyValues: string[];
+};
+
 type CategoryMetafieldCandidates = Partial<
-  Record<CategoryMetafieldCandidateKey, string[]>
+  Record<CategoryMetafieldCandidateKey, CategoryMetafieldCandidateSet>
 >;
 
 type ProductOrganizationCandidateKey =
@@ -73,6 +78,7 @@ const CATEGORY_METAFIELD_CANDIDATE_LABELS: Array<{
   key: CategoryMetafieldCandidateKey;
   outputLabel: string;
   displayLabel: string;
+  baseOutputLabel?: string;
 }> = [
   {
     key: "categoryColor",
@@ -88,41 +94,49 @@ const CATEGORY_METAFIELD_CANDIDATE_LABELS: Array<{
     key: "categoryFabric",
     outputLabel: "类别元字段织物",
     displayLabel: "织物",
+    baseOutputLabel: "类别元字段织物基础值",
   },
   {
     key: "categoryAgeGroup",
     outputLabel: "类别元字段年龄段",
     displayLabel: "年龄段",
+    baseOutputLabel: "类别元字段年龄段基础值",
   },
   {
     key: "categoryOccasion",
     outputLabel: "类别元字段穿着场合",
     displayLabel: "穿着场合",
+    baseOutputLabel: "类别元字段穿着场合基础值",
   },
   {
     key: "categoryDressStyle",
     outputLabel: "类别元字段裙子风格",
     displayLabel: "裙子风格",
+    baseOutputLabel: "类别元字段裙子风格基础值",
   },
   {
     key: "categoryNeckline",
     outputLabel: "类别元字段领口",
     displayLabel: "领口",
+    baseOutputLabel: "类别元字段领口基础值",
   },
   {
     key: "categoryDressLengthType",
     outputLabel: "类别元字段裙子/连衣裙长度类型",
     displayLabel: "裙子/连衣裙长度类型",
+    baseOutputLabel: "类别元字段裙子/连衣裙长度类型基础值",
   },
   {
     key: "categorySleeveLengthType",
     outputLabel: "类别元字段袖长类型",
     displayLabel: "袖长类型",
+    baseOutputLabel: "类别元字段袖长类型基础值",
   },
   {
     key: "categoryTargetGender",
     outputLabel: "类别元字段目标性别",
     displayLabel: "目标性别",
+    baseOutputLabel: "类别元字段目标性别基础值",
   },
 ];
 
@@ -361,10 +375,14 @@ ${categoryMetafieldCandidateSummary}
 
 类别元字段生成规则：
 - 只输出用户提示词要求的类别元字段；不要额外补充用户没有要求的类别元字段。
-- 上面有候选条目的字段：先根据图片判断真实特征，再从该字段候选条目里选择最相似的一项，并尽量按候选条目的原文输出。
-- 候选条目来自当前手动选择的 Shopify 类别，优先参考这些后台已有官方/自定义条目，不要自行更换商品类别。
-- 上面没有候选条目的字段：直接根据图片生成。
-- 候选条目明显都不适合图片时，可以输出图片判断值，但不要脱离图片。` : `用户没有要求生成类别元字段。
+- 颜色和尺寸保持原规则：根据图片从候选条目选择最相似原文；候选均不合适时可按图片判断输出。
+- 织物、年龄段、穿着场合、裙子风格、领口、裙子/连衣裙长度类型、袖长类型、目标性别：先匹配该字段已有 Metaobject 条目；匹配时按原文输出类别元字段值，不创建重复条目。
+- 上述八个字段没有合适 Metaobject 条目时，可以生成新的展示标签，但必须同时输出对应的“基础值”字段；基础值只能逐字选择该字段列出的 Shopify taxonomy 值，不得把新标签直接当作基础值。
+- 每个新标签及其基础值各占一行，格式必须为“类别元字段…: 展示标签”和“类别元字段…基础值: 官方值”。例如标签为 Satin 时，基础值必须另选列表中的合法织物 taxonomy 值。
+- 如果商品需要多个新标签，展示标签与基础值使用相同顺序并用英文逗号分隔。
+- 没有可用 taxonomy 值且没有匹配的已有 Metaobject 条目时，该类别元字段留空，不得编造基础值。
+- Satin、Velvet 等外观或织法名称不必与基础材质同名；基础值应依据图片、提示词及商品材质信息，从官方列表选择最合理值。
+- 候选条目来自当前手动选择的 Shopify 类别，不要自行更换商品类别。` : `用户没有要求生成类别元字段。
 不要输出任何“类别元字段...”字段；只按用户提示词生成商品上架内容。`}
 
 请严格根据以上 ${images.length} 张商品图片生成，不要脱离图片内容。`,
@@ -852,33 +870,64 @@ function normalizeCategoryMetafieldCandidates(
   const source = value as Partial<Record<CategoryMetafieldCandidateKey, unknown>>;
   const result: CategoryMetafieldCandidates = {};
   for (const { key } of CATEGORY_METAFIELD_CANDIDATE_LABELS) {
-    const rawItems = source[key];
-    if (!Array.isArray(rawItems)) continue;
-
-    const seen = new Set<string>();
-    const items: string[] = [];
-    for (const rawItem of rawItems) {
-      if (typeof rawItem !== "string") continue;
-      const item = sanitizeCategoryCandidateValue(rawItem);
-      if (!item) continue;
-      const normalized = item.toLowerCase();
-      if (seen.has(normalized)) continue;
-      seen.add(normalized);
-      items.push(item);
-      if (items.length >= 30) break;
+    const rawCandidate = source[key];
+    const candidateSource =
+      rawCandidate && typeof rawCandidate === "object" && !Array.isArray(rawCandidate)
+        ? (rawCandidate as Record<string, unknown>)
+        : null;
+    const metaobjectValues = sanitizeCategoryCandidateItems(
+      Array.isArray(rawCandidate)
+        ? rawCandidate
+        : candidateSource?.metaobjectValues,
+    );
+    const taxonomyValues = sanitizeCategoryCandidateItems(
+      candidateSource?.taxonomyValues,
+    );
+    if (metaobjectValues.length || taxonomyValues.length) {
+      result[key] = { metaobjectValues, taxonomyValues };
     }
-    if (items.length) result[key] = items;
   }
   return result;
+}
+
+function sanitizeCategoryCandidateItems(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const items: string[] = [];
+  for (const rawItem of value) {
+    if (typeof rawItem !== "string") continue;
+    const item = sanitizeCategoryCandidateValue(rawItem);
+    if (!item) continue;
+    const normalized = item.toLowerCase();
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    items.push(item);
+    if (items.length >= 250) break;
+  }
+  return items;
 }
 
 function formatCategoryMetafieldCandidateSummary(
   candidates: CategoryMetafieldCandidates,
 ): string {
   const lines = CATEGORY_METAFIELD_CANDIDATE_LABELS.flatMap((field) => {
-    const items = candidates[field.key] || [];
-    if (!items.length) return [];
-    return [`${field.outputLabel}（${field.displayLabel}）：${items.join("、")}`];
+    const candidate = candidates[field.key];
+    if (!candidate) return [];
+    const { metaobjectValues, taxonomyValues } = candidate;
+    if (!field.baseOutputLabel) {
+      const items = Array.from(new Set([...metaobjectValues, ...taxonomyValues]));
+      return items.length
+        ? [`${field.outputLabel}（${field.displayLabel}）：${items.join("、")}`]
+        : [];
+    }
+    return [
+      `${field.outputLabel}已有 Metaobject 条目：${
+        metaobjectValues.length ? metaobjectValues.join("、") : "无"
+      }`,
+      `${field.baseOutputLabel}可选 Shopify taxonomy 值：${
+        taxonomyValues.length ? taxonomyValues.join("、") : "无"
+      }`,
+    ];
   });
   return lines.length
     ? lines.join("\n")

@@ -88,13 +88,21 @@ export type ShopifyProductDraftInput = {
   categoryColorHex?: string;
   categorySize?: string;
   categoryFabric?: string;
+  categoryFabricBaseValue?: string;
   categoryAgeGroup?: string;
+  categoryAgeGroupBaseValue?: string;
   categoryOccasion?: string;
+  categoryOccasionBaseValue?: string;
   categoryDressStyle?: string;
+  categoryDressStyleBaseValue?: string;
   categoryNeckline?: string;
+  categoryNecklineBaseValue?: string;
   categoryDressLengthType?: string;
+  categoryDressLengthTypeBaseValue?: string;
   categorySleeveLengthType?: string;
+  categorySleeveLengthTypeBaseValue?: string;
   categoryTargetGender?: string;
+  categoryTargetGenderBaseValue?: string;
   sku?: string;
   compareAtPrice?: string;
   price?: string;
@@ -858,36 +866,42 @@ const SHOPIFY_CATEGORY_METAFIELD_MAPPINGS = [
   },
   {
     field: "categoryFabric",
+    baseValueField: "categoryFabricBaseValue",
     label: "织物",
     keyHints: ["fabric", "material"],
     nameHints: ["fabric", "material", "织物", "材质"],
   },
   {
     field: "categoryAgeGroup",
+    baseValueField: "categoryAgeGroupBaseValue",
     label: "年龄段",
     keyHints: ["age-group"],
     nameHints: ["age group", "年龄段"],
   },
   {
     field: "categoryOccasion",
+    baseValueField: "categoryOccasionBaseValue",
     label: "穿着场合",
     keyHints: ["occasion", "dress-occasion"],
     nameHints: ["occasion", "穿着场合", "场合"],
   },
   {
     field: "categoryDressStyle",
+    baseValueField: "categoryDressStyleBaseValue",
     label: "裙子风格",
     keyHints: ["dress-style"],
     nameHints: ["dress style", "style", "裙子风格", "裙型"],
   },
   {
     field: "categoryNeckline",
+    baseValueField: "categoryNecklineBaseValue",
     label: "领口",
     keyHints: ["neckline"],
     nameHints: ["neckline", "领口"],
   },
   {
     field: "categoryDressLengthType",
+    baseValueField: "categoryDressLengthTypeBaseValue",
     label: "裙子/连衣裙长度类型",
     keyHints: ["skirt-dress-length-type", "dress-length-type"],
     nameHints: [
@@ -900,12 +914,14 @@ const SHOPIFY_CATEGORY_METAFIELD_MAPPINGS = [
   },
   {
     field: "categorySleeveLengthType",
+    baseValueField: "categorySleeveLengthTypeBaseValue",
     label: "袖长类型",
     keyHints: ["sleeve-length-type", "sleeve-length"],
     nameHints: ["sleeve length", "袖长类型", "袖长"],
   },
   {
     field: "categoryTargetGender",
+    baseValueField: "categoryTargetGenderBaseValue",
     label: "目标性别",
     keyHints: ["target-gender"],
     nameHints: ["target gender", "gender", "目标性别", "性别"],
@@ -923,6 +939,17 @@ const SHOPIFY_CATEGORY_METAFIELD_MAPPINGS = [
     | "categoryDressLengthType"
     | "categorySleeveLengthType"
     | "categoryTargetGender"
+  >;
+  baseValueField?: keyof Pick<
+    ShopifyProductDraftInput,
+    | "categoryFabricBaseValue"
+    | "categoryAgeGroupBaseValue"
+    | "categoryOccasionBaseValue"
+    | "categoryDressStyleBaseValue"
+    | "categoryNecklineBaseValue"
+    | "categoryDressLengthTypeBaseValue"
+    | "categorySleeveLengthTypeBaseValue"
+    | "categoryTargetGenderBaseValue"
   >;
   label: string;
   keyHints: readonly string[];
@@ -4452,6 +4479,10 @@ async function syncShopifyCategoryMetafields(
   const initialDrafts = SHOPIFY_CATEGORY_METAFIELD_MAPPINGS.map((mapping) => ({
     mapping,
     value: cleanCategoryMetafieldValue(input[mapping.field]),
+    baseValue:
+      "baseValueField" in mapping
+        ? cleanCategoryMetafieldValue(input[mapping.baseValueField])
+        : "",
     colorHex:
       mapping.field === "categoryColor"
         ? normalizeShopifyColorHex(input.categoryColorHex)
@@ -4462,6 +4493,7 @@ async function syncShopifyCategoryMetafields(
     ): draft is {
       mapping: (typeof SHOPIFY_CATEGORY_METAFIELD_MAPPINGS)[number];
       value: string;
+      baseValue: string;
       colorHex: string;
     } => Boolean(draft.value),
   );
@@ -4526,6 +4558,7 @@ async function syncShopifyCategoryMetafields(
         draft.value,
         localWarnings,
         draft.colorHex,
+        draft.baseValue,
       );
       if (!value) return { metafield: null, warnings: localWarnings };
       return {
@@ -4873,9 +4906,11 @@ async function buildShopifyCategoryMetafieldValue(
   rawValue: string,
   warnings: string[],
   colorHex = "",
+  rawBaseValue = "",
 ): Promise<string | null> {
   const type = cleanField(definition.type?.name) || "single_line_text_field";
   const values = splitCategoryMetafieldValues(rawValue);
+  const baseValues = splitCategoryMetafieldValues(rawBaseValue);
   const normalizedColorHex =
     values.length === 1 ? normalizeShopifyColorHex(colorHex) : "";
   if (!values.length) return null;
@@ -4883,23 +4918,27 @@ async function buildShopifyCategoryMetafieldValue(
   if (isShopifyTaxonomyValueReferenceType(type)) {
     const ids: string[] = [];
     const fieldKey = cleanField(definition.key) || "taxonomy_reference";
-    for (const value of values) {
+    for (const [index, value] of values.entries()) {
       if (isShopifyTaxonomyValueId(value)) {
         ids.push(value);
         continue;
       }
-      const inferredValue = inferShopifyCategoryValueForField(
-        type,
-        fieldKey,
-        value,
+      const pairedBaseValue = getPairedShopifyCategoryBaseValue(
+        baseValues,
+        index,
+        values.length,
       );
+      const inferredValue =
+        pairedBaseValue ||
+        inferShopifyCategoryValueForField(type, fieldKey, value);
+      const taxonomyInputValue = pairedBaseValue || value;
       const id = await resolveShopifyTaxonomyValueId(
         shopDomain,
         accessToken,
         categoryId,
         type,
         fieldKey,
-        value,
+        taxonomyInputValue,
         inferredValue,
         warnings,
         getShopifyProductTaxonomyAttributeHandle(definition.validations),
@@ -4922,7 +4961,7 @@ async function buildShopifyCategoryMetafieldValue(
       return null;
     }
     const ids: string[] = [];
-    for (const value of values) {
+    for (const [index, value] of values.entries()) {
       if (isShopifyMetaobjectId(value)) {
         ids.push(value);
         continue;
@@ -4935,6 +4974,11 @@ async function buildShopifyCategoryMetafieldValue(
         value,
         warnings,
         normalizedColorHex,
+        getPairedShopifyCategoryBaseValue(
+          baseValues,
+          index,
+          values.length,
+        ),
       );
       if (id) ids.push(id);
     }
@@ -4948,6 +4992,16 @@ async function buildShopifyCategoryMetafieldValue(
   return cleanField(rawValue);
 }
 
+function getPairedShopifyCategoryBaseValue(
+  baseValues: string[],
+  index: number,
+  valueCount: number,
+): string {
+  if (baseValues.length === valueCount) return cleanField(baseValues[index]);
+  if (valueCount === 1) return cleanField(baseValues[0]);
+  return "";
+}
+
 async function findOrCreateShopifyCategoryMetaobject(
   shopDomain: string,
   accessToken: string,
@@ -4956,6 +5010,7 @@ async function findOrCreateShopifyCategoryMetaobject(
   value: string,
   warnings: string[],
   colorHex = "",
+  baseValue = "",
 ): Promise<string | null> {
   const definition = await ensureShopifyCategoryMetaobjectDefinition(
     shopDomain,
@@ -4993,6 +5048,7 @@ async function findOrCreateShopifyCategoryMetaobject(
     displayValue,
     warnings,
     normalizedColorHex,
+    baseValue,
   );
   if (!fields.length) {
     if (normalizeMetafieldMatchText(type).includes("colorpattern")) {
@@ -5055,6 +5111,12 @@ async function findOrCreateShopifyCategoryMetaobject(
     warnings.push(
       `已自动创建 Shopify 颜色条目「${displayValue}」${
         normalizedColorHex ? `（${normalizedColorHex}）` : ""
+      }。`,
+    );
+  } else if (createdId) {
+    warnings.push(
+      `已自动创建 Shopify 类别元字段条目「${displayValue}」${
+        baseValue ? `（基础值：${baseValue}）` : ""
       }。`,
     );
   }
@@ -5571,6 +5633,7 @@ async function buildShopifyCategoryMetaobjectFields(
   value: string,
   warnings: string[],
   colorHex = "",
+  baseValue = "",
 ): Promise<ShopifyCategoryMetaobjectFieldInput[]> {
   const recipe = getShopifyCategoryMetaobjectCreateRecipe(type);
   const fields = new Map<string, string>();
@@ -5622,9 +5685,11 @@ async function buildShopifyCategoryMetaobjectFields(
     );
     const fieldType = cleanField(fieldDefinition?.type?.name);
     const inferredValue =
-      recipe.name === "color-pattern" && key === "base_color"
-        ? inferShopifyBaseColorWithHex(value, normalizedColorHex)
-        : recipe.inferFieldValue(type, key, value);
+      baseValue && key.startsWith("base_")
+        ? baseValue
+        : recipe.name === "color-pattern" && key === "base_color"
+          ? inferShopifyBaseColorWithHex(value, normalizedColorHex)
+          : recipe.inferFieldValue(type, key, value);
     const fieldValue = await buildShopifyCategoryMetaobjectFieldValue(
       shopDomain,
       accessToken,
