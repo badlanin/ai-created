@@ -5684,16 +5684,22 @@ async function buildShopifyCategoryMetaobjectFields(
       (field) => cleanField(field.key) === key,
     );
     const fieldType = cleanField(fieldDefinition?.type?.name);
+    const normalizedFieldKey = normalizeMetafieldMatchText(key);
+    const isColorTaxonomyField =
+      recipe.name === "color-pattern" &&
+      (key === "base_color" ||
+        (normalizedFieldKey.includes("color") &&
+          isShopifyTaxonomyValueReferenceType(fieldType)));
     const usesPairedBaseValue =
       Boolean(baseValue) &&
       (key.startsWith("base_") ||
-        normalizeMetafieldMatchText(key) === "taxonomyreference" ||
+        normalizedFieldKey === "taxonomyreference" ||
         isShopifyTaxonomyValueReferenceType(fieldType));
     const sourceValue = usesPairedBaseValue ? baseValue : value;
     const inferredValue =
       usesPairedBaseValue
         ? recipe.inferFieldValue(type, key, baseValue) || baseValue
-        : recipe.name === "color-pattern" && key === "base_color"
+        : isColorTaxonomyField
           ? inferShopifyBaseColorWithHex(value, normalizedColorHex)
           : recipe.inferFieldValue(type, key, value);
     const fieldValue = await buildShopifyCategoryMetaobjectFieldValue(
@@ -6023,6 +6029,14 @@ function getShopifyTaxonomyFallbackCandidates(
     candidates.push("Solid");
   }
 
+  if (
+    normalizedType.includes("fabric") ||
+    normalizedFieldKey.includes("fabric")
+  ) {
+    if (/tulle|netting|mesh|网纱/.test(text)) candidates.push("Mesh");
+    candidates.push("Other");
+  }
+
   if (normalizedType.includes("dressoccasion") || normalizedFieldKey.includes("occasion")) {
     if (/prom|homecoming/.test(text)) candidates.push("Special Occasion", "Formal");
     if (/evening|formal|gala|specialoccasion/.test(text)) {
@@ -6053,8 +6067,12 @@ function getShopifyTaxonomyFallbackCandidates(
 
   if (normalizedType.includes("sleevelengthtype") || normalizedFieldKey.includes("sleevelength")) {
     if (/sleeveless|strapless/.test(text)) candidates.push("Sleeveless");
-    if (/short/.test(text)) candidates.push("Short Sleeve", "Short");
-    if (/long/.test(text)) candidates.push("Long Sleeve", "Long");
+    if (/spaghetti/.test(text)) candidates.push("Spaghetti strap");
+    if (/cap/.test(text)) candidates.push("Cap");
+    if (/short|flutter/.test(text)) candidates.push("Short");
+    if (/threequarter|3\/4/.test(text)) candidates.push("3/4");
+    if (/long/.test(text)) candidates.push("Long");
+    candidates.push("Other");
   }
 
   return candidates;
@@ -6069,24 +6087,27 @@ function findShopifyTaxonomyValueInAttributes(
     .filter(Boolean);
   if (!normalizedCandidates.length) return null;
 
-  for (const attribute of attributes) {
-    const match = attribute.values?.nodes?.find((node) =>
-      normalizedCandidates.includes(normalizeMetafieldMatchText(node.name)),
-    );
-    if (match?.id) return match;
+  for (const candidate of normalizedCandidates) {
+    for (const attribute of attributes) {
+      const match = attribute.values?.nodes?.find(
+        (node) => normalizeMetafieldMatchText(node.name) === candidate,
+      );
+      if (match?.id) return match;
+    }
   }
 
-  for (const attribute of attributes) {
-    const match = attribute.values?.nodes?.find((node) => {
-      const normalizedName = normalizeMetafieldMatchText(node.name);
-      return normalizedCandidates.some(
-        (candidate) =>
+  for (const candidate of normalizedCandidates) {
+    for (const attribute of attributes) {
+      const match = attribute.values?.nodes?.find((node) => {
+        const normalizedName = normalizeMetafieldMatchText(node.name);
+        return (
           canUseLooseShopifyTaxonomyMatch(candidate, normalizedName) &&
           (normalizedName.includes(candidate) ||
-            candidate.includes(normalizedName)),
-      );
-    });
-    if (match?.id) return match;
+            candidate.includes(normalizedName))
+        );
+      });
+      if (match?.id) return match;
+    }
   }
 
   return null;
@@ -6507,6 +6528,9 @@ function inferShopifyCategoryValueForField(
 
 function inferShopifyBaseColorWithHex(value: string, colorHex: string): string {
   const inferred = inferShopifyBaseColor(value);
+  if (/taupe|灰褐/.test(normalizeMetafieldMatchText(value))) {
+    return inferShopifyBaseColorFromHex(colorHex) || "Brown";
+  }
   const knownBaseColors = new Set([
     "Beige",
     "Black",
@@ -6590,6 +6614,7 @@ function inferShopifyBaseColor(value: string): string {
   if (/green|mint|sage|olive|emerald|forest|绿/.test(text)) return "Green";
   if (/yellow|lemon|daffodil|butter|黄/.test(text)) return "Yellow";
   if (/orange|cinnamon|terracotta|marigold|橙/.test(text)) return "Orange";
+  if (/taupe|灰褐/.test(text)) return "Brown";
   if (/brown|mocha|espresso|棕|咖/.test(text)) return "Brown";
   return value;
 }
@@ -6632,6 +6657,7 @@ function inferShopifyColorHex(value: string): string {
 
   const text = normalizeMetafieldMatchText(cleaned);
   const palette: Array<[RegExp, string]> = [
+    [/taupe|灰褐/, "#8B8589"],
     [/coralpink|pinkcoral/, "#F88379"],
     [/burgundy|cabernet|wine/, "#800020"],
     [/dustyblue/, "#6E8FA3"],
@@ -6753,11 +6779,14 @@ function inferShopifyBaseDressLength(value: string): string {
 
 function inferShopifyBaseSleeveLength(value: string): string {
   const text = normalizeMetafieldMatchText(value);
-  if (/sleeveless|strapless|无袖|抹胸/.test(text)) return "Sleeveless";
-  if (/cap|盖袖/.test(text)) return "Cap Sleeve";
-  if (/short|短袖/.test(text)) return "Short Sleeve";
-  if (/threequarter|3\/4|七分|四分之三/.test(text)) return "Three Quarter Sleeve";
-  if (/long|长袖/.test(text)) return "Long Sleeve";
+  if (/strapless|抹胸/.test(text)) return "Strapless";
+  if (/spaghetti|细肩带/.test(text)) return "Spaghetti strap";
+  if (/sleeveless|无袖/.test(text)) return "Sleeveless";
+  if (/cap|盖袖/.test(text)) return "Cap";
+  if (/flutter|short|短袖|飞飞袖/.test(text)) return "Short";
+  if (/threequarter|3\/4|七分|四分之三/.test(text)) return "3/4";
+  if (/long|长袖/.test(text)) return "Long";
+  if (/offshoulder|offtheshoulder|bell|bishop|puff/.test(text)) return "Other";
   return value;
 }
 
