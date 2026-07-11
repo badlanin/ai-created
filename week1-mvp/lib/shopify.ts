@@ -4961,7 +4961,7 @@ async function findOrCreateShopifyCategoryMetaobject(
   if (!definition?.id) return null;
 
   const displayValue = stripShopifyColorHexFromLabel(value);
-  const normalizedColorHex = normalizeShopifyColorHex(colorHex || value);
+  const normalizedColorHex = resolveShopifyColorHex(colorHex, displayValue);
   const candidates = getCategoryValueCandidates(displayValue);
   const existing = await fetchShopifyCategoryMetaobjects(
     shopDomain,
@@ -4989,7 +4989,14 @@ async function findOrCreateShopifyCategoryMetaobject(
     warnings,
     normalizedColorHex,
   );
-  if (!fields.length) return null;
+  if (!fields.length) {
+    if (normalizeMetafieldMatchText(type).includes("colorpattern")) {
+      warnings.push(
+        `无法自动创建 Shopify 颜色条目「${displayValue}」：基本颜色或基本图案无法匹配 Shopify 官方值。`,
+      );
+    }
+    return null;
+  }
   const json = await shopifyGraphql<ShopifyMetaobjectCreateResponse>(
     shopDomain,
     accessToken,
@@ -5555,7 +5562,7 @@ async function buildShopifyCategoryMetaobjectFields(
   if (displayFieldKey && displayValue) fields.set(displayFieldKey, displayValue);
 
   const fieldDefinitions = definition.fieldDefinitions || [];
-  const normalizedColorHex = normalizeShopifyColorHex(colorHex || value);
+  const normalizedColorHex = resolveShopifyColorHex(colorHex, value);
   if (recipe.name === "color-pattern" && normalizedColorHex) {
     const colorField = fieldDefinitions.find((field) => {
       const key = normalizeMetafieldMatchText(field.key);
@@ -6397,45 +6404,49 @@ function inferShopifyBaseColorWithHex(value: string, colorHex: string): string {
 function inferShopifyBaseColorFromHex(value: string): string {
   const hex = normalizeShopifyColorHex(value);
   if (!hex) return "";
-  const rgb = [
-    Number.parseInt(hex.slice(1, 3), 16),
-    Number.parseInt(hex.slice(3, 5), 16),
-    Number.parseInt(hex.slice(5, 7), 16),
-  ];
-  const palette: Array<[string, [number, number, number]]> = [
-    ["Black", [0, 0, 0]],
-    ["White", [255, 255, 255]],
-    ["Gray", [128, 128, 128]],
-    ["Silver", [192, 192, 192]],
-    ["Beige", [245, 245, 220]],
-    ["Brown", [139, 69, 19]],
-    ["Red", [255, 0, 0]],
-    ["Pink", [255, 192, 203]],
-    ["Orange", [255, 165, 0]],
-    ["Yellow", [255, 255, 0]],
-    ["Gold", [212, 175, 55]],
-    ["Green", [0, 128, 0]],
-    ["Blue", [0, 0, 255]],
-    ["Purple", [128, 0, 128]],
-    ["Bronze", [205, 127, 50]],
-  ];
-  return palette.reduce(
-    (best, candidate) => {
-      const distance = candidate[1].reduce(
-        (sum, channel, index) => sum + (channel - rgb[index]) ** 2,
-        0,
-      );
-      return distance < best.distance
-        ? { name: candidate[0], distance }
-        : best;
-    },
-    { name: "", distance: Number.POSITIVE_INFINITY },
-  ).name;
+  const red = Number.parseInt(hex.slice(1, 3), 16) / 255;
+  const green = Number.parseInt(hex.slice(3, 5), 16) / 255;
+  const blue = Number.parseInt(hex.slice(5, 7), 16) / 255;
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  const delta = max - min;
+  const lightness = (max + min) / 2;
+  const saturation =
+    delta === 0 ? 0 : delta / (1 - Math.abs(2 * lightness - 1));
+
+  if (lightness <= 0.12) return "Black";
+  if (lightness >= 0.94 && saturation <= 0.2) return "White";
+  if (saturation <= 0.12) {
+    if (lightness >= 0.78) return "Silver";
+    return "Gray";
+  }
+
+  let hue = 0;
+  if (max === red) hue = 60 * (((green - blue) / delta) % 6);
+  else if (max === green) hue = 60 * ((blue - red) / delta + 2);
+  else hue = 60 * ((red - green) / delta + 4);
+  if (hue < 0) hue += 360;
+
+  if (
+    lightness >= 0.85 &&
+    saturation <= 0.65 &&
+    hue >= 25 &&
+    hue <= 70
+  ) {
+    return "Beige";
+  }
+  if (hue < 15 || hue >= 345) return lightness >= 0.65 ? "Pink" : "Red";
+  if (hue < 45) return lightness < 0.32 ? "Brown" : "Orange";
+  if (hue < 70) return hue <= 52 && lightness < 0.7 ? "Gold" : "Yellow";
+  if (hue < 170) return "Green";
+  if (hue < 260) return "Blue";
+  if (hue < 320) return "Purple";
+  return lightness >= 0.55 ? "Pink" : "Red";
 }
 
 function inferShopifyBaseColor(value: string): string {
   const text = normalizeMetafieldMatchText(value);
-  if (/navy|royalblue|skyblue|dustyblue|steelblue|slateblue|blue|teal|海军蓝|蓝/.test(text)) {
+  if (/navy|royalblue|skyblue|dustyblue|steelblue|slateblue|blue|teal|aqua|cyan|turquoise|aquamarine|海军蓝|水蓝|湖蓝|青色|蓝/.test(text)) {
     return "Blue";
   }
   if (/black|黑/.test(text)) return "Black";
@@ -6467,6 +6478,13 @@ function normalizeShopifyColorHex(value?: string | null): string {
   return `#${hex}`.toUpperCase();
 }
 
+function resolveShopifyColorHex(colorHex: string, value: string): string {
+  return (
+    normalizeShopifyColorHex(colorHex) ||
+    normalizeShopifyColorHex(inferShopifyColorHex(value))
+  );
+}
+
 function stripShopifyColorHexFromLabel(value: string): string {
   const cleaned = cleanField(value);
   const withoutHex = cleaned
@@ -6493,6 +6511,10 @@ function inferShopifyColorHex(value: string): string {
     [/navy/, "#000080"],
     [/royalblue/, "#4169E1"],
     [/skyblue/, "#87CEEB"],
+    [/aquamarine/, "#7FFFD4"],
+    [/turquoise/, "#40E0D0"],
+    [/aqua|cyan|青色/, "#00FFFF"],
+    [/水蓝|湖蓝/, "#4FC3F7"],
     [/lavender/, "#E6E6FA"],
     [/lilac/, "#C8A2C8"],
     [/mauve/, "#E0B0FF"],
