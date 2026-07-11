@@ -151,6 +151,7 @@ const REQUIRED_OUTPUT_FIELD_ALIASES: Array<{
   { label: "标记", aliases: ["标记", "标签", "tags", "tag"] },
   { label: "模板样式", aliases: ["模板样式", "产品模板", "template suffix", "theme template"] },
   { label: "主色调", aliases: ["主色调", "颜色", "color"] },
+  { label: "主色调HEX", aliases: ["主色调hex", "颜色hex", "color hex", "colorHex"] },
   { label: "面料材质", aliases: ["面料材质", "材质", "material", "fabric"] },
   { label: "领口设计", aliases: ["领口设计", "领口", "neckline"] },
   { label: "整体版型", aliases: ["整体版型", "版型", "silhouette"] },
@@ -174,6 +175,7 @@ const FULL_PRODUCT_OUTPUT_FIELDS = [
   "标记",
   "模板样式",
   "主色调",
+  "主色调HEX",
   "面料材质",
   "领口设计",
   "整体版型",
@@ -192,7 +194,8 @@ const PRODUCT_LISTING_SYSTEM_PROMPT = `你是专业的 Shopify 礼服商品上�
 - 必须以用户提供的商品图片为主要依据，优先识别图片中的颜色、面料、版型、领口、细节和商品风格。
 - 只输出字段内容，不要 Markdown、代码块、解释、寒暄。
 - 使用 key: value 格式，每个字段单独一行。
-- 字段建议包含：商品标题、商品描述、产品类型、供应商、产品系列、标签、模板样式、主色调、面料材质、领口设计、整体版型、SKU、原价、售价、库存、SEO标题、SEO描述。
+- 字段建议包含：商品标题、商品描述、产品类型、供应商、产品系列、标签、模板样式、主色调、主色调HEX、面料材质、领口设计、整体版型、SKU、原价、售价、库存、SEO标题、SEO描述。
+- 主色调和主色调HEX必须始终输出；主色调使用适合商品展示的颜色标签，主色调HEX必须根据商品图片识别并输出标准 #RRGGBB 色值。
 - 用户提示词明确点名要求输出的字段必须逐项输出，不得省略；即使无法确定，也要保留字段名，值可以留空或使用保守值。
 - 不要主动输出 Shopify 类别元字段；只有用户提示词明确要求输出类别元字段、元字段，或明确写出“类别元字段颜色/类别元字段尺寸”等完整类别元字段名时，才输出对应字段。
 - 如果系统提供了 Shopify 产品自定义元字段定义，必须按定义名称逐项输出；这些字段与类别元字段相互独立。

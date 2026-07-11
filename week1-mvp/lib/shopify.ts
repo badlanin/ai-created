@@ -85,6 +85,7 @@ export type ShopifyProductDraftInput = {
   neckline?: string;
   silhouette?: string;
   categoryColor?: string;
+  categoryColorHex?: string;
   categorySize?: string;
   categoryFabric?: string;
   categoryAgeGroup?: string;
@@ -4447,12 +4448,17 @@ async function syncShopifyCategoryMetafields(
   const initialDrafts = SHOPIFY_CATEGORY_METAFIELD_MAPPINGS.map((mapping) => ({
     mapping,
     value: cleanCategoryMetafieldValue(input[mapping.field]),
+    colorHex:
+      mapping.field === "categoryColor"
+        ? normalizeShopifyColorHex(input.categoryColorHex)
+        : "",
   })).filter(
     (
       draft,
     ): draft is {
       mapping: (typeof SHOPIFY_CATEGORY_METAFIELD_MAPPINGS)[number];
       value: string;
+      colorHex: string;
     } => Boolean(draft.value),
   );
 
@@ -4515,6 +4521,7 @@ async function syncShopifyCategoryMetafields(
         definition,
         draft.value,
         localWarnings,
+        draft.colorHex,
       );
       if (!value) return { metafield: null, warnings: localWarnings };
       return {
@@ -4861,9 +4868,12 @@ async function buildShopifyCategoryMetafieldValue(
   definition: ShopifyMetafieldDefinitionNode,
   rawValue: string,
   warnings: string[],
+  colorHex = "",
 ): Promise<string | null> {
   const type = cleanField(definition.type?.name) || "single_line_text_field";
   const values = splitCategoryMetafieldValues(rawValue);
+  const normalizedColorHex =
+    values.length === 1 ? normalizeShopifyColorHex(colorHex) : "";
   if (!values.length) return null;
 
   if (isShopifyTaxonomyValueReferenceType(type)) {
@@ -4919,6 +4929,7 @@ async function buildShopifyCategoryMetafieldValue(
         metaobjectType,
         value,
         warnings,
+        normalizedColorHex,
       );
       if (id) ids.push(id);
     }
@@ -4939,6 +4950,7 @@ async function findOrCreateShopifyCategoryMetaobject(
   type: string,
   value: string,
   warnings: string[],
+  colorHex = "",
 ): Promise<string | null> {
   const definition = await ensureShopifyCategoryMetaobjectDefinition(
     shopDomain,
@@ -4948,15 +4960,22 @@ async function findOrCreateShopifyCategoryMetaobject(
   );
   if (!definition?.id) return null;
 
-  const candidates = getCategoryValueCandidates(value);
+  const displayValue = stripShopifyColorHexFromLabel(value);
+  const normalizedColorHex = normalizeShopifyColorHex(colorHex || value);
+  const candidates = getCategoryValueCandidates(displayValue);
   const existing = await fetchShopifyCategoryMetaobjects(
     shopDomain,
     accessToken,
     type,
     warnings,
   );
-  const match = existing.find((node) =>
-    candidates.some((candidate) => shopifyMetaobjectMatchesValue(node, candidate)),
+  const match = existing.find(
+    (node) =>
+      candidates.some((candidate) =>
+        shopifyMetaobjectMatchesValue(node, candidate),
+      ) ||
+      (normalizedColorHex &&
+        shopifyMetaobjectMatchesColorHex(node, normalizedColorHex)),
   );
   if (match?.id) return match.id;
 
@@ -4966,8 +4985,9 @@ async function findOrCreateShopifyCategoryMetaobject(
     categoryId,
     definition,
     type,
-    value,
+    displayValue,
     warnings,
+    normalizedColorHex,
   );
   if (!fields.length) return null;
   const json = await shopifyGraphql<ShopifyMetaobjectCreateResponse>(
@@ -4988,14 +5008,14 @@ async function findOrCreateShopifyCategoryMetaobject(
     {
       metaobject: {
         type,
-        handle: makeShopifyMetaobjectHandle(type, value),
+        handle: makeShopifyMetaobjectHandle(type, displayValue),
         fields,
       },
     },
   );
   const topLevelErrors = formatGraphqlMessages(json.errors);
   if (topLevelErrors) {
-    warnings.push(`创建 Shopify 类别元字段值「${value}」失败：${topLevelErrors}`);
+    warnings.push(`创建 Shopify 类别元字段值「${displayValue}」失败：${topLevelErrors}`);
     return null;
   }
   const userErrors = normalizeUserErrors(json.data?.metaobjectCreate?.userErrors);
@@ -5006,14 +5026,27 @@ async function findOrCreateShopifyCategoryMetaobject(
       type,
       warnings,
     );
-    const retryMatch = retry.find((node) =>
-      candidates.some((candidate) => shopifyMetaobjectMatchesValue(node, candidate)),
+    const retryMatch = retry.find(
+      (node) =>
+        candidates.some((candidate) =>
+          shopifyMetaobjectMatchesValue(node, candidate),
+        ) ||
+        (normalizedColorHex &&
+          shopifyMetaobjectMatchesColorHex(node, normalizedColorHex)),
     );
     if (retryMatch?.id) return retryMatch.id;
-    warnings.push(`创建 Shopify 类别元字段值「${value}」失败：${userErrors.join("；")}`);
+    warnings.push(`创建 Shopify 类别元字段值「${displayValue}」失败：${userErrors.join("；")}`);
     return null;
   }
-  return json.data?.metaobjectCreate?.metaobject?.id || null;
+  const createdId = json.data?.metaobjectCreate?.metaobject?.id || null;
+  if (createdId && normalizeMetafieldMatchText(type).includes("colorpattern")) {
+    warnings.push(
+      `已自动创建 Shopify 颜色条目「${displayValue}」${
+        normalizedColorHex ? `（${normalizedColorHex}）` : ""
+      }。`,
+    );
+  }
+  return createdId;
 }
 
 async function ensureShopifyCategoryMetaobjectDefinition(
@@ -5513,14 +5546,34 @@ async function buildShopifyCategoryMetaobjectFields(
   type: string,
   value: string,
   warnings: string[],
+  colorHex = "",
 ): Promise<ShopifyCategoryMetaobjectFieldInput[]> {
   const recipe = getShopifyCategoryMetaobjectCreateRecipe(type);
   const fields = new Map<string, string>();
   const displayFieldKey = getShopifyMetaobjectDisplayFieldKey(definition);
-  const displayValue = cleanField(value);
+  const displayValue = stripShopifyColorHexFromLabel(value);
   if (displayFieldKey && displayValue) fields.set(displayFieldKey, displayValue);
 
   const fieldDefinitions = definition.fieldDefinitions || [];
+  const normalizedColorHex = normalizeShopifyColorHex(colorHex || value);
+  if (recipe.name === "color-pattern" && normalizedColorHex) {
+    const colorField = fieldDefinitions.find((field) => {
+      const key = normalizeMetafieldMatchText(field.key);
+      const name = normalizeMetafieldMatchText(field.name);
+      return (
+        key === "color" ||
+        key === "colour" ||
+        key.includes("colorcode") ||
+        key.includes("colourcode") ||
+        key.includes("hex") ||
+        name === "颜色" ||
+        name.includes("色调代码") ||
+        name.includes("颜色代码")
+      );
+    });
+    const colorFieldKey = cleanField(colorField?.key);
+    if (colorFieldKey) fields.set(colorFieldKey, normalizedColorHex);
+  }
   const hasFieldDefinitions = fieldDefinitions.length > 0;
   const requiredKeys = new Set<string>();
   for (const field of fieldDefinitions) {
@@ -5538,13 +5591,16 @@ async function buildShopifyCategoryMetaobjectFields(
   }
 
   for (const key of requiredKeys) {
-    if (key === displayFieldKey && fields.get(key)) continue;
+    if (fields.get(key)) continue;
     if (recipe.shouldSkipField(type, key, value)) continue;
     const fieldDefinition = fieldDefinitions.find(
       (field) => cleanField(field.key) === key,
     );
     const fieldType = cleanField(fieldDefinition?.type?.name);
-    const inferredValue = recipe.inferFieldValue(type, key, value);
+    const inferredValue =
+      recipe.name === "color-pattern" && key === "base_color"
+        ? inferShopifyBaseColorWithHex(value, normalizedColorHex)
+        : recipe.inferFieldValue(type, key, value);
     const fieldValue = await buildShopifyCategoryMetaobjectFieldValue(
       shopDomain,
       accessToken,
@@ -6315,6 +6371,68 @@ function inferShopifyCategoryValueForField(
   return inferShopifyCategoryBaseValueByType(type, value);
 }
 
+function inferShopifyBaseColorWithHex(value: string, colorHex: string): string {
+  const inferred = inferShopifyBaseColor(value);
+  const knownBaseColors = new Set([
+    "Beige",
+    "Black",
+    "Blue",
+    "Bronze",
+    "Brown",
+    "Gold",
+    "Gray",
+    "Green",
+    "Orange",
+    "Pink",
+    "Purple",
+    "Red",
+    "Silver",
+    "White",
+    "Yellow",
+  ]);
+  if (knownBaseColors.has(inferred)) return inferred;
+  return inferShopifyBaseColorFromHex(colorHex) || inferred;
+}
+
+function inferShopifyBaseColorFromHex(value: string): string {
+  const hex = normalizeShopifyColorHex(value);
+  if (!hex) return "";
+  const rgb = [
+    Number.parseInt(hex.slice(1, 3), 16),
+    Number.parseInt(hex.slice(3, 5), 16),
+    Number.parseInt(hex.slice(5, 7), 16),
+  ];
+  const palette: Array<[string, [number, number, number]]> = [
+    ["Black", [0, 0, 0]],
+    ["White", [255, 255, 255]],
+    ["Gray", [128, 128, 128]],
+    ["Silver", [192, 192, 192]],
+    ["Beige", [245, 245, 220]],
+    ["Brown", [139, 69, 19]],
+    ["Red", [255, 0, 0]],
+    ["Pink", [255, 192, 203]],
+    ["Orange", [255, 165, 0]],
+    ["Yellow", [255, 255, 0]],
+    ["Gold", [212, 175, 55]],
+    ["Green", [0, 128, 0]],
+    ["Blue", [0, 0, 255]],
+    ["Purple", [128, 0, 128]],
+    ["Bronze", [205, 127, 50]],
+  ];
+  return palette.reduce(
+    (best, candidate) => {
+      const distance = candidate[1].reduce(
+        (sum, channel, index) => sum + (channel - rgb[index]) ** 2,
+        0,
+      );
+      return distance < best.distance
+        ? { name: candidate[0], distance }
+        : best;
+    },
+    { name: "", distance: Number.POSITIVE_INFINITY },
+  ).name;
+}
+
 function inferShopifyBaseColor(value: string): string {
   const text = normalizeMetafieldMatchText(value);
   if (/navy|royalblue|skyblue|dustyblue|steelblue|slateblue|blue|teal|海军蓝|蓝/.test(text)) {
@@ -6338,16 +6456,34 @@ function inferShopifyBaseColor(value: string): string {
   return value;
 }
 
-function inferShopifyColorHex(value: string): string {
+function normalizeShopifyColorHex(value?: string | null): string {
   const cleaned = cleanField(value);
   const hexMatch = cleaned.match(/#?([0-9a-f]{6}|[0-9a-f]{3})\b/i);
-  if (hexMatch) {
-    const hex = hexMatch[1];
-    if (hex.length === 3) {
-      return `#${hex[0]}${hex[0]}${hex[1]}${hex[1]}${hex[2]}${hex[2]}`.toUpperCase();
-    }
-    return `#${hex}`.toUpperCase();
+  if (!hexMatch) return "";
+  const hex = hexMatch[1];
+  if (hex.length === 3) {
+    return `#${hex[0]}${hex[0]}${hex[1]}${hex[1]}${hex[2]}${hex[2]}`.toUpperCase();
   }
+  return `#${hex}`.toUpperCase();
+}
+
+function stripShopifyColorHexFromLabel(value: string): string {
+  const cleaned = cleanField(value);
+  const withoutHex = cleaned
+    .replace(/\s*[（(\[]?\s*#(?:[0-9a-f]{6}|[0-9a-f]{3})\s*[）)\]]?/gi, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return (
+    withoutHex ||
+    inferShopifyBaseColorFromHex(normalizeShopifyColorHex(cleaned)) ||
+    cleaned
+  );
+}
+
+function inferShopifyColorHex(value: string): string {
+  const cleaned = cleanField(value);
+  const explicitHex = normalizeShopifyColorHex(cleaned);
+  if (explicitHex) return explicitHex;
 
   const text = normalizeMetafieldMatchText(cleaned);
   const palette: Array<[RegExp, string]> = [
@@ -6519,6 +6655,29 @@ function shopifyMetaobjectMatchesValue(
     node.fields?.some(
       (field) => normalizeMetafieldMatchText(field.value) === normalizedValue,
     ),
+  );
+}
+
+function shopifyMetaobjectMatchesColorHex(
+  node: ShopifyMetaobjectNode,
+  colorHex: string,
+): boolean {
+  const normalizedColorHex = normalizeShopifyColorHex(colorHex);
+  if (!normalizedColorHex) return false;
+  return Boolean(
+    node.fields?.some((field) => {
+      const key = normalizeMetafieldMatchText(field.key);
+      if (
+        key !== "color" &&
+        key !== "colour" &&
+        !key.includes("colorcode") &&
+        !key.includes("colourcode") &&
+        !key.includes("hex")
+      ) {
+        return false;
+      }
+      return normalizeShopifyColorHex(field.value) === normalizedColorHex;
+    }),
   );
 }
 

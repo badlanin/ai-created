@@ -195,6 +195,7 @@ type ProductForm = {
   harmonizedSystemCode: string;
   status: ProductStatus;
   categoryColor: string;
+  categoryColorHex: string;
   categorySize: string;
   categoryFabric: string;
   categoryAgeGroup: string;
@@ -597,6 +598,7 @@ const EMPTY_FORM: ProductForm = {
   harmonizedSystemCode: FIXED_FULFILLMENT_DEFAULTS.harmonizedSystemCode,
   status: "DRAFT",
   categoryColor: "",
+  categoryColorHex: "",
   categorySize: "",
   categoryFabric: "",
   categoryAgeGroup: "",
@@ -1029,7 +1031,11 @@ function parseAiOutputToForm(raw: string): Partial<ProductForm> {
   const parsed = json
     ? mapObjectToProductForm(json)
     : mapKeyValueTextToProductForm(cleaned);
-  return removeAiFulfillmentFields(parsed);
+  const withCategoryColor = { ...parsed };
+  if (!withCategoryColor.categoryColor && withCategoryColor.color) {
+    withCategoryColor.categoryColor = withCategoryColor.color;
+  }
+  return removeAiFulfillmentFields(withCategoryColor);
 }
 
 function removeAiFulfillmentFields(
@@ -1192,6 +1198,17 @@ function mapObjectToProductForm(source: Record<string, unknown>): Partial<Produc
       "categoryColor",
       "category_color",
     ),
+    categoryColorHex: readCategoryMetafield(
+      "类别元字段颜色HEX",
+      "类别元字段颜色 Hex",
+      "类别颜色HEX",
+      "主色调HEX",
+      "主色调 Hex",
+      "颜色HEX",
+      "Color HEX",
+      "colorHex",
+      "categoryColorHex",
+    ),
     categorySize: readCategoryMetafield(
       "类别元字段尺寸",
       "尺寸",
@@ -1334,6 +1351,15 @@ function mapKeyValueTextToProductForm(value: string): Partial<ProductForm> {
     ],
     status: ["状态", "Status"],
     categoryColor: ["类别元字段颜色", "类别颜色", "颜色", "Color"],
+    categoryColorHex: [
+      "类别元字段颜色HEX",
+      "类别元字段颜色 Hex",
+      "类别颜色HEX",
+      "主色调HEX",
+      "主色调 Hex",
+      "颜色HEX",
+      "Color HEX",
+    ],
     categorySize: ["类别元字段尺寸", "尺寸", "Size"],
     categoryFabric: ["类别元字段织物", "织物", "面料材质", "材质", "Fabric", "Material"],
     categoryAgeGroup: ["类别元字段年龄段", "年龄段", "Age group"],
@@ -6193,6 +6219,15 @@ function ProductFormPanel({
         );
         return { ...prev, price: nextPrice };
       });
+      return;
+    }
+    if (key === "categoryColor") {
+      setForm((prev) => ({
+        ...prev,
+        categoryColor: String(value || ""),
+        // A manually selected/edited label must not reuse the previous AI color.
+        categoryColorHex: "",
+      }));
       return;
     }
     setForm((prev) => ({ ...prev, [key]: value }));
