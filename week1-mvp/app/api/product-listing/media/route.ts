@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import sharp from "sharp";
 import { requireUser } from "@/lib/auth";
 import { saveUploadFile } from "@/lib/uploads";
+import { optimizeImageToWebp } from "@/lib/image-webp";
 
 export const runtime = "nodejs";
 
@@ -9,7 +9,6 @@ export async function POST(req: NextRequest) {
   try {
     const user = await requireUser();
     const formData = await req.formData();
-    const convertToWebp = formData.get("convertToWebp") === "1";
     const files = formData
       .getAll("files")
       .filter((item): item is File => item instanceof File);
@@ -38,27 +37,14 @@ export async function POST(req: NextRequest) {
           { status: 400 },
         );
       }
-      let fileToSave = file;
-      if (convertToWebp) {
-        try {
-          const input = Buffer.from(await file.arrayBuffer());
-          const metadata = await sharp(input, { animated: true }).metadata();
-          const isAnimatedGif =
-            file.type === "image/gif" && (metadata.pages || 1) > 1;
-          if (!isAnimatedGif) {
-            const webp = await sharp(input)
-              .rotate()
-              .webp({ quality: 90, alphaQuality: 100 })
-              .toBuffer();
-            const baseName = file.name.replace(/\.[^.]+$/, "") || "image";
-            fileToSave = new File([new Uint8Array(webp)], `${baseName}.webp`, {
-              type: "image/webp",
-            });
-          }
-        } catch (error) {
-          console.warn("[product-listing/media] WebP conversion failed", error);
-        }
-      }
+      const input = Buffer.from(await file.arrayBuffer());
+      const optimized = await optimizeImageToWebp(input);
+      const baseName = file.name.replace(/\.[^.]+$/, "") || "image";
+      const fileToSave = new File(
+        [new Uint8Array(optimized.buffer)],
+        `${baseName}.${optimized.ext}`,
+        { type: optimized.mimeType },
+      );
 
       const saved = await saveUploadFile(fileToSave, "product-media", user.id);
       items.push({

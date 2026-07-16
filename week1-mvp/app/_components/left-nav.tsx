@@ -7,6 +7,7 @@ import {
   Home,
   Palette,
   Camera,
+  FileText,
   History as HistoryIcon,
   Wallet,
   Library,
@@ -188,6 +189,12 @@ export function LeftNav({
           manualRefresh
         />
         <CollapsedIcon
+          href="/blog"
+          label="博客文章"
+          Icon={FileText}
+          active={isActive("/blog")}
+        />
+        <CollapsedIcon
           href="/admin/product-batch-optimization"
           label="产品批量优化"
           Icon={Sparkles}
@@ -329,6 +336,12 @@ export function LeftNav({
             label="产品上架"
             active={isActive("/product-listing")}
             manualRefresh
+          />
+          <NavItem
+            href="/blog"
+            Icon={FileText}
+            label="博客文章"
+            active={isActive("/blog")}
           />
           <NavItem
             href="/admin/product-batch-optimization"

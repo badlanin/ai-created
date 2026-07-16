@@ -23,6 +23,7 @@ import {
   getVariantCameraHint,
 } from "@/lib/scene-tools-prompt";
 import { buildImageManifest } from "@/lib/image-input-manifest";
+import { optimizeImageToWebp } from "@/lib/image-webp";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -1036,12 +1037,13 @@ ${FRAMING_TIGHT_SINGLE}`;
     },
   );
 
-  const ext = gen.mimeType.includes("png") ? "png" : "jpg";
+  const optimized = await optimizeImageToWebp(gen.data);
+  const ext = optimized.ext;
   const filename = `batch_${ctx.userId}_${Date.now()}_${Math.random()
     .toString(36)
     .slice(2, 8)}.${ext}`;
   const filePath = path.join(outputsDir, filename);
-  await fs.writeFile(filePath, gen.data);
+  await fs.writeFile(filePath, optimized.buffer);
 
   // OpenAI 走固定单价（size×quality），不走 token —— 算好覆盖记账金额
   const costOverrideUsd =

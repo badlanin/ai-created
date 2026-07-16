@@ -84,6 +84,7 @@ type TargetField =
   | "tags"
   | "templateStyle"
   | "categorySize"
+  | "categoryMetafields"
   | "imageAltTexts"
   | "faq";
 
@@ -97,9 +98,25 @@ const ALL_TARGET_FIELDS: TargetField[] = [
   "tags",
   "templateStyle",
   "categorySize",
+  "categoryMetafields",
   "imageAltTexts",
   "faq",
 ];
+
+type CategoryMetafields = Partial<
+  Record<
+    | "size"
+    | "fabric"
+    | "ageGroup"
+    | "occasion"
+    | "dressStyle"
+    | "neckline"
+    | "dressLengthType"
+    | "sleeveLengthType"
+    | "targetGender",
+    string
+  >
+>;
 
 type Snapshot = {
   title: string;
@@ -108,6 +125,7 @@ type Snapshot = {
   seoTitle: string;
   metaDescription: string;
   categorySize: string;
+  categoryMetafields?: CategoryMetafields;
   templateStyle: string;
   tags: string[];
   faq: FaqItem[];
@@ -141,6 +159,7 @@ type ApplyResult = {
   title: string;
   ok: boolean;
   categorySizeUpdate?: unknown;
+  categoryMetafieldsUpdate?: unknown;
   error?: string;
 };
 
@@ -2113,6 +2132,7 @@ function SnapshotCompareGrid({
 }) {
   const fields = new Set(targetFields?.length ? targetFields : ALL_TARGET_FIELDS);
   const show = (field: TargetField) => fields.has(field);
+  const categoryMetafieldKeys = getVisibleCategoryMetafieldKeys(current, proposed, fields);
 
   return (
     <section className="grid grid-cols-1 items-stretch gap-3 lg:grid-cols-2">
@@ -2152,10 +2172,18 @@ function SnapshotCompareGrid({
           <SnapshotField label="模板样式" value={proposed.templateStyle} tone="proposed" />
         </>
       ) : null}
-      {show("categorySize") ? (
+      {categoryMetafieldKeys.length ? (
         <>
-          <SnapshotField label="类别元字段尺寸" value={current.categorySize} tone="current" />
-          <SnapshotField label="类别元字段尺寸" value={proposed.categorySize} tone="proposed" />
+          <SnapshotField
+            label="类别元字段"
+            value={formatCategoryMetafields(current, categoryMetafieldKeys)}
+            tone="current"
+          />
+          <SnapshotField
+            label="类别元字段"
+            value={formatCategoryMetafields(proposed, categoryMetafieldKeys)}
+            tone="proposed"
+          />
         </>
       ) : null}
       {show("imageAltTexts") ? (
@@ -2184,6 +2212,56 @@ function SnapshotCompareGrid({
       ) : null}
     </section>
   );
+}
+
+type CategoryMetafieldKey = keyof CategoryMetafields;
+
+const CATEGORY_METAFIELD_LABELS: Array<{ key: CategoryMetafieldKey; label: string }> = [
+  { key: "size", label: "尺寸" },
+  { key: "fabric", label: "织物" },
+  { key: "ageGroup", label: "年龄段" },
+  { key: "occasion", label: "穿着场合" },
+  { key: "dressStyle", label: "裙子风格" },
+  { key: "neckline", label: "领口" },
+  { key: "dressLengthType", label: "裙子/连衣裙长度类型" },
+  { key: "sleeveLengthType", label: "袖长类型" },
+  { key: "targetGender", label: "目标性别" },
+];
+
+function getVisibleCategoryMetafieldKeys(
+  current: Snapshot,
+  proposed: Snapshot,
+  fields: Set<TargetField>,
+) {
+  const keys: CategoryMetafieldKey[] = [];
+  if (fields.has("categorySize")) keys.push("size");
+  if (fields.has("categoryMetafields")) {
+    for (const { key } of CATEGORY_METAFIELD_LABELS) {
+      const currentValue = getCategoryMetafieldValue(current, key);
+      const proposedValue = getCategoryMetafieldValue(proposed, key);
+      if (currentValue !== proposedValue && !keys.includes(key)) keys.push(key);
+    }
+  }
+  return keys;
+}
+
+function formatCategoryMetafields(
+  snapshot: Snapshot,
+  keys: CategoryMetafieldKey[],
+) {
+  const rows = keys.map((key) => {
+    const label =
+      CATEGORY_METAFIELD_LABELS.find((item) => item.key === key)?.label || key;
+    return `${label}：${getCategoryMetafieldValue(snapshot, key) || "空"}`;
+  });
+  return rows.join("\n");
+}
+
+function getCategoryMetafieldValue(snapshot: Snapshot, key: CategoryMetafieldKey) {
+  if (key === "size") {
+    return String(snapshot.categorySize || snapshot.categoryMetafields?.size || "").trim();
+  }
+  return String(snapshot.categoryMetafields?.[key] || "").trim();
 }
 
 function SnapshotCompareHeader({

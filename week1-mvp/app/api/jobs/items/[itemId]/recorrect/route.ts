@@ -23,6 +23,7 @@ import { getDb, DATA_DIR_PATH } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { correctImageColor } from "@/lib/color-correct";
 import { updateJobItem } from "@/lib/jobs-db";
+import { optimizeImageToWebp } from "@/lib/image-webp";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -147,13 +148,14 @@ export async function POST(req: NextRequest, { params }: Params) {
 
     // ─── 保存：覆盖当前 result_image_path（不动 raw）───
     const oldResult = item.result_image_path;
-    const ext = rawAbsPath.endsWith(".png") ? "png" : "jpg";
+    const optimized = await optimizeImageToWebp(correction.buffer);
+    const ext = optimized.ext;
     const stamp = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const newFilename = `recolor_${user.id}_${stamp}_recorr.${ext}`;
     const outputsDir = path.join(DATA_DIR_PATH, "outputs");
     await fs.mkdir(outputsDir, { recursive: true });
     const newAbsPath = path.join(outputsDir, newFilename);
-    await fs.writeFile(newAbsPath, correction.buffer);
+    await fs.writeFile(newAbsPath, optimized.buffer);
 
     // 删旧 result（不动 raw）—— 失败不要紧
     if (oldResult) {

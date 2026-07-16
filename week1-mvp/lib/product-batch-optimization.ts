@@ -9,7 +9,10 @@ import { assertWithinBudget } from "./pricing";
 import { acquireToken } from "./rate-limiter";
 import { retryWithBackoff } from "./retry";
 import { recordUsage } from "./usage";
-import { syncShopifyProductCategorySizeMetafield } from "./shopify";
+import {
+  syncShopifyProductCategoryMetafields,
+  type ShopifyProductCategoryMetafieldsSyncInput,
+} from "./shopify";
 
 const SHOPIFY_API_VERSION =
   process.env.SHOPIFY_API_VERSION?.trim() || "2026-04";
@@ -153,6 +156,20 @@ const PRODUCT_BATCH_OUTPUT_SCHEMA = {
       },
     },
     categorySize: { type: "string" },
+    categoryMetafields: {
+      type: "object",
+      properties: {
+        size: { type: "string" },
+        fabric: { type: "string" },
+        ageGroup: { type: "string" },
+        occasion: { type: "string" },
+        dressStyle: { type: "string" },
+        neckline: { type: "string" },
+        dressLengthType: { type: "string" },
+        sleeveLengthType: { type: "string" },
+        targetGender: { type: "string" },
+      },
+    },
     templateStyle: { type: "string" },
     faq: {
       type: "array",
@@ -179,6 +196,7 @@ const PRODUCT_BATCH_OUTPUT_SCHEMA = {
     "tags",
     "imageAltTexts",
     "categorySize",
+    "categoryMetafields",
     "templateStyle",
     "faq",
     "rationale",
@@ -206,6 +224,83 @@ export type ProductBatchFaqItem = {
   answer: string;
 };
 
+export type ProductBatchCategoryMetafieldKey =
+  | "size"
+  | "fabric"
+  | "ageGroup"
+  | "occasion"
+  | "dressStyle"
+  | "neckline"
+  | "dressLengthType"
+  | "sleeveLengthType"
+  | "targetGender";
+
+export type ProductBatchCategoryMetafields = Partial<
+  Record<ProductBatchCategoryMetafieldKey, string>
+>;
+
+const PRODUCT_BATCH_CATEGORY_METAFIELD_DEFS: Array<{
+  key: ProductBatchCategoryMetafieldKey;
+  label: string;
+  shopifyField: keyof ShopifyProductCategoryMetafieldsSyncInput;
+  hints: string[];
+}> = [
+  {
+    key: "size",
+    label: "尺寸",
+    shopifyField: "categorySize",
+    hints: ["size", "clothing-size", "尺寸"],
+  },
+  {
+    key: "fabric",
+    label: "织物",
+    shopifyField: "categoryFabric",
+    hints: ["categoryfabric", "category fabric", "fabric", "织物"],
+  },
+  {
+    key: "ageGroup",
+    label: "年龄段",
+    shopifyField: "categoryAgeGroup",
+    hints: ["age-group", "age group", "年龄段"],
+  },
+  {
+    key: "occasion",
+    label: "穿着场合",
+    shopifyField: "categoryOccasion",
+    hints: ["occasion", "dress-occasion", "穿着场合", "场合"],
+  },
+  {
+    key: "dressStyle",
+    label: "裙子风格",
+    shopifyField: "categoryDressStyle",
+    hints: ["dress-style", "dress style", "裙子风格", "裙型"],
+  },
+  {
+    key: "neckline",
+    label: "领口",
+    shopifyField: "categoryNeckline",
+    hints: ["neckline", "领口"],
+  },
+  {
+    key: "dressLengthType",
+    label: "裙子/连衣裙长度类型",
+    shopifyField: "categoryDressLengthType",
+    hints: ["skirt-dress-length-type", "dress-length-type", "dress length", "裙长", "长度类型"],
+  },
+  {
+    key: "sleeveLengthType",
+    label: "袖长类型",
+    shopifyField: "categorySleeveLengthType",
+    hints: ["sleeve-length-type", "sleeve length", "袖长", "袖长类型"],
+  },
+  {
+    key: "targetGender",
+    label: "目标性别",
+    shopifyField: "categoryTargetGender",
+    hints: ["target-gender", "target gender", "目标性别"],
+  },
+];
+
 export type ProductBatchTargetField =
   | "title"
   | "descriptionHtml"
@@ -214,6 +309,7 @@ export type ProductBatchTargetField =
   | "tags"
   | "templateStyle"
   | "categorySize"
+  | "categoryMetafields"
   | "imageAltTexts"
   | "faq";
 
@@ -227,6 +323,7 @@ const PRODUCT_BATCH_TARGET_FIELDS: ProductBatchTargetField[] = [
   "tags",
   "templateStyle",
   "categorySize",
+  "categoryMetafields",
   "imageAltTexts",
   "faq",
 ];
@@ -245,6 +342,7 @@ export type ProductBatchSnapshot = {
   seoTitle: string;
   metaDescription: string;
   categorySize: string;
+  categoryMetafields: ProductBatchCategoryMetafields;
   templateStyle: string;
   tags: string[];
   faq: ProductBatchFaqItem[];
@@ -258,6 +356,7 @@ export type ProductBatchProposed = {
   seoTitle: string;
   metaDescription: string;
   categorySize: string;
+  categoryMetafields: ProductBatchCategoryMetafields;
   templateStyle: string;
   tags: string[];
   imageAltTexts: ProductBatchImageUpdate[];
@@ -328,6 +427,7 @@ export type ProductBatchApplyResult = {
   faqUpdate?: unknown;
   imageAltUpdate?: unknown;
   categorySizeUpdate?: unknown;
+  categoryMetafieldsUpdate?: unknown;
   draftUpdate?: unknown;
   appliedTagUpdate?: unknown;
   error?: string;
@@ -1283,11 +1383,19 @@ export async function applyProductBatchRun(opts: {
           proposal.proposed.imageAltTexts,
         );
       }
-      if (targetFields.includes("categorySize") && proposal.proposed.categorySize) {
-        result.categorySizeUpdate = await updateCategorySizeMetafield(
+      const categoryMetafields = buildChangedCategoryMetafieldsSyncInput(
+        proposal,
+        targetFields,
+      );
+      if (Object.keys(categoryMetafields).length) {
+        result.categoryMetafieldsUpdate = await updateCategoryMetafields(
           connection,
           proposal,
+          categoryMetafields,
         );
+        if (Object.prototype.hasOwnProperty.call(categoryMetafields, "categorySize")) {
+          result.categorySizeUpdate = result.categoryMetafieldsUpdate;
+        }
       }
       if (opts.setDraft) {
         result.draftUpdate = await updateProductStatus(
@@ -1491,9 +1599,7 @@ async function generateProductProposal(opts: {
       tags: opts.product.tags || [],
       seo: opts.product.seo || {},
       faq: getProductFaq(opts.product),
-      categoryMetafields: {
-        categorySize: getProductCategorySize(opts.product),
-      },
+      categoryMetafields: getProductCategoryMetafields(opts.product),
       templateStyle: opts.product.templateSuffix || "",
       descriptionHtml: truncate(opts.product.descriptionHtml || "", 7000),
       images: images.map((image) => ({
@@ -1510,6 +1616,9 @@ async function generateProductProposal(opts: {
     forbiddenFields,
     targetFieldInstruction:
       "Only optimize and change fields listed in targetFields. Fields listed in forbiddenFields must be copied exactly from currentSnapshot/currentProduct and must not be rewritten, translated, reordered, expanded, or polished.",
+    categoryMetafieldInstruction: buildCategoryMetafieldPromptInstruction(
+      opts.prompt,
+    ),
     complianceExamples: [
       {
         userInstruction: "优化标题和 FAQ",
@@ -1716,6 +1825,7 @@ async function repairProposalCompleteness(opts: {
       descriptionText: getDescriptionParagraphTexts(opts.product.descriptionHtml || ""),
       faq: getProductFaq(opts.product),
       categorySize: getProductCategorySize(opts.product),
+      categoryMetafields: getProductCategoryMetafields(opts.product),
       templateStyle: opts.product.templateSuffix || "",
       images: opts.images.map((image) => ({
         mediaId: image.mediaId,
@@ -1829,6 +1939,7 @@ function getCurrentSnapshot(
     seoTitle: product.seo?.title || "",
     metaDescription: product.seo?.description || "",
     categorySize: getProductCategorySize(product),
+    categoryMetafields: getProductCategoryMetafields(product),
     templateStyle: normalizeProductTemplateStyle(product.templateSuffix || ""),
     tags: product.tags || [],
     faq: getProductFaq(product),
@@ -1896,6 +2007,7 @@ function normalizeGeneratedProposal(
   );
 
   const currentCategorySize = getProductCategorySize(product);
+  const currentCategoryMetafields = getProductCategoryMetafields(product);
   const promptCategorySizeOptions = extractPromptCategorySizeOptions(prompt);
   const currentCategorySizeOptions = parseSizeOptions(currentCategorySize);
   const categorySize = normalizeCategorySize(
@@ -1905,6 +2017,12 @@ function normalizeGeneratedProposal(
       currentOptions: currentCategorySizeOptions,
       fallback: currentCategorySize,
     },
+  );
+  const categoryMetafields = normalizeCategoryMetafields(
+    raw.categoryMetafields,
+    currentCategoryMetafields,
+    prompt,
+    categorySize,
   );
 
   return normalizeProposalCompleteness({
@@ -1920,6 +2038,7 @@ function normalizeGeneratedProposal(
       limits.metaDescriptionMaxChars,
     ),
     categorySize,
+    categoryMetafields,
     templateStyle: normalizeProductTemplateStyle(
       String(raw.templateStyle ?? product.templateSuffix ?? ""),
     ),
@@ -2410,6 +2529,90 @@ function normalizeCategorySize(
   return kept.length ? kept.join(", ") : parseSizeOptions(opts.fallback || "").join(", ");
 }
 
+function normalizeCategoryMetafields(
+  raw: unknown,
+  current: ProductBatchCategoryMetafields,
+  prompt: string,
+  categorySize: string,
+): ProductBatchCategoryMetafields {
+  const source =
+    raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : {};
+  const keys = detectTargetCategoryMetafieldKeys(prompt);
+  const result: ProductBatchCategoryMetafields = { ...current };
+
+  if (categorySize) result.size = categorySize;
+  for (const key of keys) {
+    const def = PRODUCT_BATCH_CATEGORY_METAFIELD_DEFS.find((item) => item.key === key);
+    if (!def) continue;
+    const rawValue = source[key] ?? source[def.shopifyField] ?? current[key] ?? "";
+    if (key === "size") {
+      result.size = normalizeCategorySize(String(rawValue || categorySize || ""), {
+        promptOptions: extractPromptCategorySizeOptions(prompt),
+        currentOptions: parseSizeOptions(current.size || categorySize || ""),
+        fallback: current.size || categorySize || "",
+      });
+    } else {
+      result[key] = cleanCategoryMetafieldValue(rawValue);
+    }
+  }
+
+  return pruneCategoryMetafields(result);
+}
+
+function cleanCategoryMetafieldValue(value: unknown) {
+  if (Array.isArray(value)) {
+    return value.map((item) => cleanInlineText(String(item || ""))).filter(Boolean).join(", ");
+  }
+  return cleanInlineText(String(value || ""));
+}
+
+function pruneCategoryMetafields(
+  fields: ProductBatchCategoryMetafields,
+): ProductBatchCategoryMetafields {
+  const result: ProductBatchCategoryMetafields = {};
+  for (const def of PRODUCT_BATCH_CATEGORY_METAFIELD_DEFS) {
+    const value = cleanCategoryMetafieldValue(fields[def.key]);
+    if (value) result[def.key] = value;
+  }
+  return result;
+}
+
+function detectTargetCategoryMetafieldKeys(prompt: string): ProductBatchCategoryMetafieldKey[] {
+  const text = cleanInlineText(prompt || "").toLowerCase();
+  if (!text) return PRODUCT_BATCH_CATEGORY_METAFIELD_DEFS.map((def) => def.key);
+
+  const selected = new Set<ProductBatchCategoryMetafieldKey>();
+  if (/全部|所有字段|全字段|完整优化|整体优化|全部优化|全量|all\s*fields/i.test(text)) {
+    for (const def of PRODUCT_BATCH_CATEGORY_METAFIELD_DEFS) selected.add(def.key);
+  }
+
+  for (const def of PRODUCT_BATCH_CATEGORY_METAFIELD_DEFS) {
+    if (def.hints.some((hint) => text.includes(hint.toLowerCase()))) {
+      selected.add(def.key);
+    }
+  }
+  return PRODUCT_BATCH_CATEGORY_METAFIELD_DEFS
+    .map((def) => def.key)
+    .filter((key) => selected.has(key));
+}
+
+function buildCategoryMetafieldPromptInstruction(prompt: string) {
+  const keys = detectTargetCategoryMetafieldKeys(prompt);
+  return {
+    fieldName: "categoryMetafields",
+    allowedKeys: keys,
+    labels: keys.map((key) => {
+      const def = PRODUCT_BATCH_CATEGORY_METAFIELD_DEFS.find((item) => item.key === key);
+      return { key, label: def?.label || key };
+    }),
+    excludedKeys: ["color"],
+    rule:
+      "Only fill categoryMetafields keys listed in allowedKeys. Do not generate color here. For keys not listed in allowedKeys, copy the current value or leave it empty.",
+  };
+}
+
 function summarizeChanges(
   current: ProductBatchSnapshot,
   proposed: ProductBatchProposed,
@@ -2428,6 +2631,10 @@ function summarizeChanges(
       current.metaDescription !== proposed.metaDescription,
     categorySizeChanged:
       targets.has("categorySize") && current.categorySize !== proposed.categorySize,
+    categoryMetafieldsChanged:
+      targets.has("categoryMetafields") &&
+      JSON.stringify(current.categoryMetafields || {}) !==
+        JSON.stringify(proposed.categoryMetafields || {}),
     templateStyleChanged:
       targets.has("templateStyle") && current.templateStyle !== proposed.templateStyle,
     tagsChanged:
@@ -2542,22 +2749,53 @@ async function updateImageAltTexts(
   return { ok: true, updatedCount: data.fileUpdate?.files?.length || 0 };
 }
 
-async function updateCategorySizeMetafield(
+function buildChangedCategoryMetafieldsSyncInput(
+  proposal: ProductBatchProposal,
+  targetFields: ProductBatchTargetField[],
+): ShopifyProductCategoryMetafieldsSyncInput {
+  const targets = new Set(targetFields);
+  const input: ShopifyProductCategoryMetafieldsSyncInput = {};
+  if (!targets.has("categorySize") && !targets.has("categoryMetafields")) {
+    return input;
+  }
+
+  const currentFields = proposal.current.categoryMetafields || {};
+  const proposedFields = proposal.proposed.categoryMetafields || {};
+  for (const def of PRODUCT_BATCH_CATEGORY_METAFIELD_DEFS) {
+    if (def.key === "size" && !targets.has("categorySize") && !targets.has("categoryMetafields")) {
+      continue;
+    }
+    if (def.key !== "size" && !targets.has("categoryMetafields")) continue;
+    const currentValue = cleanCategoryMetafieldValue(
+      def.key === "size" ? proposal.current.categorySize || currentFields.size : currentFields[def.key],
+    );
+    const proposedValue = cleanCategoryMetafieldValue(
+      def.key === "size" ? proposal.proposed.categorySize || proposedFields.size : proposedFields[def.key],
+    );
+    if (!proposedValue || proposedValue === currentValue) continue;
+    (input as Record<string, string>)[def.shopifyField] = proposedValue;
+  }
+  return input;
+}
+
+async function updateCategoryMetafields(
   connection: ShopifyToken,
   proposal: ProductBatchProposal,
+  categoryMetafields: ShopifyProductCategoryMetafieldsSyncInput,
 ) {
-  const categorySize = cleanInlineText(proposal.proposed.categorySize || "");
-  if (!categorySize) return { skipped: true, reason: "no category size" };
+  if (!Object.keys(categoryMetafields).length) {
+    return { skipped: true, reason: "no category metafields" };
+  }
   const categoryId = proposal.product.categoryId || "";
   if (!categoryId) {
     return { skipped: true, reason: "product has no Shopify category" };
   }
-  return syncShopifyProductCategorySizeMetafield({
+  return syncShopifyProductCategoryMetafields({
     shopDomain: connection.shopDomain,
     accessToken: connection.accessToken,
     productId: proposal.product.id,
     categoryId,
-    categorySize,
+    categoryMetafields,
   });
 }
 
@@ -2881,6 +3119,43 @@ function getProductCategorySize(product: ShopifyProductNode): string {
     return extractCategoryMetafieldText(item);
   }
   return "";
+}
+
+function getProductCategoryMetafields(
+  product: ShopifyProductNode,
+): ProductBatchCategoryMetafields {
+  const result: ProductBatchCategoryMetafields = {};
+  const nodes = product.metafields?.nodes || [];
+  for (const item of nodes) {
+    const key = getCategoryMetafieldKey(item);
+    if (!key) continue;
+    const value = extractCategoryMetafieldText(item);
+    if (value) result[key] = value;
+  }
+  const size = getProductCategorySize(product);
+  if (size) result.size = size;
+  return result;
+}
+
+function getCategoryMetafieldKey(
+  item: ShopifyMetafieldNode,
+): ProductBatchCategoryMetafieldKey | null {
+  const namespace = String(item.namespace || "").toLowerCase();
+  if (namespace !== "shopify") return null;
+  const key = normalizeLabel(item.key || "");
+  const name = normalizeLabel(item.definition?.name || "");
+  const combined = `${key} ${name}`;
+  for (const def of PRODUCT_BATCH_CATEGORY_METAFIELD_DEFS) {
+    if (
+      def.hints.some((hint) => {
+        const normalizedHint = normalizeLabel(hint);
+        return normalizedHint && combined.includes(normalizedHint);
+      })
+    ) {
+      return def.key;
+    }
+  }
+  return null;
 }
 
 function isCategorySizeMetafield(item: ShopifyMetafieldNode) {
@@ -3623,6 +3898,8 @@ function detectTargetFieldsFromPrompt(prompt: string): ProductBatchTargetField[]
   if (has(/标签|tags?\b/i)) add("tags");
   if (has(/模板样式|模板|template/i)) add("templateStyle");
   if (has(/类别元字段尺寸|类别尺寸|category\s*size|尺寸/i)) add("categorySize");
+  const categoryMetafieldKeys = detectTargetCategoryMetafieldKeys(prompt);
+  if (categoryMetafieldKeys.some((key) => key !== "size")) add("categoryMetafields");
   if (
     has(
       /图片\s*alt|图片alt|图片\s*(?:名称|名字|文件名)|替代文本|替换文本|image\s*(?:alt|name)|file\s*name|filename|alt\b/i,
@@ -3671,6 +3948,9 @@ function constrainProposalToTargetFields(
     categorySize: targets.has("categorySize")
       ? proposed.categorySize
       : current.categorySize,
+    categoryMetafields: targets.has("categoryMetafields")
+      ? proposed.categoryMetafields
+      : current.categoryMetafields,
     templateStyle: targets.has("templateStyle")
       ? proposed.templateStyle
       : current.templateStyle,

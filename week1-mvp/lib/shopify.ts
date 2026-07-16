@@ -4651,6 +4651,53 @@ export async function syncShopifyProductCategorySizeMetafield(opts: {
   return { ok: true, warnings };
 }
 
+export type ShopifyProductCategoryMetafieldsSyncInput = Partial<
+  Pick<
+    ShopifyProductDraftInput,
+    | "categorySize"
+    | "categoryFabric"
+    | "categoryFabricBaseValue"
+    | "categoryAgeGroup"
+    | "categoryAgeGroupBaseValue"
+    | "categoryOccasion"
+    | "categoryOccasionBaseValue"
+    | "categoryDressStyle"
+    | "categoryDressStyleBaseValue"
+    | "categoryNeckline"
+    | "categoryNecklineBaseValue"
+    | "categoryDressLengthType"
+    | "categoryDressLengthTypeBaseValue"
+    | "categorySleeveLengthType"
+    | "categorySleeveLengthTypeBaseValue"
+    | "categoryTargetGender"
+    | "categoryTargetGenderBaseValue"
+  >
+>;
+
+export async function syncShopifyProductCategoryMetafields(opts: {
+  shopDomain: string;
+  accessToken: string;
+  productId: string;
+  categoryId: string | null;
+  categoryMetafields: ShopifyProductCategoryMetafieldsSyncInput;
+}) {
+  const warnings: string[] = [];
+  await syncShopifyCategoryMetafields(
+    opts.shopDomain,
+    opts.accessToken,
+    opts.productId,
+    opts.categoryId,
+    {
+      title: "",
+      description: "",
+      ...opts.categoryMetafields,
+    },
+    [],
+    warnings,
+  );
+  return { ok: true, warnings };
+}
+
 async function ensureShopifyCategoryMetafieldDefinitions(
   shopDomain: string,
   accessToken: string,

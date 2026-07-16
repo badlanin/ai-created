@@ -21,6 +21,7 @@ import { assertWithinBudget, getUserBudgetStatus } from "@/lib/pricing";
 import { createJob } from "@/lib/jobs-db";
 import { startJobWorker, type HandlerContext } from "@/lib/job-runner";
 import { getColorSwatchPng } from "@/lib/color-swatch";
+import { optimizeImageToWebp } from "@/lib/image-webp";
 
 export const runtime = "nodejs";
 // 创建任务本身很快（只需把文件落盘 + 插 DB），所以 60s 够了
@@ -510,14 +511,14 @@ async function recolorItemHandler(
   // 两个文件都需要：raw 给手动滑块的"恢复 / 重新校色基准"用，result 给 UI 默认显示
   // 分两份独立文件是为了：用户在滑块里点"保存"会覆盖 result，但 raw 永远是模型直出，
   // 后续可以无限次重新校色不丢源
-  const rawExt = gen.mimeType.includes("png") ? "png" : "jpg";
+  const optimized = await optimizeImageToWebp(gen.data);
   const stamp = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  const rawFilename = `recolor_${ctx.userId}_${stamp}_raw.${rawExt}`;
-  const correctedFilename = `recolor_${ctx.userId}_${stamp}.${rawExt}`;
+  const rawFilename = `recolor_${ctx.userId}_${stamp}_raw.${optimized.ext}`;
+  const correctedFilename = `recolor_${ctx.userId}_${stamp}.${optimized.ext}`;
   const rawFilePath = path.join(outputsDir, rawFilename);
   const correctedFilePath = path.join(outputsDir, correctedFilename);
-  await fs.writeFile(rawFilePath, gen.data);
-  await fs.writeFile(correctedFilePath, gen.data);
+  await fs.writeFile(rawFilePath, optimized.buffer);
+  await fs.writeFile(correctedFilePath, optimized.buffer);
 
   // 计费用实际跑出图的那个 model（fallback 时是 Pro Image，不是 job 表里的 Flash）
   const actualModel = usedFallback ? FALLBACK_MODEL : PRIMARY_MODEL;

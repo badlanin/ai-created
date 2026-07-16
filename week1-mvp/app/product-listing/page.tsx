@@ -1868,7 +1868,7 @@ function extractByLabels(text: string, labels: string[]): string {
   const labelPattern = labels.map(escapeRegExp).join("|");
   const match = text.match(
     new RegExp(
-      `(?:^|\\n)\\s*(?:[-•*]\\s*)?(?:${labelPattern})\\s*[：:]\\s*([\\s\\S]*?)(?=\\n\\s*(?:[-•*]\\s*)?[\\u4e00-\\u9fa5A-Za-z0-9_. ]{2,48}\\s*[：:]|$)`,
+      `(?:^|\\n)[ \\t]*(?:[-•*][ \\t]*)?(?:${labelPattern})[ \\t]*[：:][ \\t]*([\\s\\S]*?)(?=\\n[ \\t]*(?:[-•*][ \\t]*)?[^\\n：:]{1,100}[ \\t]*[：:]|$)`,
       "i",
     ),
   );
@@ -1896,7 +1896,7 @@ function parseAiProductMetafieldValues(
     const boundaryPattern = boundaryLabels.map(escapeRegExp).join("|");
     const match = cleaned.match(
       new RegExp(
-        `(?:^|\\n)\\s*(?:[-•*]\\s*)?(?:${labelPattern})\\s*[：:]\\s*([\\s\\S]*?)(?=\\n\\s*(?:[-•*]\\s*)?(?:${boundaryPattern})\\s*[：:]|$)`,
+        `(?:^|\\n)[ \\t]*(?:[-•*][ \\t]*)?(?:${labelPattern})[ \\t]*[：:][ \\t]*([\\s\\S]*?)(?=\\n[ \\t]*(?:[-•*][ \\t]*)?(?:${boundaryPattern})[ \\t]*[：:]|$)`,
         "i",
       ),
     );
