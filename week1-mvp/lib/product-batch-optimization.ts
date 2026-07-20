@@ -2107,6 +2107,7 @@ function normalizeGeneratedProposal(
     currentCategoryMetafields,
     prompt,
     categorySize,
+    product,
   );
 
   return normalizeProposalCompleteness({
@@ -2618,6 +2619,7 @@ function normalizeCategoryMetafields(
   current: ProductBatchCategoryMetafields,
   prompt: string,
   categorySize: string,
+  product?: ShopifyProductNode,
 ): ProductBatchCategoryMetafields {
   const source =
     raw && typeof raw === "object" && !Array.isArray(raw)
@@ -2638,7 +2640,9 @@ function normalizeCategoryMetafields(
         fallback: current.size || categorySize || "",
       });
     } else {
-      result[key] = cleanCategoryMetafieldValue(rawValue);
+      result[key] =
+        cleanCategoryMetafieldValue(rawValue) ||
+        inferProductBatchCategoryMetafieldValue(key, product, prompt);
       if (def.baseKey) {
         const rawBaseValue =
           source[def.baseKey] ??
@@ -2653,11 +2657,156 @@ function normalizeCategoryMetafields(
   return pruneCategoryMetafields(result);
 }
 
-function cleanCategoryMetafieldValue(value: unknown) {
+function cleanCategoryMetafieldValue(value: unknown): string {
   if (Array.isArray(value)) {
-    return value.map((item) => cleanInlineText(String(item || ""))).filter(Boolean).join(", ");
+    return value
+      .map((item) => cleanCategoryMetafieldValue(item))
+      .filter(Boolean)
+      .join(", ");
   }
-  return cleanInlineText(String(value || ""));
+  const cleaned = cleanInlineText(String(value || ""));
+  return /^(null|undefined|none|n\/?a|not applicable)$/i.test(cleaned)
+    ? ""
+    : cleaned;
+}
+
+function inferProductBatchCategoryMetafieldValue(
+  key: ProductBatchCategoryMetafieldKey,
+  product: ShopifyProductNode | undefined,
+  prompt: string,
+): string {
+  const text = collectProductBatchCategoryInferenceText(product, prompt);
+  const first = (patterns: Array<[RegExp, string]>, fallback = ""): string => {
+    for (const [pattern, value] of patterns) {
+      if (pattern.test(text)) return value;
+    }
+    return fallback;
+  };
+
+  switch (key) {
+    case "fabric":
+      return first(
+        [
+          [/\borganza\b/, "Organza"],
+          [/\bsatin\b/, "Satin"],
+          [/\btulle\b/, "Tulle"],
+          [/\bchiffon\b/, "Chiffon"],
+          [/\black?e\b/, "Lace"],
+          [/\bvelvet\b/, "Velvet"],
+          [/\bsequins?\b|\bsequined\b/, "Sequin"],
+          [/\bcrepe\b/, "Crepe"],
+          [/\bsilk\b/, "Silk"],
+          [/\btaffeta\b/, "Taffeta"],
+          [/\bmesh\b/, "Mesh"],
+        ],
+        "Dress Fabric",
+      );
+    case "ageGroup":
+      return first(
+        [
+          [/\b(kids?|children|child|girls?|flower girl)\b/, "Kids"],
+          [/\b(teens?|junior)\b/, "Teen"],
+          [/\b(adult|women|woman|ladies|lady)\b/, "Adult"],
+        ],
+        "Adult",
+      );
+    case "occasion":
+      return first(
+        [
+          [/\bprom\b/, "Prom"],
+          [/\bwedding\b|\bbridal\b|\bbridesmaid\b/, "Wedding"],
+          [/\bformal\b|\bgown\b|\bevening\b/, "Formal"],
+          [/\bparty\b/, "Party"],
+          [/\bcocktail\b/, "Cocktail"],
+          [/\bhomecoming\b/, "Homecoming"],
+          [/\bgraduation\b/, "Graduation"],
+        ],
+        "Formal",
+      );
+    case "dressStyle":
+      return first(
+        [
+          [/\ba[ -]?line\b/, "A-Line"],
+          [/\bprincess\b/, "Princess"],
+          [/\bmermaid\b/, "Mermaid"],
+          [/\bball gown\b/, "Ball Gown"],
+          [/\bsheath\b/, "Sheath"],
+          [/\bempire\b/, "Empire"],
+          [/\bfit[ -]?and[ -]?flare\b/, "Fit and Flare"],
+          [/\bbodycon\b/, "Bodycon"],
+          [/\btrumpet\b/, "Trumpet"],
+        ],
+        "Dress",
+      );
+    case "neckline":
+      return first(
+        [
+          [/\boff[ -]?the[ -]?shoulder\b|\boff shoulder\b/, "Off-the-Shoulder"],
+          [/\bv[ -]?neck\b/, "V-Neck"],
+          [/\bsweetheart\b/, "Sweetheart"],
+          [/\bstrapless\b/, "Strapless"],
+          [/\bhalter\b/, "Halter"],
+          [/\bsquare neck\b/, "Square Neck"],
+          [/\bhigh neck\b/, "High Neck"],
+          [/\bscoop\b/, "Scoop Neck"],
+          [/\bone[ -]?shoulder\b/, "One-Shoulder"],
+          [/\bcrew neck\b/, "Crew Neck"],
+        ],
+        "Classic Neckline",
+      );
+    case "dressLengthType":
+      return first(
+        [
+          [/\bfloor[ -]?length\b|\bfloor\b/, "Floor Length"],
+          [/\bmaxi\b|\bankle[ -]?length\b/, "Maxi"],
+          [/\btea[ -]?length\b/, "Tea Length"],
+          [/\bmidi\b/, "Midi"],
+          [/\bknee[ -]?length\b/, "Knee Length"],
+          [/\bmini\b|\bshort dress\b/, "Mini"],
+        ],
+        "Dress Length",
+      );
+    case "sleeveLengthType":
+      return first(
+        [
+          [/\blong sleeve\b|\blong-sleeve\b/, "Long Sleeve"],
+          [/\bshort sleeve\b|\bshort-sleeve\b/, "Short Sleeve"],
+          [/\bsleeveless\b/, "Sleeveless"],
+          [/\bcap sleeve\b/, "Cap Sleeve"],
+          [/\bspaghetti strap\b|\bspaghetti straps\b/, "Spaghetti Strap"],
+        ],
+        "Sleeve Length",
+      );
+    case "targetGender":
+      return first(
+        [
+          [/\b(men|man|male|boys?)\b/, "Male"],
+          [/\b(women|woman|female|girls?|ladies|lady|bride|bridesmaid)\b/, "Female"],
+        ],
+        "Female",
+      );
+    default:
+      return "";
+  }
+}
+
+function collectProductBatchCategoryInferenceText(
+  product: ShopifyProductNode | undefined,
+  prompt: string,
+) {
+  return [
+    prompt,
+    product?.title,
+    product?.handle,
+    product?.vendor,
+    product?.productType,
+    product?.tags?.join(" "),
+    htmlToPlainText(product?.descriptionHtml || ""),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .normalize("NFKC")
+    .toLowerCase();
 }
 
 function pruneCategoryMetafields(
@@ -2709,7 +2858,7 @@ function buildCategoryMetafieldPromptInstruction(
     excludedKeys: ["color"],
     backendCandidates: formatCategoryMetafieldCandidatesForPrompt(keys, candidates),
     rule:
-      "Only fill categoryMetafields keys listed in allowedKeys. Do not generate color here. Keep size on the existing categorySize logic. For fabric, ageGroup, occasion, dressStyle, neckline, dressLengthType, sleeveLengthType, and targetGender: first choose an exact or closest existingMetaobjectValues item when available and output that original display value. If no existing Metaobject fits, you may output a new concise English display value only when officialTaxonomyValues contains a suitable legal base value; in that case also output the matching <key>BaseValue field, for example dressStyleBaseValue. The base value must be copied verbatim from officialTaxonomyValues. If neither an existing Metaobject nor a suitable official taxonomy value fits, keep the current value or leave that key empty. For keys not listed in allowedKeys, copy the current value or leave it empty.",
+      "Only fill categoryMetafields keys listed in allowedKeys. Do not generate color here. Keep size on the existing categorySize logic. For fabric, ageGroup, occasion, dressStyle, neckline, dressLengthType, sleeveLengthType, and targetGender: first choose an exact or closest existingMetaobjectValues item when available and output that original display value. If no existing Metaobject fits, output a concise English display value based on product facts so Shopify sync can create the missing metaobject. When officialTaxonomyValues contains a suitable legal base value, also output the matching <key>BaseValue field, for example dressStyleBaseValue, copied verbatim from officialTaxonomyValues. Never output null, undefined, none, or an empty string for requested categoryMetafields keys. For keys not listed in allowedKeys, copy the current value or infer a concise value from the product facts.",
   };
 }
 
@@ -2868,16 +3017,13 @@ function resolveCategoryMetafieldsAgainstBackendCandidates(
       continue;
     }
 
-    const currentValue = cleanCategoryMetafieldValue(current[key]);
-    const currentBaseValue = cleanCategoryMetafieldValue(current[def.baseKey]);
-    if (currentValue) nextFields[key] = currentValue;
-    else delete nextFields[key];
-    if (currentBaseValue) nextFields[def.baseKey] = currentBaseValue;
-    else delete nextFields[def.baseKey];
+    if (baseValue && nextFields[def.baseKey]) {
+      delete nextFields[def.baseKey];
+      changed = true;
+    }
     warnings.push(
-      `Skipped category metafield ${def.label}: no existing backend value or official taxonomy base matched "${value}".`,
+      `Category metafield ${def.label} will be created from generated value "${value}" because no existing backend value matched.`,
     );
-    changed = true;
   }
 
   if (!changed) return proposed;

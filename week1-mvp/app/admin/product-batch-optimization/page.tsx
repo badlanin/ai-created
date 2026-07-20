@@ -226,6 +226,7 @@ type ProductBatchPromptPreset = {
   createdAt: number;
   form: {
     query: string;
+    productTypeKeyword?: string;
     sortOrder?: ProductBatchSortOrder;
     limit: number;
     start: number;
@@ -279,6 +280,7 @@ export default function ProductBatchOptimizationPage() {
   const presetMenuRef = useRef<HTMLDivElement | null>(null);
   const [form, setForm] = useState({
     query: "status:active",
+    productTypeKeyword: "",
     sortOrder: "newest" as ProductBatchSortOrder,
     limit: 10,
     start: 0,
@@ -549,6 +551,10 @@ export default function ProductBatchOptimizationPage() {
       1,
       selectedStoreKeys.size * normalizedLimit,
     );
+    const effectiveQuery = buildProductBatchShopifyQuery(
+      form.query,
+      form.productTypeKeyword,
+    );
     setForm((prev) => ({ ...prev, limit: normalizedLimit }));
     setLimitInput(String(normalizedLimit));
     setGenerating(true);
@@ -576,6 +582,7 @@ export default function ProductBatchOptimizationPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             ...form,
+            query: effectiveQuery,
             limit: normalizedLimit,
             jobId,
             storeKeys: Array.from(selectedStoreKeys),
@@ -644,6 +651,7 @@ export default function ProductBatchOptimizationPage() {
       createdAt: Date.now(),
       form: {
         query: form.query,
+        productTypeKeyword: form.productTypeKeyword,
         sortOrder: form.sortOrder,
         limit: normalizeLimitInput(limitInput, form.limit),
         start: Math.max(0, Number(form.start) || 0),
@@ -670,6 +678,7 @@ export default function ProductBatchOptimizationPage() {
     setForm((prev) => ({
       ...prev,
       query: preset.form.query,
+      productTypeKeyword: preset.form.productTypeKeyword || "",
       sortOrder: preset.form.sortOrder || "newest",
       limit: nextLimit,
       start: preset.form.start,
@@ -1103,7 +1112,7 @@ export default function ProductBatchOptimizationPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-[92px_110px_150px_1fr]">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-[92px_110px_180px_150px_1fr]">
               <label className="text-xs font-medium text-fg-secondary">
                 数量
                 <input
@@ -1136,6 +1145,20 @@ export default function ProductBatchOptimizationPage() {
                       start: Math.max(0, Number(e.target.value) || 0),
                     }))
                   }
+                />
+              </label>
+              <label className="text-xs font-medium text-fg-secondary">
+                类型关键词
+                <input
+                  className="input mt-1"
+                  value={form.productTypeKeyword}
+                  onChange={(e) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      productTypeKeyword: e.target.value,
+                    }))
+                  }
+                  placeholder="Prom Dresses"
                 />
               </label>
               <label className="text-xs font-medium text-fg-secondary">
@@ -1760,6 +1783,23 @@ function normalizeLimitInput(value: string, fallback: number) {
     : 1;
 }
 
+function buildProductBatchShopifyQuery(query: string, productTypeKeyword: string) {
+  const baseQuery = String(query || "").trim() || "status:active";
+  const productType = normalizeProductTypeKeyword(productTypeKeyword);
+  if (!productType) return baseQuery;
+  return `${baseQuery} product_type:${quoteShopifySearchValue(productType)}`;
+}
+
+function normalizeProductTypeKeyword(value: string) {
+  return String(value || "")
+    .replace(/[\r\n]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function quoteShopifySearchValue(value: string) {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
 function readProductBatchPromptPresets(): ProductBatchPromptPreset[] {
   try {
     const raw = window.localStorage.getItem(
@@ -1779,6 +1819,7 @@ function readProductBatchPromptPresets(): ProductBatchPromptPreset[] {
         createdAt: Number(preset.createdAt) || 0,
         form: {
           query: String(preset.form.query || "status:active"),
+          productTypeKeyword: String(preset.form.productTypeKeyword || ""),
           sortOrder: preset.form.sortOrder === "oldest" ? "oldest" : "newest",
           limit: Number(preset.form.limit) || 1,
           start: Math.max(0, Number(preset.form.start) || 0),
