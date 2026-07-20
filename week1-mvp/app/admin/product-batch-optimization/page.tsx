@@ -149,6 +149,7 @@ type Proposal = {
     imageAltTexts: ImageTextItem[];
   };
   targetFields?: TargetField[];
+  targetCategoryMetafieldKeys?: Array<keyof CategoryMetafields>;
   rationale: string;
   warnings: string[];
 };
@@ -2093,7 +2094,8 @@ function ProposalCard({
           <SnapshotCompareGrid
             current={proposal.current}
             proposed={proposal.proposed}
-          targetFields={proposal.targetFields}
+            targetFields={proposal.targetFields}
+            targetCategoryMetafieldKeys={proposal.targetCategoryMetafieldKeys}
           />
 
           {(proposal.rationale || proposal.warnings.length) ? (
@@ -2125,14 +2127,21 @@ function SnapshotCompareGrid({
   current,
   proposed,
   targetFields,
+  targetCategoryMetafieldKeys,
 }: {
   current: Snapshot;
   proposed: Snapshot;
   targetFields?: TargetField[];
+  targetCategoryMetafieldKeys?: CategoryMetafieldKey[];
 }) {
   const fields = new Set(targetFields?.length ? targetFields : ALL_TARGET_FIELDS);
   const show = (field: TargetField) => fields.has(field);
-  const categoryMetafieldKeys = getVisibleCategoryMetafieldKeys(current, proposed, fields);
+  const categoryMetafieldKeys = getVisibleCategoryMetafieldKeys(
+    current,
+    proposed,
+    fields,
+    targetCategoryMetafieldKeys,
+  );
 
   return (
     <section className="grid grid-cols-1 items-stretch gap-3 lg:grid-cols-2">
@@ -2232,10 +2241,20 @@ function getVisibleCategoryMetafieldKeys(
   current: Snapshot,
   proposed: Snapshot,
   fields: Set<TargetField>,
+  targetCategoryMetafieldKeys: CategoryMetafieldKey[] = [],
 ) {
   const keys: CategoryMetafieldKey[] = [];
   if (fields.has("categorySize")) keys.push("size");
   if (fields.has("categoryMetafields")) {
+    for (const key of targetCategoryMetafieldKeys) {
+      if (
+        key !== "size" &&
+        CATEGORY_METAFIELD_LABELS.some((item) => item.key === key) &&
+        !keys.includes(key)
+      ) {
+        keys.push(key);
+      }
+    }
     for (const { key } of CATEGORY_METAFIELD_LABELS) {
       const currentValue = getCategoryMetafieldValue(current, key);
       const proposedValue = getCategoryMetafieldValue(proposed, key);

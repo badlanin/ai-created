@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Check, FileText, Image as ImageIcon, Loader2, Save, Store, UploadCloud, WandSparkles, X } from "lucide-react";
+import { Check, FileText, Image as ImageIcon, Loader2, Save, Store, UploadCloud, WandSparkles, X } from "lucide-react";
 import { fetchWithShopifyDevice } from "@/lib/shopify-device-client";
 
 type ModuleKey = "quickAnswer" | "toc" | "trendTable" | "recommendations" | "sources" | "faq" | "cta" | "relatedArticles";
@@ -10,6 +10,7 @@ type OutputLanguage = "english" | "bilingual" | "chinese";
 type PublishStatus = "draft" | "published";
 type ShopifyConnection = { shopDomain: string; isActive?: boolean };
 type ShopifyTxtCredentials = { shopDomain: string; clientId: string; clientSecret: string };
+type BlogSyncArticle = { id: string; title: string; handle: string; blogTitle: string; blogHandle: string; publicUrl: string };
 
 const CONTROL_CLASS = "w-full rounded-sm border border-border-default bg-bg-secondary px-3 text-[12px] text-fg-primary outline-none transition-colors placeholder:text-fg-muted focus:border-brand-400 focus:ring-2 focus:ring-[rgba(99,102,241,0.12)]";
 
@@ -60,13 +61,16 @@ export default function BlogPage() {
   const [bindFileText, setBindFileText] = useState("");
   const [bindError, setBindError] = useState("");
   const [binding, setBinding] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState("");
+  const [shopifyArticleId, setShopifyArticleId] = useState("");
 
   const contentStats = useMemo(() => {
     const text = articleBodyHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
     return { words: text ? text.split(" ").filter(Boolean).length : 0, sections: (articleBodyHtml.match(/<h[1-6]\b/gi) || []).length, faqs: (articleBodyHtml.match(/faq|常见问题/gi) || []).length };
   }, [articleBodyHtml]);
 
-  const syncFields = [["发布博客", Boolean(shopifyBlog)], ["文章标题", Boolean(articleTitle.trim())], ["正文 HTML", Boolean(articleBodyHtml.trim())], ["文章摘要", Boolean(summary.trim())], ["URL 名称", Boolean(urlHandle.trim())], ["文章标签", Boolean(tags.trim())], ["作者", Boolean(author.trim())], ["封面图片", Boolean(coverFileName)]] as const;
+  const syncFields = [["发布博客", Boolean(shopifyBlog)], ["文章标题", Boolean(articleTitle.trim())], ["正文 HTML", Boolean(articleBodyHtml.trim())], ["文章摘要", Boolean(summary.trim())], ["页面标题", Boolean(seoTitle.trim())], ["元描述", Boolean(metaDescription.trim())], ["URL 名称", Boolean(urlHandle.trim())], ["文章标签", Boolean(tags.trim())], ["作者", Boolean(author.trim())], ["封面图片", Boolean(coverFileName)]] as const;
   const syncReadyCount = syncFields.filter(([, ready]) => ready).length;
 
   useEffect(() => { void loadShopifyConnection(); }, []);
@@ -107,8 +111,29 @@ export default function BlogPage() {
   }
 
   function handleSaveDraft() {
-    window.localStorage.setItem("blog-article-draft", JSON.stringify({ prompt, primaryKeyword, targetAudience, searchIntent, modules, language, articleTitle, articleBodyHtml, summary, seoTitle, metaDescription, urlHandle, shopifyBlog, author, tags, coverFileName, publishStatus, savedAt: Date.now() }));
+    window.localStorage.setItem("blog-article-draft", JSON.stringify({ prompt, primaryKeyword, targetAudience, searchIntent, modules, language, articleTitle, articleBodyHtml, summary, seoTitle, metaDescription, urlHandle, shopifyBlog, author, tags, coverFileName, publishStatus, shopifyArticleId, savedAt: Date.now() }));
     setDraftSaved(true); window.setTimeout(() => setDraftSaved(false), 1600);
+  }
+
+  async function handleSyncShopify() {
+    if (!connection || syncing) return;
+    setSyncMessage("");
+    setSyncing(true);
+    try {
+      const response = await fetchWithShopifyDevice("/api/blog/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ shopDomain: connection.shopDomain, shopifyArticleId, shopifyBlog, articleTitle, articleBodyHtml, summary, seoTitle, metaDescription, urlHandle, author, tags, publishStatus }) });
+      const data = (await response.json()) as { article?: BlogSyncArticle; error?: string };
+      if (!response.ok) throw new Error(data.error || response.statusText);
+      const article = data.article;
+      if (!article?.id) throw new Error("Shopify 没有返回文章 ID");
+      setShopifyArticleId(article.id);
+      if (article.handle) setUrlHandle(article.handle);
+      savePublishedArticle({ id: article.id, articleTitle, articleBodyHtml, summary, shopifyBlog: article.blogHandle || shopifyBlog, urlHandle: article.handle || urlHandle, publicUrl: article.publicUrl || "", shopifyArticleId: article.id, coverImageUrl: "", publishedAt: Date.now(), lastSyncedAt: Date.now(), syncStatus: "synced" });
+      setSyncMessage(`已同步到 Shopify：${article.title || articleTitle}`);
+    } catch (error) {
+      setSyncMessage(error instanceof Error ? error.message : "同步 Shopify 失败");
+    } finally {
+      setSyncing(false);
+    }
   }
 
   async function handleBindFile(file: File | undefined) {
@@ -149,11 +174,43 @@ export default function BlogPage() {
       <section className="grid min-h-[900px] grid-cols-1 gap-4 lg:grid-cols-12">
         <aside className="lg:col-span-3 xl:col-span-2"><Panel className="h-full p-4"><PanelTitle title="SEO 简报" /><Field label="核心关键词" required><input value={primaryKeyword} onChange={(e) => setPrimaryKeyword(e.target.value)} className={`${CONTROL_CLASS} h-9`} /></Field><Field label="搜索意图"><input value={searchIntent} onChange={(e) => setSearchIntent(e.target.value)} className={`${CONTROL_CLASS} h-9`} placeholder="信息 + 商业调查" /></Field><Field label="目标用户"><input value={targetAudience} onChange={(e) => setTargetAudience(e.target.value)} className={`${CONTROL_CLASS} h-9`} placeholder="美丽学生" /></Field><div className="mb-4"><div className="mb-2 flex justify-between text-[11px] text-fg-secondary"><span>内容模块</span><span>{Object.values(modules).filter(Boolean).length} 项启用</span></div><div className="grid grid-cols-2 gap-2">{MODULE_OPTIONS.map((item) => <button key={item.key} type="button" onClick={() => toggleModule(item.key)} className={`flex h-8 items-center gap-2 rounded-sm border px-2 text-[10px] ${modules[item.key] ? "border-brand-200 bg-[var(--brand-50-bg)] text-brand-700" : "border-border-subtle bg-bg-tertiary text-fg-secondary"}`}><span className={`flex h-4 w-4 items-center justify-center rounded-[4px] border ${modules[item.key] ? "border-brand-500 bg-brand-500 text-white" : "border-border-default bg-white"}`}>{modules[item.key] ? <Check size={11} /> : null}</span>{item.label}</button>)}</div></div><Field label="输出语言"><div className="grid grid-cols-3 rounded-sm bg-bg-tertiary p-1">{([['english','英文'],['bilingual','中英双语'],['chinese','中文']] as Array<[OutputLanguage,string]>).map(([value,label]) => <button key={value} type="button" onClick={() => setLanguage(value)} className={`h-7 rounded-[6px] text-[10px] ${language === value ? "bg-white font-semibold text-brand-600 shadow-sm" : "text-fg-tertiary"}`}>{label}</button>)}</div></Field></Panel></aside>
         <section className="lg:col-span-6 xl:col-span-7"><Panel className="flex h-full flex-col overflow-hidden"><PanelHeader icon={<FileText size={16} />} title="文章编辑" meta={`${contentStats.words} words · ${contentStats.sections} sections · ${contentStats.faqs} FAQs`} /><div className="border-b border-border-subtle px-5 py-4"><div className="mb-1 flex justify-between text-[10px] text-fg-muted"><span>标题</span><span>{articleTitle.length} / 70</span></div><input value={articleTitle} onChange={(e) => setArticleTitle(e.target.value)} maxLength={70} className="w-full bg-transparent text-[20px] font-bold text-fg-primary outline-none placeholder:text-fg-muted" placeholder="输入文章标题" /></div><textarea value={articleBodyHtml} onChange={(e) => setArticleBodyHtml(e.target.value)} className="min-h-[430px] flex-1 resize-y border-0 bg-bg-secondary p-5 font-mono text-[12px] leading-6 text-fg-secondary outline-none" placeholder="AI 生成后正文 HTML 会显示在这里" /><section className="border-t border-border-subtle px-5 py-4"><Field label="摘要" hint={`${summary.length} 字符`} compact><textarea value={summary} onChange={(e) => setSummary(e.target.value)} className={`${CONTROL_CLASS} min-h-[78px] resize-y py-2 leading-5`} /></Field><Field label="页面标题" hint={`${seoTitle.length} / 70`} compact><input value={seoTitle} onChange={(e) => setSeoTitle(e.target.value)} maxLength={70} className={`${CONTROL_CLASS} h-9`} /></Field><Field label="元描述" hint={`${metaDescription.length} / 160`} compact><textarea value={metaDescription} onChange={(e) => setMetaDescription(e.target.value)} maxLength={160} className={`${CONTROL_CLASS} min-h-[70px] resize-y py-2 leading-5`} /></Field><Field label="URL 名称" compact><input value={urlHandle} onChange={(e) => setUrlHandle(e.target.value)} className={`${CONTROL_CLASS} h-9`} placeholder="article-url-name" /></Field></section></Panel></section>
-        <aside className="lg:col-span-3 xl:col-span-3"><Panel className="flex h-full flex-col p-4"><PanelTitle title="Shopify 同步" icon={<Store size={16} />} /><Field label="发布博客" required><select value={shopifyBlog} onChange={(e) => setShopifyBlog(e.target.value)} className={`${CONTROL_CLASS} h-9`}><option value="">请选择 Shopify 博客</option><option value="news">News</option><option value="blog">Blog</option></select></Field><Field label="作者"><input value={author} onChange={(e) => setAuthor(e.target.value)} className={`${CONTROL_CLASS} h-9`} /></Field><Field label="文章标签"><input value={tags} onChange={(e) => setTags(e.target.value)} className={`${CONTROL_CLASS} h-9`} placeholder="tag one, tag two" /></Field><label className="mb-4 flex min-h-[82px] cursor-pointer flex-col items-center justify-center rounded-sm border border-dashed border-border-default bg-bg-tertiary px-3 text-center"><input type="file" accept="image/*" className="sr-only" onChange={(e) => setCoverFileName(e.target.files?.[0]?.name || "")} /><ImageIcon size={17} className="mb-1.5 text-brand-400" /><span className="max-w-full truncate text-[10px] text-fg-secondary">{coverFileName || "选择封面图片"}</span></label><Field label="发布状态"><div className="grid grid-cols-2 rounded-sm bg-bg-tertiary p-1">{([['draft','草稿'],['published','立即发布']] as Array<[PublishStatus,string]>).map(([value,label]) => <button key={value} type="button" onClick={() => setPublishStatus(value)} className={`h-7 rounded-[6px] text-[10px] ${publishStatus === value ? "bg-white font-semibold text-brand-600 shadow-sm" : "text-fg-tertiary"}`}>{label}</button>)}</div></Field><div className="mb-4 divide-y divide-border-subtle rounded-sm border border-border-subtle">{syncFields.map(([label, ready]) => <div key={label} className="flex justify-between px-3 py-2 text-[10px]"><span className="text-fg-secondary">{label}</span><span className={ready ? "text-[#059669]" : "text-fg-muted"}>{ready ? "待同步" : "待填写"}</span></div>)}</div><div className="mb-4 flex gap-2 rounded-sm bg-[var(--warn-bg)] p-2.5 text-[10px] leading-4 text-[#b45309]"><AlertTriangle size={14} className="shrink-0" />页面标题与元描述仅在本地保存为 SEO 建议，Shopify Article API 没有对应字段。</div><div className="mt-auto"><button type="button" onClick={handleSaveDraft} className="mb-2 flex h-10 w-full items-center justify-center gap-2 rounded-sm border border-border-subtle bg-white text-[12px] font-semibold text-fg-secondary"><Save size={15} />{draftSaved ? "已保存草稿" : "保存草稿"}</button><button type="button" disabled={!connection} className="flex h-10 w-full items-center justify-center rounded-sm bg-grad-brand text-[12px] font-semibold text-white disabled:opacity-45">同步 Shopify 草稿</button></div></Panel></aside>
+        <aside className="lg:col-span-3 xl:col-span-3"><Panel className="flex h-full flex-col p-4"><PanelTitle title="Shopify 同步" icon={<Store size={16} />} /><Field label="发布博客" required><select value={shopifyBlog} onChange={(e) => setShopifyBlog(e.target.value)} className={`${CONTROL_CLASS} h-9`}><option value="">请选择 Shopify 博客</option><option value="news">News</option><option value="blog">Blog</option></select></Field><Field label="作者"><input value={author} onChange={(e) => setAuthor(e.target.value)} className={`${CONTROL_CLASS} h-9`} /></Field><Field label="文章标签"><input value={tags} onChange={(e) => setTags(e.target.value)} className={`${CONTROL_CLASS} h-9`} placeholder="tag one, tag two" /></Field><label className="mb-4 flex min-h-[82px] cursor-pointer flex-col items-center justify-center rounded-sm border border-dashed border-border-default bg-bg-tertiary px-3 text-center"><input type="file" accept="image/*" className="sr-only" onChange={(e) => setCoverFileName(e.target.files?.[0]?.name || "")} /><ImageIcon size={17} className="mb-1.5 text-brand-400" /><span className="max-w-full truncate text-[10px] text-fg-secondary">{coverFileName || "选择封面图片"}</span></label><Field label="发布状态"><div className="grid grid-cols-2 rounded-sm bg-bg-tertiary p-1">{([['draft','草稿'],['published','立即发布']] as Array<[PublishStatus,string]>).map(([value,label]) => <button key={value} type="button" onClick={() => setPublishStatus(value)} className={`h-7 rounded-[6px] text-[10px] ${publishStatus === value ? "bg-white font-semibold text-brand-600 shadow-sm" : "text-fg-tertiary"}`}>{label}</button>)}</div></Field><div className="mb-4 divide-y divide-border-subtle rounded-sm border border-border-subtle">{syncFields.map(([label, ready]) => <div key={label} className="flex justify-between px-3 py-2 text-[10px]"><span className="text-fg-secondary">{label}</span><span className={ready ? "text-[#059669]" : "text-fg-muted"}>{ready ? "待同步" : "待填写"}</span></div>)}</div><div className="mb-4 flex gap-2 rounded-sm bg-[var(--success-bg)] p-2.5 text-[10px] leading-4 text-[#047857]"><Check size={14} className="shrink-0" />页面标题与元描述会写入 Shopify Article 的 global.title_tag 和 global.description_tag。</div>{syncMessage ? <div className={`mb-4 rounded-sm px-3 py-2 text-[11px] ${/失败|错误|找不到|请先|没有返回/.test(syncMessage) ? "bg-[#fef2f2] text-[#dc2626]" : "bg-[var(--success-bg)] text-[#047857]"}`}>{syncMessage}</div> : null}<div className="mt-auto"><button type="button" onClick={handleSaveDraft} className="mb-2 flex h-10 w-full items-center justify-center gap-2 rounded-sm border border-border-subtle bg-white text-[12px] font-semibold text-fg-secondary"><Save size={15} />{draftSaved ? "已保存草稿" : "保存草稿"}</button><button type="button" onClick={handleSyncShopify} disabled={!connection || syncing || !shopifyBlog || !articleTitle.trim() || !articleBodyHtml.trim()} className="flex h-10 w-full items-center justify-center gap-2 rounded-sm bg-grad-brand text-[12px] font-semibold text-white disabled:opacity-45">{syncing ? <Loader2 size={14} className="animate-spin" /> : null}{syncing ? "同步中..." : shopifyArticleId ? "更新 Shopify 文章" : "同步 Shopify 草稿"}</button></div></Panel></aside>
       </section>
       {bindOpen ? <ShopifyBindModal fileName={bindFileName} error={bindError} binding={binding} canSubmit={Boolean(bindFileText)} onFileChange={handleBindFile} onClose={() => { if (!binding) setBindOpen(false); }} onSubmit={handleExchangeToken} /> : null}
     </main>
   );
+}
+
+function savePublishedArticle(record: {
+  id: string;
+  articleTitle: string;
+  articleBodyHtml: string;
+  summary: string;
+  shopifyBlog: string;
+  urlHandle: string;
+  publicUrl: string;
+  shopifyArticleId: string;
+  coverImageUrl: string;
+  publishedAt: number;
+  lastSyncedAt: number;
+  syncStatus: "synced" | "pending" | "failed";
+}) {
+  const raw = window.localStorage.getItem("blog-published-articles");
+  let list: typeof record[] = [];
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (Array.isArray(parsed)) list = parsed as typeof record[];
+    } catch {
+      list = [];
+    }
+  }
+  const next = [
+    record,
+    ...list.filter((item) => item.shopifyArticleId !== record.shopifyArticleId),
+  ];
+  window.localStorage.setItem("blog-published-articles", JSON.stringify(next));
+  window.localStorage.setItem("blog-published-article", JSON.stringify(record));
 }
 
 function parseShopifyCredentials(text: string): ShopifyTxtCredentials {

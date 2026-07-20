@@ -10,7 +10,9 @@ import { acquireToken } from "./rate-limiter";
 import { retryWithBackoff } from "./retry";
 import { recordUsage } from "./usage";
 import {
+  getShopifyCategoryMetafieldOptions,
   syncShopifyProductCategoryMetafields,
+  type ShopifyCategoryMetafieldOptionsResult,
   type ShopifyProductCategoryMetafieldsSyncInput,
 } from "./shopify";
 
@@ -239,6 +241,17 @@ export type ProductBatchCategoryMetafields = Partial<
   Record<ProductBatchCategoryMetafieldKey, string>
 >;
 
+type ProductBatchCategoryMetafieldCandidateSet = {
+  label: string;
+  source: "store" | "official" | "mixed" | "none";
+  metaobjectValues: string[];
+  taxonomyValues: string[];
+};
+
+type ProductBatchCategoryMetafieldCandidates = Partial<
+  Record<ProductBatchCategoryMetafieldKey, ProductBatchCategoryMetafieldCandidateSet>
+>;
+
 const PRODUCT_BATCH_CATEGORY_METAFIELD_DEFS: Array<{
   key: ProductBatchCategoryMetafieldKey;
   label: string;
@@ -388,6 +401,7 @@ export type ProductBatchProposal = {
   current: ProductBatchSnapshot;
   proposed: ProductBatchProposed;
   targetFields?: ProductBatchTargetField[];
+  targetCategoryMetafieldKeys?: ProductBatchCategoryMetafieldKey[];
   changeSummary: Record<string, boolean | number>;
   rationale: string;
   warnings: string[];
@@ -1174,6 +1188,7 @@ export async function createProductBatchPreview(opts: {
           proposals.push(
             await generateProductProposal({
               user: opts.user,
+              deviceId: opts.deviceId,
               connection: store,
               product,
               prompt,
@@ -1563,6 +1578,7 @@ async function fetchProducts(opts: {
 
 async function generateProductProposal(opts: {
   user: User;
+  deviceId: string;
   connection: ShopifyToken;
   product: ShopifyProductNode;
   prompt: string;
@@ -1577,6 +1593,17 @@ async function generateProductProposal(opts: {
   const images = getProductImages(opts.product).slice(0, 8);
   const current = getCurrentSnapshot(opts.product, images);
   const forbiddenFields = getForbiddenTargetFields(opts.targetFields);
+  const targetCategoryMetafieldKeys = detectTargetCategoryMetafieldKeys(opts.prompt);
+  const categoryMetafieldCandidateContext =
+    await loadProductBatchCategoryMetafieldCandidates({
+      user: opts.user,
+      deviceId: opts.deviceId,
+      connection: opts.connection,
+      product: opts.product,
+      targetKeys: targetCategoryMetafieldKeys,
+      targetFields: opts.targetFields,
+    });
+  const categoryMetafieldCandidates = categoryMetafieldCandidateContext.candidates;
   const promptData = {
     store: {
       key: opts.connection.key,
@@ -1618,6 +1645,7 @@ async function generateProductProposal(opts: {
       "Only optimize and change fields listed in targetFields. Fields listed in forbiddenFields must be copied exactly from currentSnapshot/currentProduct and must not be rewritten, translated, reordered, expanded, or polished.",
     categoryMetafieldInstruction: buildCategoryMetafieldPromptInstruction(
       opts.prompt,
+      categoryMetafieldCandidates,
     ),
     complianceExamples: [
       {
@@ -1720,7 +1748,11 @@ async function generateProductProposal(opts: {
   const rawText = response.text || "";
   const raw = parseJsonObject(rawText);
   let proposed = constrainProposalToTargetFields(
-    normalizeGeneratedProposal(raw, opts.product, images, opts.prompt),
+    resolveCategoryMetafieldsAgainstBackendCandidates(
+      normalizeGeneratedProposal(raw, opts.product, images, opts.prompt),
+      opts.prompt,
+      categoryMetafieldCandidates,
+    ),
     current,
     opts.targetFields,
   );
@@ -1731,18 +1763,22 @@ async function generateProductProposal(opts: {
   let repairedForQuality = false;
   if (qualityIssues.length) {
     proposed = constrainProposalToTargetFields(
-      await repairProposalCompleteness({
-        user: opts.user,
-        connection: opts.connection,
-        product: opts.product,
-        images,
-        prompt: opts.prompt,
-        model: opts.model,
-        proposed,
-        issues: qualityIssues,
-        targetFields: opts.targetFields,
-        signal: opts.signal,
-      }),
+      resolveCategoryMetafieldsAgainstBackendCandidates(
+        await repairProposalCompleteness({
+          user: opts.user,
+          connection: opts.connection,
+          product: opts.product,
+          images,
+          prompt: opts.prompt,
+          model: opts.model,
+          proposed,
+          issues: qualityIssues,
+          targetFields: opts.targetFields,
+          signal: opts.signal,
+        }),
+        opts.prompt,
+        categoryMetafieldCandidates,
+      ),
       current,
       opts.targetFields,
     );
@@ -1779,10 +1815,12 @@ async function generateProductProposal(opts: {
     current,
     proposed,
     targetFields: opts.targetFields,
+    targetCategoryMetafieldKeys,
     changeSummary: summarizeChanges(current, proposed, opts.targetFields),
     rationale: cleanText(String(raw.rationale || "")),
     warnings: [
       ...normalizeStringArray(raw.warnings),
+      ...categoryMetafieldCandidateContext.warnings,
       ...(repairedForQuality
         ? ["已自动修复生成内容中的残句、非英文内容或类别尺寸格式，写回前会再次校验。"]
         : []),
@@ -2598,7 +2636,10 @@ function detectTargetCategoryMetafieldKeys(prompt: string): ProductBatchCategory
     .filter((key) => selected.has(key));
 }
 
-function buildCategoryMetafieldPromptInstruction(prompt: string) {
+function buildCategoryMetafieldPromptInstruction(
+  prompt: string,
+  candidates: ProductBatchCategoryMetafieldCandidates = {},
+) {
   const keys = detectTargetCategoryMetafieldKeys(prompt);
   return {
     fieldName: "categoryMetafields",
@@ -2608,9 +2649,232 @@ function buildCategoryMetafieldPromptInstruction(prompt: string) {
       return { key, label: def?.label || key };
     }),
     excludedKeys: ["color"],
+    backendCandidates: formatCategoryMetafieldCandidatesForPrompt(keys, candidates),
     rule:
-      "Only fill categoryMetafields keys listed in allowedKeys. Do not generate color here. For keys not listed in allowedKeys, copy the current value or leave it empty.",
+      "Only fill categoryMetafields keys listed in allowedKeys. Do not generate color here. Keep size on the existing categorySize logic. For fabric, ageGroup, occasion, dressStyle, neckline, dressLengthType, sleeveLengthType, and targetGender, first choose an exact or closest value from backendCandidates when available. If no backend candidate fits, output a concise new English display value; Shopify sync will create the missing metaobject where the field supports it. For keys not listed in allowedKeys, copy the current value or leave it empty.",
   };
+}
+
+async function loadProductBatchCategoryMetafieldCandidates(opts: {
+  user: User;
+  deviceId: string;
+  connection: ShopifyToken;
+  product: ShopifyProductNode;
+  targetKeys: ProductBatchCategoryMetafieldKey[];
+  targetFields: ProductBatchTargetField[];
+}): Promise<{
+  candidates: ProductBatchCategoryMetafieldCandidates;
+  warnings: string[];
+}> {
+  if (!opts.targetFields.includes("categoryMetafields")) {
+    return { candidates: {}, warnings: [] };
+  }
+  const keys = opts.targetKeys.filter((key) => key !== "size");
+  if (!keys.length) return { candidates: {}, warnings: [] };
+
+  const categoryId = cleanInlineText(opts.product.category?.id || "");
+  if (!categoryId) return { candidates: {}, warnings: [] };
+
+  try {
+    const result = await getShopifyCategoryMetafieldOptions(
+      opts.user.id,
+      opts.deviceId,
+      categoryId,
+      opts.connection.shopDomain,
+    );
+    return {
+      candidates: buildProductBatchCategoryMetafieldCandidates(result, keys),
+      warnings: (result.warnings || [])
+        .filter(Boolean)
+        .map((item) => `Shopify category metafield candidates: ${item}`)
+        .slice(0, 2),
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `[product-batch] read category metafield candidates failed for ${opts.product.id}: ${message}`,
+    );
+    return {
+      candidates: {},
+      warnings: [`Shopify category metafield candidates unavailable: ${message}`],
+    };
+  }
+}
+
+function buildProductBatchCategoryMetafieldCandidates(
+  result: ShopifyCategoryMetafieldOptionsResult,
+  keys: ProductBatchCategoryMetafieldKey[],
+): ProductBatchCategoryMetafieldCandidates {
+  const wanted = new Set(keys.filter((key) => key !== "size"));
+  const candidates: ProductBatchCategoryMetafieldCandidates = {};
+  for (const def of PRODUCT_BATCH_CATEGORY_METAFIELD_DEFS) {
+    if (def.key === "size" || !wanted.has(def.key)) continue;
+    const field = result.fields[String(def.shopifyField)];
+    if (!field?.options?.length) continue;
+    const metaobjectValues: string[] = [];
+    const taxonomyValues: string[] = [];
+    for (const option of field.options) {
+      const values = [option.label];
+      if (option.value && !option.value.startsWith("gid://shopify/")) {
+        values.push(option.value);
+      }
+      if (/^gid:\/\/shopify\/TaxonomyValue\//.test(option.id)) {
+        taxonomyValues.push(...values);
+      } else {
+        metaobjectValues.push(...values);
+      }
+    }
+    const normalizedMetaobjectValues = sanitizeCategoryCandidateItems(metaobjectValues);
+    const normalizedTaxonomyValues = sanitizeCategoryCandidateItems(taxonomyValues);
+    if (normalizedMetaobjectValues.length || normalizedTaxonomyValues.length) {
+      candidates[def.key] = {
+        label: def.label,
+        source: field.source,
+        metaobjectValues: normalizedMetaobjectValues,
+        taxonomyValues: normalizedTaxonomyValues,
+      };
+    }
+  }
+  return candidates;
+}
+
+function formatCategoryMetafieldCandidatesForPrompt(
+  keys: ProductBatchCategoryMetafieldKey[],
+  candidates: ProductBatchCategoryMetafieldCandidates,
+) {
+  return keys
+    .filter((key) => key !== "size")
+    .map((key) => {
+      const def = PRODUCT_BATCH_CATEGORY_METAFIELD_DEFS.find((item) => item.key === key);
+      const candidate = candidates[key];
+      return {
+        key,
+        label: def?.label || key,
+        source: candidate?.source || "none",
+        existingMetaobjectValues: candidate?.metaobjectValues || [],
+        officialTaxonomyValues: candidate?.taxonomyValues || [],
+      };
+    });
+}
+
+function resolveCategoryMetafieldsAgainstBackendCandidates(
+  proposed: ProductBatchProposed,
+  prompt: string,
+  candidates: ProductBatchCategoryMetafieldCandidates,
+): ProductBatchProposed {
+  if (!Object.keys(candidates).length) return proposed;
+  const keys = detectTargetCategoryMetafieldKeys(prompt).filter((key) => key !== "size");
+  if (!keys.length) return proposed;
+
+  const nextFields: ProductBatchCategoryMetafields = {
+    ...(proposed.categoryMetafields || {}),
+  };
+  let changed = false;
+  for (const key of keys) {
+    const candidate = candidates[key];
+    if (!candidate) continue;
+    const value = cleanCategoryMetafieldValue(nextFields[key]);
+    if (!value) continue;
+    const resolved = resolveCategoryMetafieldValueAgainstCandidate(value, candidate);
+    if (resolved && resolved !== value) {
+      nextFields[key] = resolved;
+      changed = true;
+    }
+  }
+  if (!changed) return proposed;
+  return {
+    ...proposed,
+    categoryMetafields: pruneCategoryMetafields(nextFields),
+  };
+}
+
+function resolveCategoryMetafieldValueAgainstCandidate(
+  value: string,
+  candidate: ProductBatchCategoryMetafieldCandidateSet,
+): string {
+  const parts = splitCategoryMetafieldCandidateValue(value);
+  if (!parts.length) return value;
+  const existingValues = sanitizeCategoryCandidateItems([
+    ...candidate.metaobjectValues,
+    ...candidate.taxonomyValues,
+  ]);
+  if (!existingValues.length) return value;
+  const resolved = parts.map((part) => {
+    const match = findSimilarCategoryCandidate(part, existingValues);
+    return match || part;
+  });
+  return joinCategoryMetafieldCandidateValues(resolved);
+}
+
+function findSimilarCategoryCandidate(value: string, candidates: string[]) {
+  const normalizedValue = normalizeCategoryCandidateForMatch(value);
+  const compactValue = normalizedValue.replace(/\s+/g, "");
+  if (!normalizedValue) return "";
+  for (const candidate of candidates) {
+    const normalizedCandidate = normalizeCategoryCandidateForMatch(candidate);
+    if (normalizedCandidate === normalizedValue) return candidate;
+    if (normalizedCandidate.replace(/\s+/g, "") === compactValue) return candidate;
+  }
+  for (const candidate of candidates) {
+    const normalizedCandidate = normalizeCategoryCandidateForMatch(candidate);
+    if (
+      normalizedValue.length >= 5 &&
+      normalizedCandidate.length >= 5 &&
+      (normalizedCandidate.includes(normalizedValue) ||
+        normalizedValue.includes(normalizedCandidate))
+    ) {
+      return candidate;
+    }
+  }
+  return "";
+}
+
+function normalizeCategoryCandidateForMatch(value: string) {
+  return cleanInlineText(value)
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function splitCategoryMetafieldCandidateValue(value: string): string[] {
+  const seen = new Set<string>();
+  const items: string[] = [];
+  for (const item of String(value || "").split(/[,;|\n]/)) {
+    const normalized = cleanInlineText(item);
+    if (!normalized) continue;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    items.push(normalized);
+  }
+  return items;
+}
+
+function joinCategoryMetafieldCandidateValues(items: string[]) {
+  return sanitizeCategoryCandidateItems(items, 40).join(", ");
+}
+
+function sanitizeCategoryCandidateItems(value: unknown[], limit = 80): string[] {
+  const seen = new Set<string>();
+  const items: string[] = [];
+  for (const rawItem of value) {
+    if (typeof rawItem !== "string") continue;
+    const item = cleanInlineText(rawItem)
+      .replace(/[|]/g, " ")
+      .replace(/\s{2,}/g, " ")
+      .slice(0, 80)
+      .trim();
+    if (!item || item.startsWith("gid://shopify/")) continue;
+    const normalized = item.toLowerCase();
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    items.push(item);
+    if (items.length >= limit) break;
+  }
+  return items;
 }
 
 function summarizeChanges(
