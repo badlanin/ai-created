@@ -163,13 +163,21 @@ const PRODUCT_BATCH_OUTPUT_SCHEMA = {
       properties: {
         size: { type: "string" },
         fabric: { type: "string" },
+        fabricBaseValue: { type: "string" },
         ageGroup: { type: "string" },
+        ageGroupBaseValue: { type: "string" },
         occasion: { type: "string" },
+        occasionBaseValue: { type: "string" },
         dressStyle: { type: "string" },
+        dressStyleBaseValue: { type: "string" },
         neckline: { type: "string" },
+        necklineBaseValue: { type: "string" },
         dressLengthType: { type: "string" },
+        dressLengthTypeBaseValue: { type: "string" },
         sleeveLengthType: { type: "string" },
+        sleeveLengthTypeBaseValue: { type: "string" },
         targetGender: { type: "string" },
+        targetGenderBaseValue: { type: "string" },
       },
     },
     templateStyle: { type: "string" },
@@ -237,8 +245,22 @@ export type ProductBatchCategoryMetafieldKey =
   | "sleeveLengthType"
   | "targetGender";
 
+type ProductBatchCategoryMetafieldBaseValueKey =
+  | "fabricBaseValue"
+  | "ageGroupBaseValue"
+  | "occasionBaseValue"
+  | "dressStyleBaseValue"
+  | "necklineBaseValue"
+  | "dressLengthTypeBaseValue"
+  | "sleeveLengthTypeBaseValue"
+  | "targetGenderBaseValue";
+
+type ProductBatchCategoryMetafieldValueKey =
+  | ProductBatchCategoryMetafieldKey
+  | ProductBatchCategoryMetafieldBaseValueKey;
+
 export type ProductBatchCategoryMetafields = Partial<
-  Record<ProductBatchCategoryMetafieldKey, string>
+  Record<ProductBatchCategoryMetafieldValueKey, string>
 >;
 
 type ProductBatchCategoryMetafieldCandidateSet = {
@@ -256,6 +278,8 @@ const PRODUCT_BATCH_CATEGORY_METAFIELD_DEFS: Array<{
   key: ProductBatchCategoryMetafieldKey;
   label: string;
   shopifyField: keyof ShopifyProductCategoryMetafieldsSyncInput;
+  baseKey?: ProductBatchCategoryMetafieldBaseValueKey;
+  shopifyBaseValueField?: keyof ShopifyProductCategoryMetafieldsSyncInput;
   hints: string[];
 }> = [
   {
@@ -268,48 +292,64 @@ const PRODUCT_BATCH_CATEGORY_METAFIELD_DEFS: Array<{
     key: "fabric",
     label: "织物",
     shopifyField: "categoryFabric",
+    baseKey: "fabricBaseValue",
+    shopifyBaseValueField: "categoryFabricBaseValue",
     hints: ["categoryfabric", "category fabric", "fabric", "织物"],
   },
   {
     key: "ageGroup",
     label: "年龄段",
     shopifyField: "categoryAgeGroup",
+    baseKey: "ageGroupBaseValue",
+    shopifyBaseValueField: "categoryAgeGroupBaseValue",
     hints: ["age-group", "age group", "年龄段"],
   },
   {
     key: "occasion",
     label: "穿着场合",
     shopifyField: "categoryOccasion",
+    baseKey: "occasionBaseValue",
+    shopifyBaseValueField: "categoryOccasionBaseValue",
     hints: ["occasion", "dress-occasion", "穿着场合", "场合"],
   },
   {
     key: "dressStyle",
     label: "裙子风格",
     shopifyField: "categoryDressStyle",
+    baseKey: "dressStyleBaseValue",
+    shopifyBaseValueField: "categoryDressStyleBaseValue",
     hints: ["dress-style", "dress style", "裙子风格", "裙型"],
   },
   {
     key: "neckline",
     label: "领口",
     shopifyField: "categoryNeckline",
+    baseKey: "necklineBaseValue",
+    shopifyBaseValueField: "categoryNecklineBaseValue",
     hints: ["neckline", "领口"],
   },
   {
     key: "dressLengthType",
     label: "裙子/连衣裙长度类型",
     shopifyField: "categoryDressLengthType",
+    baseKey: "dressLengthTypeBaseValue",
+    shopifyBaseValueField: "categoryDressLengthTypeBaseValue",
     hints: ["skirt-dress-length-type", "dress-length-type", "dress length", "裙长", "长度类型"],
   },
   {
     key: "sleeveLengthType",
     label: "袖长类型",
     shopifyField: "categorySleeveLengthType",
+    baseKey: "sleeveLengthTypeBaseValue",
+    shopifyBaseValueField: "categorySleeveLengthTypeBaseValue",
     hints: ["sleeve-length-type", "sleeve length", "袖长", "袖长类型"],
   },
   {
     key: "targetGender",
     label: "目标性别",
     shopifyField: "categoryTargetGender",
+    baseKey: "targetGenderBaseValue",
+    shopifyBaseValueField: "categoryTargetGenderBaseValue",
     hints: ["target-gender", "target gender", "目标性别"],
   },
 ];
@@ -1747,11 +1787,14 @@ async function generateProductProposal(opts: {
 
   const rawText = response.text || "";
   const raw = parseJsonObject(rawText);
+  const categoryResolutionWarnings: string[] = [];
   let proposed = constrainProposalToTargetFields(
     resolveCategoryMetafieldsAgainstBackendCandidates(
       normalizeGeneratedProposal(raw, opts.product, images, opts.prompt),
       opts.prompt,
       categoryMetafieldCandidates,
+      current.categoryMetafields,
+      categoryResolutionWarnings,
     ),
     current,
     opts.targetFields,
@@ -1778,6 +1821,8 @@ async function generateProductProposal(opts: {
         }),
         opts.prompt,
         categoryMetafieldCandidates,
+        current.categoryMetafields,
+        categoryResolutionWarnings,
       ),
       current,
       opts.targetFields,
@@ -1821,6 +1866,7 @@ async function generateProductProposal(opts: {
     warnings: [
       ...normalizeStringArray(raw.warnings),
       ...categoryMetafieldCandidateContext.warnings,
+      ...categoryResolutionWarnings,
       ...(repairedForQuality
         ? ["已自动修复生成内容中的残句、非英文内容或类别尺寸格式，写回前会再次校验。"]
         : []),
@@ -2593,6 +2639,14 @@ function normalizeCategoryMetafields(
       });
     } else {
       result[key] = cleanCategoryMetafieldValue(rawValue);
+      if (def.baseKey) {
+        const rawBaseValue =
+          source[def.baseKey] ??
+          (def.shopifyBaseValueField ? source[def.shopifyBaseValueField] : undefined) ??
+          current[def.baseKey] ??
+          "";
+        result[def.baseKey] = cleanCategoryMetafieldValue(rawBaseValue);
+      }
     }
   }
 
@@ -2613,6 +2667,10 @@ function pruneCategoryMetafields(
   for (const def of PRODUCT_BATCH_CATEGORY_METAFIELD_DEFS) {
     const value = cleanCategoryMetafieldValue(fields[def.key]);
     if (value) result[def.key] = value;
+    if (def.baseKey) {
+      const baseValue = cleanCategoryMetafieldValue(fields[def.baseKey]);
+      if (baseValue) result[def.baseKey] = baseValue;
+    }
   }
   return result;
 }
@@ -2651,7 +2709,7 @@ function buildCategoryMetafieldPromptInstruction(
     excludedKeys: ["color"],
     backendCandidates: formatCategoryMetafieldCandidatesForPrompt(keys, candidates),
     rule:
-      "Only fill categoryMetafields keys listed in allowedKeys. Do not generate color here. Keep size on the existing categorySize logic. For fabric, ageGroup, occasion, dressStyle, neckline, dressLengthType, sleeveLengthType, and targetGender, first choose an exact or closest value from backendCandidates when available. If no backend candidate fits, output a concise new English display value; Shopify sync will create the missing metaobject where the field supports it. For keys not listed in allowedKeys, copy the current value or leave it empty.",
+      "Only fill categoryMetafields keys listed in allowedKeys. Do not generate color here. Keep size on the existing categorySize logic. For fabric, ageGroup, occasion, dressStyle, neckline, dressLengthType, sleeveLengthType, and targetGender: first choose an exact or closest existingMetaobjectValues item when available and output that original display value. If no existing Metaobject fits, you may output a new concise English display value only when officialTaxonomyValues contains a suitable legal base value; in that case also output the matching <key>BaseValue field, for example dressStyleBaseValue. The base value must be copied verbatim from officialTaxonomyValues. If neither an existing Metaobject nor a suitable official taxonomy value fits, keep the current value or leave that key empty. For keys not listed in allowedKeys, copy the current value or leave it empty.",
   };
 }
 
@@ -2761,6 +2819,8 @@ function resolveCategoryMetafieldsAgainstBackendCandidates(
   proposed: ProductBatchProposed,
   prompt: string,
   candidates: ProductBatchCategoryMetafieldCandidates,
+  current: ProductBatchCategoryMetafields = {},
+  warnings: string[] = [],
 ): ProductBatchProposed {
   if (!Object.keys(candidates).length) return proposed;
   const keys = detectTargetCategoryMetafieldKeys(prompt).filter((key) => key !== "size");
@@ -2771,41 +2831,79 @@ function resolveCategoryMetafieldsAgainstBackendCandidates(
   };
   let changed = false;
   for (const key of keys) {
+    const def = PRODUCT_BATCH_CATEGORY_METAFIELD_DEFS.find((item) => item.key === key);
     const candidate = candidates[key];
-    if (!candidate) continue;
+    if (!def || !candidate) continue;
     const value = cleanCategoryMetafieldValue(nextFields[key]);
     if (!value) continue;
-    const resolved = resolveCategoryMetafieldValueAgainstCandidate(value, candidate);
-    if (resolved && resolved !== value) {
-      nextFields[key] = resolved;
-      changed = true;
+
+    const metaMatch = resolveCategoryMetafieldValueAgainstCandidate(
+      value,
+      candidate,
+      "metaobject",
+    );
+    if (metaMatch) {
+      if (metaMatch !== value) {
+        nextFields[key] = metaMatch;
+        changed = true;
+      }
+      if (def.baseKey && nextFields[def.baseKey]) {
+        delete nextFields[def.baseKey];
+        changed = true;
+      }
+      continue;
     }
+
+    if (!def.baseKey) continue;
+    const baseValue = cleanCategoryMetafieldValue(nextFields[def.baseKey]);
+    const baseMatch =
+      resolveCategoryMetafieldValueAgainstCandidate(baseValue, candidate, "taxonomy") ||
+      resolveCategoryMetafieldValueAgainstCandidate(value, candidate, "taxonomy");
+
+    if (baseMatch) {
+      if (baseMatch !== baseValue) {
+        nextFields[def.baseKey] = baseMatch;
+        changed = true;
+      }
+      continue;
+    }
+
+    const currentValue = cleanCategoryMetafieldValue(current[key]);
+    const currentBaseValue = cleanCategoryMetafieldValue(current[def.baseKey]);
+    if (currentValue) nextFields[key] = currentValue;
+    else delete nextFields[key];
+    if (currentBaseValue) nextFields[def.baseKey] = currentBaseValue;
+    else delete nextFields[def.baseKey];
+    warnings.push(
+      `Skipped category metafield ${def.label}: no existing backend value or official taxonomy base matched "${value}".`,
+    );
+    changed = true;
   }
+
   if (!changed) return proposed;
   return {
     ...proposed,
     categoryMetafields: pruneCategoryMetafields(nextFields),
   };
 }
-
 function resolveCategoryMetafieldValueAgainstCandidate(
   value: string,
   candidate: ProductBatchCategoryMetafieldCandidateSet,
+  source: "metaobject" | "taxonomy" | "all" = "all",
 ): string {
   const parts = splitCategoryMetafieldCandidateValue(value);
-  if (!parts.length) return value;
-  const existingValues = sanitizeCategoryCandidateItems([
-    ...candidate.metaobjectValues,
-    ...candidate.taxonomyValues,
-  ]);
-  if (!existingValues.length) return value;
-  const resolved = parts.map((part) => {
-    const match = findSimilarCategoryCandidate(part, existingValues);
-    return match || part;
-  });
-  return joinCategoryMetafieldCandidateValues(resolved);
+  if (!parts.length) return "";
+  const sourceValues =
+    source === "metaobject"
+      ? candidate.metaobjectValues
+      : source === "taxonomy"
+        ? candidate.taxonomyValues
+        : [...candidate.metaobjectValues, ...candidate.taxonomyValues];
+  const existingValues = sanitizeCategoryCandidateItems(sourceValues);
+  if (!existingValues.length) return "";
+  const resolved = parts.map((part) => findSimilarCategoryCandidate(part, existingValues));
+  return resolved.every(Boolean) ? joinCategoryMetafieldCandidateValues(resolved) : "";
 }
-
 function findSimilarCategoryCandidate(value: string, candidates: string[]) {
   const normalizedValue = normalizeCategoryCandidateForMatch(value);
   const compactValue = normalizedValue.replace(/\s+/g, "");
@@ -3038,6 +3136,12 @@ function buildChangedCategoryMetafieldsSyncInput(
     );
     if (!proposedValue || proposedValue === currentValue) continue;
     (input as Record<string, string>)[def.shopifyField] = proposedValue;
+    if (def.baseKey && def.shopifyBaseValueField) {
+      const proposedBaseValue = cleanCategoryMetafieldValue(proposedFields[def.baseKey]);
+      if (proposedBaseValue) {
+        (input as Record<string, string>)[def.shopifyBaseValueField] = proposedBaseValue;
+      }
+    }
   }
   return input;
 }
