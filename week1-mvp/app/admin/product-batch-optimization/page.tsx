@@ -226,6 +226,7 @@ type ProductBatchPromptPreset = {
   createdAt: number;
   form: {
     query: string;
+    productTitleKeyword?: string;
     productTypeKeyword?: string;
     sortOrder?: ProductBatchSortOrder;
     limit: number;
@@ -280,7 +281,7 @@ export default function ProductBatchOptimizationPage() {
   const presetMenuRef = useRef<HTMLDivElement | null>(null);
   const [form, setForm] = useState({
     query: "status:active",
-    productTypeKeyword: "",
+    productTitleKeyword: "",
     sortOrder: "newest" as ProductBatchSortOrder,
     limit: 10,
     start: 0,
@@ -553,7 +554,7 @@ export default function ProductBatchOptimizationPage() {
     );
     const effectiveQuery = buildProductBatchShopifyQuery(
       form.query,
-      form.productTypeKeyword,
+      form.productTitleKeyword,
     );
     setForm((prev) => ({ ...prev, limit: normalizedLimit }));
     setLimitInput(String(normalizedLimit));
@@ -651,7 +652,7 @@ export default function ProductBatchOptimizationPage() {
       createdAt: Date.now(),
       form: {
         query: form.query,
-        productTypeKeyword: form.productTypeKeyword,
+        productTitleKeyword: form.productTitleKeyword,
         sortOrder: form.sortOrder,
         limit: normalizeLimitInput(limitInput, form.limit),
         start: Math.max(0, Number(form.start) || 0),
@@ -678,7 +679,7 @@ export default function ProductBatchOptimizationPage() {
     setForm((prev) => ({
       ...prev,
       query: preset.form.query,
-      productTypeKeyword: preset.form.productTypeKeyword || "",
+      productTitleKeyword: preset.form.productTitleKeyword || preset.form.productTypeKeyword || "",
       sortOrder: preset.form.sortOrder || "newest",
       limit: nextLimit,
       start: preset.form.start,
@@ -1148,17 +1149,17 @@ export default function ProductBatchOptimizationPage() {
                 />
               </label>
               <label className="text-xs font-medium text-fg-secondary">
-                类型关键词
+                标题关键词
                 <input
                   className="input mt-1"
-                  value={form.productTypeKeyword}
+                  value={form.productTitleKeyword}
                   onChange={(e) =>
                     setForm((prev) => ({
                       ...prev,
-                      productTypeKeyword: e.target.value,
+                      productTitleKeyword: e.target.value,
                     }))
                   }
-                  placeholder="Prom Dresses"
+                  placeholder="Homecoming"
                 />
               </label>
               <label className="text-xs font-medium text-fg-secondary">
@@ -1783,14 +1784,14 @@ function normalizeLimitInput(value: string, fallback: number) {
     : 1;
 }
 
-function buildProductBatchShopifyQuery(query: string, productTypeKeyword: string) {
+function buildProductBatchShopifyQuery(query: string, productTitleKeyword: string) {
   const baseQuery = String(query || "").trim() || "status:active";
-  const productType = normalizeProductTypeKeyword(productTypeKeyword);
-  if (!productType) return baseQuery;
-  return `${baseQuery} product_type:${quoteShopifySearchValue(productType)}`;
+  const titleKeyword = normalizeTitleKeyword(productTitleKeyword);
+  if (!titleKeyword) return baseQuery;
+  return `${baseQuery} title:${quoteShopifySearchValue(titleKeyword)}`;
 }
 
-function normalizeProductTypeKeyword(value: string) {
+function normalizeTitleKeyword(value: string) {
   return String(value || "")
     .replace(/[\r\n]+/g, " ")
     .replace(/\s+/g, " ")
@@ -1819,7 +1820,7 @@ function readProductBatchPromptPresets(): ProductBatchPromptPreset[] {
         createdAt: Number(preset.createdAt) || 0,
         form: {
           query: String(preset.form.query || "status:active"),
-          productTypeKeyword: String(preset.form.productTypeKeyword || ""),
+          productTitleKeyword: String(preset.form.productTitleKeyword || preset.form.productTypeKeyword || ""),
           sortOrder: preset.form.sortOrder === "oldest" ? "oldest" : "newest",
           limit: Number(preset.form.limit) || 1,
           start: Math.max(0, Number(preset.form.start) || 0),

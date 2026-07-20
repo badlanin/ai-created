@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
@@ -16,17 +16,6 @@ type BlogGeneratedDraft = { title: string; bodyHtml: string; summary: string; se
 const CONTROL_CLASS = "w-full rounded-sm border border-border-default bg-bg-secondary px-3 text-[12px] text-fg-primary outline-none transition-colors placeholder:text-fg-muted focus:border-brand-400 focus:ring-2 focus:ring-[rgba(99,102,241,0.12)]";
 const MARKDOWN_SOURCE_MAX_CHARS = 60_000;
 
-
-const MODULE_OPTIONS: Array<{ key: ModuleKey; label: string }> = [
-  { key: "quickAnswer", label: "Quick Answer" },
-  { key: "toc", label: "文章目录" },
-  { key: "trendTable", label: "趋势对比表" },
-  { key: "recommendations", label: "搭配推荐" },
-  { key: "sources", label: "来源资料" },
-  { key: "faq", label: "FAQ" },
-  { key: "cta", label: "收藏 CTA" },
-  { key: "relatedArticles", label: "相关文章" },
-];
 
 export default function BlogPage() {
   const [prompt, setPrompt] = useState("");
@@ -68,8 +57,6 @@ export default function BlogPage() {
     return { words: text ? text.split(" ").filter(Boolean).length : 0, sections: (articleBodyHtml.match(/<h[1-6]\b/gi) || []).length, faqs: (articleBodyHtml.match(/faq|常见问题/gi) || []).length };
   }, [articleBodyHtml]);
 
-  const syncFields = [["发布博客", Boolean(shopifyBlog)], ["文章标题", Boolean(articleTitle.trim())], ["正文 HTML", Boolean(articleBodyHtml.trim())], ["文章摘要", Boolean(summary.trim())], ["页面标题", Boolean(seoTitle.trim())], ["元描述", Boolean(metaDescription.trim())], ["URL 名称", Boolean(urlHandle.trim())], ["文章标签", Boolean(tags.trim())], ["作者", Boolean(author.trim())], ["封面图片", Boolean(coverFileName)]] as const;
-  const syncReadyCount = syncFields.filter(([, ready]) => ready).length;
 
   useEffect(() => { void loadShopifyConnection(); }, []);
 
@@ -87,7 +74,6 @@ export default function BlogPage() {
     }
   }
 
-  function toggleModule(key: ModuleKey) { setModules((current) => ({ ...current, [key]: !current[key] })); }
   function handleOptimizePrompt() { if (!prompt.trim()) return; setPrompt(`${prompt.trim()}\n\n输出要求：围绕搜索意图组织 H2/H3 结构，内容具体可信，包含实用建议，并自然关联可选商品。`); }
 
   async function handleGenerate() {
@@ -213,12 +199,101 @@ export default function BlogPage() {
 
       <Panel className="mb-4 overflow-hidden"><div className="grid grid-cols-1 lg:grid-cols-2"><section className="border-b border-border-subtle lg:border-b-0 lg:border-r"><PanelHeader icon={<WandSparkles size={16} />} title="AI 创作指令" meta="输入文章要求" /><div className="p-4"><textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} className={`${CONTROL_CLASS} min-h-[118px] resize-y py-3 leading-5`} placeholder="描述文章主题、目标读者、核心关键词、内容方向或需要关联的商品" /><div className="mt-3 flex flex-wrap items-center justify-end gap-3"><div className="flex flex-wrap items-center gap-2"><label className="flex h-9 cursor-pointer items-center gap-1.5 rounded-sm border border-border-subtle bg-white px-4 text-[11px] font-medium text-fg-secondary hover:border-brand-200 hover:text-brand-600"><input type="file" accept=".md,.markdown,text/markdown,text/plain" className="sr-only" onChange={(event) => void handleMarkdownFile(event.target.files?.[0])} /><Upload size={14} />上传 .md</label>{markdownFileName ? <div className="flex h-9 items-center gap-2 rounded-sm bg-bg-tertiary px-3 text-[10px] text-fg-secondary"><span className="max-w-[220px] truncate">{markdownFileName}</span><span className="text-fg-muted">{markdownSource.length.toLocaleString()} 字符</span><button type="button" onClick={() => { setMarkdownFileName(""); setMarkdownSource(""); setMarkdownError(""); }} className="text-fg-muted hover:text-danger"><X size={12} /></button></div> : null}<button type="button" onClick={handleOptimizePrompt} disabled={!prompt.trim()} className="flex h-9 items-center gap-1.5 rounded-sm border border-border-subtle bg-white px-4 text-[11px] font-medium text-fg-secondary disabled:opacity-45"><WandSparkles size={14} />优化提示词</button><button type="button" onClick={handleGenerate} disabled={(!prompt.trim() && !markdownSource.trim()) || generating} className="flex h-9 items-center gap-1.5 rounded-sm bg-grad-brand px-5 text-[11px] font-semibold text-white shadow-[0_5px_14px_rgba(99,102,241,0.18)] disabled:opacity-45">{generating ? <Loader2 size={14} className="animate-spin" /> : <WandSparkles size={14} />}{generating ? "正在生成..." : "生成文章"}</button></div></div>{markdownError ? <div className={`mt-2 rounded-sm px-3 py-2 text-[10px] ${markdownSource ? "bg-[var(--warn-bg)] text-[#b45309]" : "bg-[#fef2f2] text-[#dc2626]"}`}>{markdownError}</div> : null}</div></section><section><PanelHeader icon={<FileText size={16} />} title="AI 输出结果" meta="生成后先在这里预览" action={<button type="button" onClick={handleApplyGeneratedDraft} disabled={!generatedDraft || generating} className="flex h-8 items-center gap-1.5 rounded-sm bg-grad-brand px-4 text-[11px] font-semibold text-white disabled:opacity-45"><Check size={13} />快速填入</button>} /><GeneratedDraftPreview draft={generatedDraft} generating={generating} /></section></div></Panel>
 
-      <section className="grid min-h-[900px] grid-cols-1 gap-4 lg:grid-cols-12">
-        <aside className="lg:col-span-3 xl:col-span-2"><Panel className="h-full p-4"><PanelTitle title="SEO 简报" /><Field label="核心关键词" required><input value={primaryKeyword} onChange={(e) => setPrimaryKeyword(e.target.value)} className={`${CONTROL_CLASS} h-9`} /></Field><Field label="搜索意图"><input value={searchIntent} onChange={(e) => setSearchIntent(e.target.value)} className={`${CONTROL_CLASS} h-9`} placeholder="信息 + 商业调查" /></Field><Field label="目标用户"><input value={targetAudience} onChange={(e) => setTargetAudience(e.target.value)} className={`${CONTROL_CLASS} h-9`} placeholder="美丽学生" /></Field><div className="mb-4"><div className="mb-2 flex justify-between text-[11px] text-fg-secondary"><span>内容模块</span><span>{Object.values(modules).filter(Boolean).length} 项启用</span></div><div className="grid grid-cols-2 gap-2">{MODULE_OPTIONS.map((item) => <button key={item.key} type="button" onClick={() => toggleModule(item.key)} className={`flex h-8 items-center gap-2 rounded-sm border px-2 text-[10px] ${modules[item.key] ? "border-brand-200 bg-[var(--brand-50-bg)] text-brand-700" : "border-border-subtle bg-bg-tertiary text-fg-secondary"}`}><span className={`flex h-4 w-4 items-center justify-center rounded-[4px] border ${modules[item.key] ? "border-brand-500 bg-brand-500 text-white" : "border-border-default bg-white"}`}>{modules[item.key] ? <Check size={11} /> : null}</span>{item.label}</button>)}</div></div><Field label="输出语言"><div className="grid grid-cols-3 rounded-sm bg-bg-tertiary p-1">{([['english','英文'],['bilingual','中英双语'],['chinese','中文']] as Array<[OutputLanguage,string]>).map(([value,label]) => <button key={value} type="button" onClick={() => setLanguage(value)} className={`h-7 rounded-[6px] text-[10px] ${language === value ? "bg-white font-semibold text-brand-600 shadow-sm" : "text-fg-tertiary"}`}>{label}</button>)}</div></Field></Panel></aside>
-        <section className="lg:col-span-6 xl:col-span-7"><Panel className="flex h-full flex-col overflow-hidden"><PanelHeader icon={<FileText size={16} />} title="文章编辑" meta={`${contentStats.words} words · ${contentStats.sections} sections · ${contentStats.faqs} FAQs`} /><div className="border-b border-border-subtle px-5 py-4"><div className="mb-1 flex justify-between text-[10px] text-fg-muted"><span>标题</span><span>{articleTitle.length} / 70</span></div><input value={articleTitle} onChange={(e) => setArticleTitle(e.target.value)} maxLength={70} className="w-full bg-transparent text-[20px] font-bold text-fg-primary outline-none placeholder:text-fg-muted" placeholder="输入文章标题" /></div><textarea value={articleBodyHtml} onChange={(e) => setArticleBodyHtml(e.target.value)} className="min-h-[430px] flex-1 resize-y border-0 bg-bg-secondary p-5 font-mono text-[12px] leading-6 text-fg-secondary outline-none" placeholder="AI 生成后正文 HTML 会显示在这里" /><section className="border-t border-border-subtle px-5 py-4"><Field label="摘要" hint={`${summary.length} 字符`} compact><textarea value={summary} onChange={(e) => setSummary(e.target.value)} className={`${CONTROL_CLASS} min-h-[78px] resize-y py-2 leading-5`} /></Field><Field label="页面标题" hint={`${seoTitle.length} / 70`} compact><input value={seoTitle} onChange={(e) => setSeoTitle(e.target.value)} maxLength={70} className={`${CONTROL_CLASS} h-9`} /></Field><Field label="元描述" hint={`${metaDescription.length} / 160`} compact><textarea value={metaDescription} onChange={(e) => setMetaDescription(e.target.value)} maxLength={160} className={`${CONTROL_CLASS} min-h-[70px] resize-y py-2 leading-5`} /></Field><Field label="URL 名称" compact><input value={urlHandle} onChange={(e) => setUrlHandle(e.target.value)} className={`${CONTROL_CLASS} h-9`} placeholder="article-url-name" /></Field></section></Panel></section>
-        <aside className="lg:col-span-3 xl:col-span-3"><Panel className="flex h-full flex-col p-4"><PanelTitle title="Shopify 同步" icon={<Store size={16} />} /><Field label="发布博客" required><select value={shopifyBlog} onChange={(e) => setShopifyBlog(e.target.value)} className={`${CONTROL_CLASS} h-9`}><option value="">请选择 Shopify 博客</option><option value="news">News</option><option value="blog">Blog</option></select></Field><Field label="作者"><input value={author} onChange={(e) => setAuthor(e.target.value)} className={`${CONTROL_CLASS} h-9`} /></Field><Field label="文章标签"><input value={tags} onChange={(e) => setTags(e.target.value)} className={`${CONTROL_CLASS} h-9`} placeholder="tag one, tag two" /></Field><label className="mb-4 flex min-h-[82px] cursor-pointer flex-col items-center justify-center rounded-sm border border-dashed border-border-default bg-bg-tertiary px-3 text-center"><input type="file" accept="image/*" className="sr-only" onChange={(e) => setCoverFileName(e.target.files?.[0]?.name || "")} /><ImageIcon size={17} className="mb-1.5 text-brand-400" /><span className="max-w-full truncate text-[10px] text-fg-secondary">{coverFileName || "选择封面图片"}</span></label><Field label="发布状态"><div className="grid grid-cols-2 rounded-sm bg-bg-tertiary p-1">{([['draft','草稿'],['published','立即发布']] as Array<[PublishStatus,string]>).map(([value,label]) => <button key={value} type="button" onClick={() => setPublishStatus(value)} className={`h-7 rounded-[6px] text-[10px] ${publishStatus === value ? "bg-white font-semibold text-brand-600 shadow-sm" : "text-fg-tertiary"}`}>{label}</button>)}</div></Field><div className="mb-4 divide-y divide-border-subtle rounded-sm border border-border-subtle">{syncFields.map(([label, ready]) => <div key={label} className="flex justify-between px-3 py-2 text-[10px]"><span className="text-fg-secondary">{label}</span><span className={ready ? "text-[#059669]" : "text-fg-muted"}>{ready ? "待同步" : "待填写"}</span></div>)}</div><div className="mb-4 flex gap-2 rounded-sm bg-[var(--success-bg)] p-2.5 text-[10px] leading-4 text-[#047857]"><Check size={14} className="shrink-0" />页面标题与元描述会写入 Shopify Article 的 global.title_tag 和 global.description_tag。</div>{syncMessage ? <div className={`mb-4 rounded-sm px-3 py-2 text-[11px] ${/失败|错误|找不到|请先|没有返回/.test(syncMessage) ? "bg-[#fef2f2] text-[#dc2626]" : "bg-[var(--success-bg)] text-[#047857]"}`}>{syncMessage}</div> : null}<div className="mt-auto"><button type="button" onClick={handleSaveDraft} className="mb-2 flex h-10 w-full items-center justify-center gap-2 rounded-sm border border-border-subtle bg-white text-[12px] font-semibold text-fg-secondary"><Save size={15} />{draftSaved ? "已保存草稿" : "保存草稿"}</button><button type="button" onClick={handleSyncShopify} disabled={!connection || syncing || !shopifyBlog || !articleTitle.trim() || !articleBodyHtml.trim()} className="flex h-10 w-full items-center justify-center gap-2 rounded-sm bg-grad-brand text-[12px] font-semibold text-white disabled:opacity-45">{syncing ? <Loader2 size={14} className="animate-spin" /> : null}{syncing ? "同步中..." : shopifyArticleId ? "更新 Shopify 文章" : "同步 Shopify 草稿"}</button></div></Panel></aside>
-      </section>
-      {bindOpen ? <ShopifyBindModal fileName={bindFileName} error={bindError} binding={binding} canSubmit={Boolean(bindFileText)} onFileChange={handleBindFile} onClose={() => { if (!binding) setBindOpen(false); }} onSubmit={handleExchangeToken} /> : null}
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+        <section className="space-y-4 lg:col-span-8 xl:col-span-8">
+          <Panel className="overflow-hidden">
+            <PanelHeader icon={<FileText size={16} />} title="添加博客文章" meta={`${contentStats.words} words · ${contentStats.sections} sections · ${contentStats.faqs} FAQs`} />
+            <div className="space-y-4 p-5">
+              <Field label="标题" hint={`${articleTitle.length} / 70`} compact>
+                <input value={articleTitle} onChange={(e) => setArticleTitle(e.target.value)} maxLength={70} className={`${CONTROL_CLASS} h-9`} placeholder="例如，介绍您的最新产品或优惠活动" />
+              </Field>
+              <Field label="内容" compact>
+                <textarea value={articleBodyHtml} onChange={(e) => setArticleBodyHtml(e.target.value)} className={`${CONTROL_CLASS} min-h-[430px] resize-y py-3 font-mono leading-6`} placeholder="AI 生成后正文 HTML 会显示在这里，也可以直接编辑" />
+              </Field>
+            </div>
+          </Panel>
+
+          <Panel className="p-5">
+            <PanelTitle title="摘要" />
+            <p className="mb-3 text-[11px] text-fg-muted">添加文章摘要，摘要将显示在您的主页或博客上。</p>
+            <textarea value={summary} onChange={(e) => setSummary(e.target.value)} className={`${CONTROL_CLASS} min-h-[82px] resize-y py-2 leading-5`} />
+          </Panel>
+
+          <Panel className="p-5">
+            <PanelTitle title="搜索引擎列表" />
+            <p className="mb-4 text-[11px] text-fg-muted">添加标题和描述以查看此博客文章在搜索引擎中的显示效果。</p>
+            <Field label="页面标题" hint={`${seoTitle.length} / 70`} compact>
+              <input value={seoTitle} onChange={(e) => setSeoTitle(e.target.value)} maxLength={70} className={`${CONTROL_CLASS} h-9`} />
+            </Field>
+            <Field label="元描述" hint={`${metaDescription.length} / 160`} compact>
+              <textarea value={metaDescription} onChange={(e) => setMetaDescription(e.target.value)} maxLength={160} className={`${CONTROL_CLASS} min-h-[70px] resize-y py-2 leading-5`} />
+            </Field>
+            <Field label="URL 名称" compact>
+              <input value={urlHandle} onChange={(e) => setUrlHandle(e.target.value)} className={`${CONTROL_CLASS} h-9`} placeholder="article-url-name" />
+            </Field>
+          </Panel>
+        </section>
+
+        <aside className="space-y-4 lg:col-span-4 xl:col-span-4">
+          <Panel className="p-4">
+            <PanelTitle title="可见性" />
+            <div className="space-y-2 text-[12px] text-fg-primary">
+              <label className="flex cursor-pointer items-center gap-2 rounded-sm border border-border-subtle bg-white px-3 py-2">
+                <input type="radio" name="blog-visibility" checked={publishStatus === "published"} onChange={() => setPublishStatus("published")} className="h-4 w-4 accent-brand-500" />
+                <span>可见</span>
+              </label>
+              <label className="flex cursor-pointer items-center gap-2 rounded-sm border border-border-subtle bg-white px-3 py-2">
+                <input type="radio" name="blog-visibility" checked={publishStatus === "draft"} onChange={() => setPublishStatus("draft")} className="h-4 w-4 accent-brand-500" />
+                <span>隐藏</span>
+              </label>
+            </div>
+          </Panel>
+
+          <Panel className="p-4">
+            <PanelTitle title="图片" icon={<ImageIcon size={16} />} />
+            <label className="flex min-h-[118px] cursor-pointer flex-col items-center justify-center rounded-sm border border-dashed border-border-default bg-bg-tertiary px-3 text-center">
+              <input type="file" accept="image/*" className="sr-only" onChange={(e) => setCoverFileName(e.target.files?.[0]?.name || "")} />
+              <ImageIcon size={18} className="mb-2 text-brand-400" />
+              <span className="max-w-full truncate text-[11px] text-fg-secondary">{coverFileName || "添加图片"}</span>
+            </label>
+          </Panel>
+
+          <Panel className="p-4">
+            <PanelTitle title="组织" icon={<Store size={16} />} />
+            <Field label="作者">
+              <input value={author} onChange={(e) => setAuthor(e.target.value)} className={`${CONTROL_CLASS} h-9`} />
+            </Field>
+            <Field label="博客" required>
+              <select value={shopifyBlog} onChange={(e) => setShopifyBlog(e.target.value)} className={`${CONTROL_CLASS} h-9`}>
+                <option value="">请选择 Shopify 博客</option>
+                <option value="news">News</option>
+                <option value="blog">Blog</option>
+              </select>
+            </Field>
+            <Field label="标记">
+              <input value={tags} onChange={(e) => setTags(e.target.value)} className={`${CONTROL_CLASS} h-9`} placeholder="tag one, tag two" />
+            </Field>
+          </Panel>
+
+          <Panel className="p-4">
+            <PanelTitle title="模板样式" />
+            <select className={`${CONTROL_CLASS} h-9`} defaultValue="default">
+              <option value="default">默认博客文章</option>
+            </select>
+          </Panel>
+
+          <Panel className="p-4">
+            <PanelTitle title="保存 / 同步" />
+            {syncMessage ? <div className={`mb-4 rounded-sm px-3 py-2 text-[11px] ${/失败|错误|找不到|请先|没有返回/.test(syncMessage) ? "bg-[#fef2f2] text-[#dc2626]" : "bg-[var(--success-bg)] text-[#047857]"}`}>{syncMessage}</div> : null}
+            <button type="button" onClick={handleSaveDraft} className="mb-2 flex h-10 w-full items-center justify-center gap-2 rounded-sm border border-border-subtle bg-white text-[12px] font-semibold text-fg-secondary">
+              <Save size={15} />{draftSaved ? "已保存草稿" : "保存草稿"}
+            </button>
+            <button type="button" onClick={handleSyncShopify} disabled={!connection || syncing || !shopifyBlog || !articleTitle.trim() || !articleBodyHtml.trim()} className="flex h-10 w-full items-center justify-center gap-2 rounded-sm bg-grad-brand text-[12px] font-semibold text-white disabled:opacity-45">
+              {syncing ? <Loader2 size={14} className="animate-spin" /> : null}{syncing ? "同步中..." : shopifyArticleId ? "更新 Shopify 文章" : "同步 Shopify 草稿"}
+            </button>
+          </Panel>
+        </aside>
+      </section>      {bindOpen ? <ShopifyBindModal fileName={bindFileName} error={bindError} binding={binding} canSubmit={Boolean(bindFileText)} onFileChange={handleBindFile} onClose={() => { if (!binding) setBindOpen(false); }} onSubmit={handleExchangeToken} /> : null}
     </main>
   );
 }
