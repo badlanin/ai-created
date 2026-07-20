@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { Check, FileText, Image as ImageIcon, Loader2, Save, Store, UploadCloud, WandSparkles, X } from "lucide-react";
+import { Check, FileText, Image as ImageIcon, Loader2, Save, Store, Upload, UploadCloud, WandSparkles, X } from "lucide-react";
 import { fetchWithShopifyDevice } from "@/lib/shopify-device-client";
 
 type ModuleKey = "quickAnswer" | "toc" | "trendTable" | "recommendations" | "sources" | "faq" | "cta" | "relatedArticles";
@@ -11,8 +11,10 @@ type PublishStatus = "draft" | "published";
 type ShopifyConnection = { shopDomain: string; isActive?: boolean };
 type ShopifyTxtCredentials = { shopDomain: string; clientId: string; clientSecret: string };
 type BlogSyncArticle = { id: string; title: string; handle: string; blogTitle: string; blogHandle: string; publicUrl: string };
+type BlogGeneratedDraft = { title: string; bodyHtml: string; summary: string; seoTitle: string; metaDescription: string; urlHandle: string; tags: string };
 
 const CONTROL_CLASS = "w-full rounded-sm border border-border-default bg-bg-secondary px-3 text-[12px] text-fg-primary outline-none transition-colors placeholder:text-fg-muted focus:border-brand-400 focus:ring-2 focus:ring-[rgba(99,102,241,0.12)]";
+const MARKDOWN_SOURCE_MAX_CHARS = 60_000;
 
 const PROMPT_TEMPLATES = [
   ["根据产品生成", "请根据我选择的 Shopify 商品生成一篇博客文章，说明产品特点、适用场景、选购建议和搭配方式，并自然引导读者查看相关商品。"],
@@ -64,6 +66,10 @@ export default function BlogPage() {
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
   const [shopifyArticleId, setShopifyArticleId] = useState("");
+  const [markdownFileName, setMarkdownFileName] = useState("");
+  const [markdownSource, setMarkdownSource] = useState("");
+  const [markdownError, setMarkdownError] = useState("");
+  const [generatedDraft, setGeneratedDraft] = useState<BlogGeneratedDraft | null>(null);
 
   const contentStats = useMemo(() => {
     const text = articleBodyHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
@@ -93,25 +99,38 @@ export default function BlogPage() {
   function handleOptimizePrompt() { if (!prompt.trim()) return; setPrompt(`${prompt.trim()}\n\n输出要求：围绕搜索意图组织 H2/H3 结构，内容具体可信，包含实用建议，并自然关联可选商品。`); }
 
   async function handleGenerate() {
-    if (!prompt.trim() || generating) return;
+    if ((!prompt.trim() && !markdownSource.trim()) || generating) return;
     setGenerating(true);
     try {
-      const response = await fetch("/api/blog/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt, primaryKeyword, targetAudience, searchIntent, modules, language, shopDomain: connection?.shopDomain || null }) });
+      const response = await fetch("/api/blog/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt, primaryKeyword, targetAudience, searchIntent, modules, language, shopDomain: connection?.shopDomain || null, markdownFileName, markdownSource }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || response.statusText);
       const article = data.article || {};
-      if (typeof article.title === "string") setArticleTitle(article.title);
-      if (typeof article.bodyHtml === "string") setArticleBodyHtml(article.bodyHtml);
-      if (typeof article.summary === "string") setSummary(article.summary);
-      if (typeof article.seoTitle === "string") setSeoTitle(article.seoTitle);
-      if (typeof article.metaDescription === "string") setMetaDescription(article.metaDescription);
-      if (typeof article.urlHandle === "string") setUrlHandle(article.urlHandle);
-      if (typeof article.tags === "string") setTags(article.tags);
+      setGeneratedDraft({
+        title: typeof article.title === "string" ? article.title : "",
+        bodyHtml: typeof article.bodyHtml === "string" ? article.bodyHtml : "",
+        summary: typeof article.summary === "string" ? article.summary : "",
+        seoTitle: typeof article.seoTitle === "string" ? article.seoTitle : "",
+        metaDescription: typeof article.metaDescription === "string" ? article.metaDescription : "",
+        urlHandle: typeof article.urlHandle === "string" ? article.urlHandle : "",
+        tags: typeof article.tags === "string" ? article.tags : "",
+      });
     } catch (error) { window.alert(error instanceof Error ? error.message : "生成文章失败"); } finally { setGenerating(false); }
   }
 
+  function handleApplyGeneratedDraft() {
+    if (!generatedDraft) return;
+    setArticleTitle(generatedDraft.title);
+    setArticleBodyHtml(generatedDraft.bodyHtml);
+    setSummary(generatedDraft.summary);
+    setSeoTitle(generatedDraft.seoTitle);
+    setMetaDescription(generatedDraft.metaDescription);
+    setUrlHandle(generatedDraft.urlHandle);
+    setTags(generatedDraft.tags);
+  }
+
   function handleSaveDraft() {
-    window.localStorage.setItem("blog-article-draft", JSON.stringify({ prompt, primaryKeyword, targetAudience, searchIntent, modules, language, articleTitle, articleBodyHtml, summary, seoTitle, metaDescription, urlHandle, shopifyBlog, author, tags, coverFileName, publishStatus, shopifyArticleId, savedAt: Date.now() }));
+    window.localStorage.setItem("blog-article-draft", JSON.stringify({ prompt, primaryKeyword, targetAudience, searchIntent, modules, language, articleTitle, articleBodyHtml, summary, seoTitle, metaDescription, urlHandle, shopifyBlog, author, tags, coverFileName, publishStatus, shopifyArticleId, markdownFileName, markdownSource, generatedDraft, savedAt: Date.now() }));
     setDraftSaved(true); window.setTimeout(() => setDraftSaved(false), 1600);
   }
 
@@ -133,6 +152,37 @@ export default function BlogPage() {
       setSyncMessage(error instanceof Error ? error.message : "同步 Shopify 失败");
     } finally {
       setSyncing(false);
+    }
+  }
+
+  async function handleMarkdownFile(file: File | undefined) {
+    setMarkdownError("");
+    if (!file) {
+      setMarkdownFileName("");
+      setMarkdownSource("");
+      return;
+    }
+    const lowerName = file.name.toLowerCase();
+    const isMarkdown =
+      lowerName.endsWith(".md") ||
+      lowerName.endsWith(".markdown") ||
+      file.type === "text/markdown" ||
+      file.type === "text/plain" ||
+      !file.type;
+    if (!isMarkdown) {
+      setMarkdownError("请上传 .md 或 .markdown 文件。");
+      return;
+    }
+    const text = await file.text();
+    const normalized = normalizeMarkdownSource(text);
+    if (!normalized) {
+      setMarkdownError("Markdown 文件内容为空。");
+      return;
+    }
+    setMarkdownFileName(file.name);
+    setMarkdownSource(normalized);
+    if (normalized.length < text.trim().length) {
+      setMarkdownError(`文件内容较长，已截取前 ${MARKDOWN_SOURCE_MAX_CHARS.toLocaleString()} 字符用于生成。`);
     }
   }
 
@@ -169,7 +219,7 @@ export default function BlogPage() {
 
       <nav className="mb-4 flex items-center gap-7 border-b border-border-subtle text-[13px]"><Tab href="/blog" active label="新建文章" /><Tab href="/blog/drafts" label="草稿箱" count="0" /><Tab href="/blog/published" label="已发布" count="0" /></nav>
 
-      <Panel className="mb-4"><PanelHeader icon={<WandSparkles size={16} />} title="AI 创作指令" meta="输入文章要求" /><div className="p-4"><textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} className={`${CONTROL_CLASS} min-h-[94px] resize-y py-3 leading-5`} placeholder="描述文章主题、目标读者、核心关键词、内容方向或需要关联的商品" /><div className="mt-3 flex flex-wrap items-center justify-between gap-3"><div className="flex flex-wrap items-center gap-2"><span className="mr-1 text-[10px] text-fg-muted">提示词模板</span>{PROMPT_TEMPLATES.map(([label, text]) => <button key={label} type="button" onClick={() => setPrompt(text)} className="h-7 rounded-sm border border-border-subtle bg-white px-3 text-[10px] text-fg-secondary hover:border-brand-200 hover:text-brand-600">{label}</button>)}</div><div className="flex gap-2"><button type="button" onClick={handleOptimizePrompt} disabled={!prompt.trim()} className="flex h-9 items-center gap-1.5 rounded-sm border border-border-subtle bg-white px-4 text-[11px] font-medium text-fg-secondary disabled:opacity-45"><WandSparkles size={14} />优化提示词</button><button type="button" onClick={handleGenerate} disabled={!prompt.trim() || generating} className="flex h-9 items-center gap-1.5 rounded-sm bg-grad-brand px-5 text-[11px] font-semibold text-white shadow-[0_5px_14px_rgba(99,102,241,0.18)] disabled:opacity-45">{generating ? <Loader2 size={14} className="animate-spin" /> : <WandSparkles size={14} />}{generating ? "正在生成..." : "生成文章"}</button></div></div></div></Panel>
+      <Panel className="mb-4 overflow-hidden"><div className="grid grid-cols-1 lg:grid-cols-2"><section className="border-b border-border-subtle lg:border-b-0 lg:border-r"><PanelHeader icon={<WandSparkles size={16} />} title="AI 创作指令" meta="输入文章要求" /><div className="p-4"><textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} className={`${CONTROL_CLASS} min-h-[118px] resize-y py-3 leading-5`} placeholder="描述文章主题、目标读者、核心关键词、内容方向或需要关联的商品" /><div className="mt-3 flex flex-wrap items-center justify-between gap-3"><div className="flex flex-wrap items-center gap-2"><span className="mr-1 text-[10px] text-fg-muted">提示词模板</span>{PROMPT_TEMPLATES.map(([label, text]) => <button key={label} type="button" onClick={() => setPrompt(text)} className="h-7 rounded-sm border border-border-subtle bg-white px-3 text-[10px] text-fg-secondary hover:border-brand-200 hover:text-brand-600">{label}</button>)}</div><div className="flex flex-wrap items-center gap-2"><label className="flex h-9 cursor-pointer items-center gap-1.5 rounded-sm border border-border-subtle bg-white px-4 text-[11px] font-medium text-fg-secondary hover:border-brand-200 hover:text-brand-600"><input type="file" accept=".md,.markdown,text/markdown,text/plain" className="sr-only" onChange={(event) => void handleMarkdownFile(event.target.files?.[0])} /><Upload size={14} />上传 .md</label>{markdownFileName ? <div className="flex h-9 items-center gap-2 rounded-sm bg-bg-tertiary px-3 text-[10px] text-fg-secondary"><span className="max-w-[220px] truncate">{markdownFileName}</span><span className="text-fg-muted">{markdownSource.length.toLocaleString()} 字符</span><button type="button" onClick={() => { setMarkdownFileName(""); setMarkdownSource(""); setMarkdownError(""); }} className="text-fg-muted hover:text-danger"><X size={12} /></button></div> : null}<button type="button" onClick={handleOptimizePrompt} disabled={!prompt.trim()} className="flex h-9 items-center gap-1.5 rounded-sm border border-border-subtle bg-white px-4 text-[11px] font-medium text-fg-secondary disabled:opacity-45"><WandSparkles size={14} />优化提示词</button><button type="button" onClick={handleGenerate} disabled={(!prompt.trim() && !markdownSource.trim()) || generating} className="flex h-9 items-center gap-1.5 rounded-sm bg-grad-brand px-5 text-[11px] font-semibold text-white shadow-[0_5px_14px_rgba(99,102,241,0.18)] disabled:opacity-45">{generating ? <Loader2 size={14} className="animate-spin" /> : <WandSparkles size={14} />}{generating ? "正在生成..." : "生成文章"}</button></div></div>{markdownError ? <div className={`mt-2 rounded-sm px-3 py-2 text-[10px] ${markdownSource ? "bg-[var(--warn-bg)] text-[#b45309]" : "bg-[#fef2f2] text-[#dc2626]"}`}>{markdownError}</div> : null}</div></section><section><PanelHeader icon={<FileText size={16} />} title="AI 输出结果" meta="生成后先在这里预览" /><GeneratedDraftPreview draft={generatedDraft} generating={generating} onApply={handleApplyGeneratedDraft} /></section></div></Panel>
 
       <section className="grid min-h-[900px] grid-cols-1 gap-4 lg:grid-cols-12">
         <aside className="lg:col-span-3 xl:col-span-2"><Panel className="h-full p-4"><PanelTitle title="SEO 简报" /><Field label="核心关键词" required><input value={primaryKeyword} onChange={(e) => setPrimaryKeyword(e.target.value)} className={`${CONTROL_CLASS} h-9`} /></Field><Field label="搜索意图"><input value={searchIntent} onChange={(e) => setSearchIntent(e.target.value)} className={`${CONTROL_CLASS} h-9`} placeholder="信息 + 商业调查" /></Field><Field label="目标用户"><input value={targetAudience} onChange={(e) => setTargetAudience(e.target.value)} className={`${CONTROL_CLASS} h-9`} placeholder="美丽学生" /></Field><div className="mb-4"><div className="mb-2 flex justify-between text-[11px] text-fg-secondary"><span>内容模块</span><span>{Object.values(modules).filter(Boolean).length} 项启用</span></div><div className="grid grid-cols-2 gap-2">{MODULE_OPTIONS.map((item) => <button key={item.key} type="button" onClick={() => toggleModule(item.key)} className={`flex h-8 items-center gap-2 rounded-sm border px-2 text-[10px] ${modules[item.key] ? "border-brand-200 bg-[var(--brand-50-bg)] text-brand-700" : "border-border-subtle bg-bg-tertiary text-fg-secondary"}`}><span className={`flex h-4 w-4 items-center justify-center rounded-[4px] border ${modules[item.key] ? "border-brand-500 bg-brand-500 text-white" : "border-border-default bg-white"}`}>{modules[item.key] ? <Check size={11} /> : null}</span>{item.label}</button>)}</div></div><Field label="输出语言"><div className="grid grid-cols-3 rounded-sm bg-bg-tertiary p-1">{([['english','英文'],['bilingual','中英双语'],['chinese','中文']] as Array<[OutputLanguage,string]>).map(([value,label]) => <button key={value} type="button" onClick={() => setLanguage(value)} className={`h-7 rounded-[6px] text-[10px] ${language === value ? "bg-white font-semibold text-brand-600 shadow-sm" : "text-fg-tertiary"}`}>{label}</button>)}</div></Field></Panel></aside>
@@ -211,6 +261,73 @@ function savePublishedArticle(record: {
   ];
   window.localStorage.setItem("blog-published-articles", JSON.stringify(next));
   window.localStorage.setItem("blog-published-article", JSON.stringify(record));
+}
+
+function normalizeMarkdownSource(value: string) {
+  return value
+    .normalize("NFC")
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/\n{4,}/g, "\n\n\n")
+    .trim()
+    .slice(0, MARKDOWN_SOURCE_MAX_CHARS);
+}
+
+function GeneratedDraftPreview({
+  draft,
+  generating,
+  onApply,
+}: {
+  draft: BlogGeneratedDraft | null;
+  generating: boolean;
+  onApply: () => void;
+}) {
+  if (generating) {
+    return <div className="flex min-h-[226px] items-center justify-center px-4 py-8 text-[12px] text-fg-muted"><Loader2 size={16} className="mr-2 animate-spin text-brand-500" />正在生成 AI 输出...</div>;
+  }
+  if (!draft) {
+    return <div className="flex min-h-[226px] flex-col items-center justify-center px-5 py-8 text-center"><FileText size={18} className="mb-2 text-brand-400" /><p className="text-[12px] font-semibold text-fg-secondary">暂无 AI 输出</p><p className="mt-1 max-w-[360px] text-[10px] leading-4 text-fg-muted">填写左侧提示词或上传 .md 后点击生成，结果会先展示在这里。确认后再快速填入下方文章编辑区。</p></div>;
+  }
+  const bodyPreview = htmlToPreviewText(draft.bodyHtml);
+  return (
+    <div className="p-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="text-[11px] font-semibold text-fg-primary">待填入内容</div>
+        <button type="button" onClick={onApply} className="flex h-8 items-center gap-1.5 rounded-sm bg-grad-brand px-4 text-[11px] font-semibold text-white"><Check size={13} />快速填入</button>
+      </div>
+      <div className="max-h-[214px] overflow-y-auto rounded-sm border border-border-subtle bg-bg-secondary">
+        <PreviewRow label="文章标题" value={draft.title} />
+        <PreviewRow label="页面标题" value={draft.seoTitle} />
+        <PreviewRow label="元描述" value={draft.metaDescription} />
+        <PreviewRow label="URL 名称" value={draft.urlHandle} />
+        <PreviewRow label="文章标签" value={draft.tags} />
+        <PreviewRow label="文章摘要" value={draft.summary} />
+        <PreviewRow label="正文预览" value={bodyPreview} tall />
+      </div>
+    </div>
+  );
+}
+
+function PreviewRow({
+  label,
+  value,
+  tall = false,
+}: {
+  label: string;
+  value: string;
+  tall?: boolean;
+}) {
+  return <div className="grid grid-cols-[86px_minmax(0,1fr)] gap-3 border-b border-border-subtle px-3 py-2 last:border-b-0"><span className="text-[10px] text-fg-muted">{label}</span><span className={`whitespace-pre-wrap break-words text-[10px] leading-4 text-fg-secondary ${tall ? "line-clamp-6" : ""}`}>{value || "待生成"}</span></div>;
+}
+
+function htmlToPreviewText(value: string) {
+  return value
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 900);
 }
 
 function parseShopifyCredentials(text: string): ShopifyTxtCredentials {

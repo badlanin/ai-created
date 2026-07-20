@@ -9,6 +9,7 @@ export const runtime = "nodejs";
 export const maxDuration = 120;
 
 const CALL_TIMEOUT_MS = 90_000;
+const MARKDOWN_SOURCE_MAX_CHARS = 60_000;
 
 const MODULE_LABELS: Record<string, string> = {
   quickAnswer: "Quick Answer",
@@ -53,11 +54,17 @@ export async function POST(req: NextRequest) {
       language?: string;
       modules?: Record<string, boolean>;
       shopDomain?: string | null;
+      markdownFileName?: string;
+      markdownSource?: string;
     };
 
     const prompt = cleanText(body.prompt || "");
-    if (!prompt) {
-      return NextResponse.json({ error: "请输入文章要求" }, { status: 400 });
+    const markdownSource = cleanMarkdownSource(body.markdownSource || "");
+    if (!prompt && !markdownSource) {
+      return NextResponse.json(
+        { error: "请输入文章要求或上传 .md 文件" },
+        { status: 400 },
+      );
     }
 
     const enabledModules = Object.entries(body.modules || {})
@@ -82,6 +89,8 @@ export async function POST(req: NextRequest) {
                   language: LANGUAGE_LABELS[body.language || ""] || "英文",
                   enabledModules,
                   shopDomain: cleanText(body.shopDomain || ""),
+                  markdownFileName: cleanText(body.markdownFileName || ""),
+                  markdownSource,
                 }),
               },
             ],
@@ -149,11 +158,18 @@ function buildPrompt(input: {
   language: string;
   enabledModules: string[];
   shopDomain: string;
+  markdownFileName: string;
+  markdownSource: string;
 }) {
   return `请根据以下要求生成一篇 Shopify 独立站博客文章。
 
 文章要求：
-${input.prompt}
+${input.prompt || "请根据上传的 Markdown 资料生成一篇结构完整、可发布的 SEO 博客文章。"}
+
+${input.markdownSource ? `上传的 Markdown 资料${input.markdownFileName ? `（${input.markdownFileName}）` : ""}：
+<<<MARKDOWN_SOURCE
+${input.markdownSource}
+MARKDOWN_SOURCE>>>` : "上传的 Markdown 资料：未提供"}
 
 核心关键词：${input.primaryKeyword || "未指定，请根据文章要求提取"}
 目标用户：${input.targetAudience || "未指定，请面向服装独立站买家"}
@@ -172,6 +188,7 @@ ${input.prompt}
 - URL 名称使用英文小写、数字和连字符。
 - 标签使用英文逗号分隔。
 - 不确定的事实不要编造，不要写“根据图片”等不存在的上下文。
+- 如果提供了 Markdown 资料，必须优先依据 Markdown 资料里的事实、结构、术语和产品信息来写；可以重组、扩写和润色，但不要添加资料里没有依据的规格、认证、价格、物流、售后承诺。
 
 必须只返回 JSON，字段如下：
 {
@@ -241,6 +258,18 @@ function normalizeOutput(input: Record<string, unknown>): BlogGenerateOutput {
 
 function cleanText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function cleanMarkdownSource(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value
+    .normalize("NFC")
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/^---\n[\s\S]*?\n---\n?/, "")
+    .replace(/\n{4,}/g, "\n\n\n")
+    .trim()
+    .slice(0, MARKDOWN_SOURCE_MAX_CHARS);
 }
 
 function limit(value: string, max: number): string {
