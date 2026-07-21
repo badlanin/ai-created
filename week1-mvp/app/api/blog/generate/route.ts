@@ -1,4 +1,4 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { resolveModelId } from "@/lib/ai-models";
 import { buildGenaiClient } from "@/lib/genai-client";
@@ -99,6 +99,7 @@ export async function POST(req: NextRequest) {
         config: {
           systemInstruction:
             "你是独立站 SEO 博客编辑，专门为 Shopify 服装独立站生成可发布的博客文章。只返回严格 JSON，不返回 Markdown 代码块。",
+          responseMimeType: "application/json",
           temperature: 0.35,
         },
       }),
@@ -110,7 +111,7 @@ export async function POST(req: NextRequest) {
       throw new Error("大模型没有返回可用内容，请调整提示词后重试。");
     }
 
-    const output = normalizeOutput(parseJsonObject(rawText));
+    const output = normalizeOutput(parseGeneratedArticle(rawText));
 
     recordUsage({
       userId: user.id,
@@ -202,7 +203,17 @@ MARKDOWN_SOURCE>>>` : "上传的 Markdown 资料：未提供"}
 }`;
 }
 
-function parseJsonObject(text: string): Record<string, unknown> {
+function parseGeneratedArticle(text: string): Record<string, unknown> {
+  const parsed = parseJsonObject(text);
+  if (parsed) return parsed;
+
+  const fallback = buildFallbackArticle(text);
+  if (fallback) return fallback;
+
+  throw new Error("大模型返回内容不是可解析的 JSON，请重试。");
+}
+
+function parseJsonObject(text: string): Record<string, unknown> | null {
   const direct = tryParseJson(text);
   if (direct) return direct;
 
@@ -219,7 +230,54 @@ function parseJsonObject(text: string): Record<string, unknown> {
     if (parsed) return parsed;
   }
 
-  throw new Error("大模型返回内容不是可解析的 JSON，请重试。");
+  return null;
+}
+
+function buildFallbackArticle(text: string): Record<string, unknown> | null {
+  const cleaned = cleanText(text);
+  if (!cleaned) return null;
+  const withoutFence = cleaned.replace(/^```(?:html|markdown|md)?\s*/i, "").replace(/```$/i, "").trim();
+  const title =
+    withoutFence.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1] ||
+    withoutFence.match(/<h2[^>]*>([\s\S]*?)<\/h2>/i)?.[1] ||
+    withoutFence.match(/^#\s+(.+)$/m)?.[1] ||
+    withoutFence.split(/\r?\n/).find((line) => cleanText(line)) ||
+    "Blog Article";
+  const bodyHtml = /<\/?(?:h1|h2|h3|p|ul|ol|li|table|thead|tbody|tr|th|td|strong|em|a)\b/i.test(withoutFence)
+    ? withoutFence.replace(/<h1\b([^>]*)>/gi, "<h2$1>").replace(/<\/h1>/gi, "</h2>")
+    : markdownLikeToHtml(withoutFence);
+  return {
+    title: stripHtml(title),
+    bodyHtml,
+    summary: stripHtml(withoutFence).slice(0, 300),
+    seoTitle: stripHtml(title),
+    metaDescription: stripHtml(withoutFence).slice(0, 160),
+    urlHandle: toHandle(stripHtml(title)),
+    tags: "",
+  };
+}
+
+function markdownLikeToHtml(text: string) {
+  const blocks = text.split(/\n{2,}/).map((block) => block.trim()).filter(Boolean);
+  return blocks
+    .map((block) => {
+      if (block.startsWith("## ")) return `<h2>${escapeHtml(block.slice(3).trim())}</h2>`;
+      if (block.startsWith("### ")) return `<h3>${escapeHtml(block.slice(4).trim())}</h3>`;
+      return `<p>${escapeHtml(block).replace(/\n/g, "<br />")}</p>`;
+    })
+    .join("\n");
+}
+
+function stripHtml(value: string) {
+  return value.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function tryParseJson(text: string): Record<string, unknown> | null {
