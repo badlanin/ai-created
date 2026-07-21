@@ -1061,6 +1061,7 @@ export async function createProductBatchPreview(opts: {
   jobId?: string;
   storeKeys?: string[];
   query?: string;
+  productTitleKeyword?: string;
   sortOrder?: ProductBatchSortOrder;
   start?: number;
   limit?: number;
@@ -1077,6 +1078,7 @@ export async function createProductBatchPreview(opts: {
   const limit = clampInt(opts.limit ?? 10, 1, MAX_PREVIEW_LIMIT);
   const start = clampInt(opts.start ?? 0, 0, 100_000);
   const query = cleanText(opts.query || "status:active");
+  const productTitleKeyword = normalizeTitleKeyword(opts.productTitleKeyword || "");
   const sortOrder: ProductBatchSortOrder =
     opts.sortOrder === "oldest" ? "oldest" : "newest";
   const prompt = cleanText(opts.prompt || PRODUCT_BATCH_DEFAULT_PROMPT);
@@ -1133,6 +1135,7 @@ export async function createProductBatchPreview(opts: {
         const batch = await fetchProducts({
           connection: store,
           query,
+          productTitleKeyword,
           sortOrder,
           start: storeSkip,
           limit: batchLimit,
@@ -1556,6 +1559,7 @@ function getValidStoreAccessToken(store: ProductBatchStoreRecord) {
 async function fetchProducts(opts: {
   connection: ShopifyToken;
   query: string;
+  productTitleKeyword?: string;
   sortOrder: ProductBatchSortOrder;
   start: number;
   limit: number;
@@ -1583,10 +1587,12 @@ async function fetchProducts(opts: {
     page += 1;
     const pageData: ShopifyProductsQueryData =
       await shopifyGraphql<ShopifyProductsQueryData>(opts.connection, PRODUCTS_QUERY, {
-      first: Math.min(
-        SHOPIFY_PRODUCT_FETCH_BATCH_SIZE,
-        Math.max(1, opts.limit - products.length),
-      ),
+      first: opts.productTitleKeyword
+        ? SHOPIFY_PRODUCT_FETCH_BATCH_SIZE
+        : Math.min(
+            SHOPIFY_PRODUCT_FETCH_BATCH_SIZE,
+            Math.max(1, opts.limit - products.length),
+          ),
       after,
       query: opts.query || null,
       reverse: opts.sortOrder !== "oldest",
@@ -1598,6 +1604,7 @@ async function fetchProducts(opts: {
     for (const edge of productsConnection.edges || []) {
       const product = edge.node;
       if (!opts.includeApplied && hasAppliedTag(product)) continue;
+      if (opts.productTitleKeyword && !productTitleMatchesKeyword(product.title, opts.productTitleKeyword)) continue;
       if (skipped < opts.start) {
         skipped += 1;
         continue;
@@ -3728,6 +3735,19 @@ function flattenRichText(node: unknown): string {
   };
   if (source.type === "text") return source.value || "";
   return (source.children || []).map(flattenRichText).join("");
+}
+
+function normalizeTitleKeyword(value: string) {
+  return String(value || "")
+    .replace(/[\r\n]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function productTitleMatchesKeyword(title: unknown, keyword: string) {
+  const normalizedKeyword = normalizeTitleKeyword(keyword).toLowerCase();
+  if (!normalizedKeyword) return true;
+  return String(title || "").toLowerCase().includes(normalizedKeyword);
 }
 
 function hasAppliedTag(product: ShopifyProductNode) {

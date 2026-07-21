@@ -1784,22 +1784,8 @@ function normalizeLimitInput(value: string, fallback: number) {
     : 1;
 }
 
-function buildProductBatchShopifyQuery(query: string, productTitleKeyword: string) {
-  const baseQuery = String(query || "").trim() || "status:active";
-  const titleKeyword = normalizeTitleKeyword(productTitleKeyword);
-  if (!titleKeyword) return baseQuery;
-  return `${baseQuery} title:${quoteShopifySearchValue(titleKeyword)}`;
-}
-
-function normalizeTitleKeyword(value: string) {
-  return String(value || "")
-    .replace(/[\r\n]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function quoteShopifySearchValue(value: string) {
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+function buildProductBatchShopifyQuery(query: string, _productTitleKeyword: string) {
+  return String(query || "").trim() || "status:active";
 }
 function readProductBatchPromptPresets(): ProductBatchPromptPreset[] {
   try {
