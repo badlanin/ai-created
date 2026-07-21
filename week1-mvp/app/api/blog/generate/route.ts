@@ -182,6 +182,7 @@ MARKDOWN_SOURCE>>>` : "上传的 Markdown 资料：未提供"}
 写作规则：
 - 文章要适合 Shopify 服装独立站博客后台发布。
 - 正文使用干净 HTML，只允许 h2、h3、p、ul、ol、li、table、thead、tbody、tr、th、td、strong、em、a 标签。
+- bodyHtml 作为 JSON 字符串返回，HTML 属性优先使用单引号，避免破坏 JSON。
 - 不要输出 script、style、iframe、表单或内联事件。
 - 标题不超过 70 个字符。
 - SEO 标题不超过 70 个字符。
@@ -204,13 +205,20 @@ MARKDOWN_SOURCE>>>` : "上传的 Markdown 资料：未提供"}
 }
 
 function parseGeneratedArticle(text: string): Record<string, unknown> {
-  const parsed = parseJsonObject(text);
-  if (parsed) return parsed;
-
-  const fallback = buildFallbackArticle(text);
-  if (fallback) return fallback;
-
-  throw new Error("大模型返回内容不是可解析的 JSON，请重试。");
+  return (
+    parseJsonObject(text) ||
+    parseLooseGeneratedArticle(text) ||
+    buildFallbackArticle(text) ||
+    {
+      title: "Blog Article",
+      bodyHtml: "<p>AI generated content was empty. Please regenerate the article.</p>",
+      summary: "",
+      seoTitle: "Blog Article",
+      metaDescription: "",
+      urlHandle: "blog-article",
+      tags: "",
+    }
+  );
 }
 
 function parseJsonObject(text: string): Record<string, unknown> | null {
@@ -233,29 +241,88 @@ function parseJsonObject(text: string): Record<string, unknown> | null {
   return null;
 }
 
+function parseLooseGeneratedArticle(text: string): Record<string, unknown> | null {
+  const candidate = extractJsonCandidate(text);
+  if (!candidate || !looksLikeGeneratedJsonText(candidate)) return null;
+
+  const fieldPattern = /"(title|bodyHtml|summary|seoTitle|metaDescription|urlHandle|tags)"\s*:/g;
+  const matches = Array.from(candidate.matchAll(fieldPattern));
+  if (!matches.length) return null;
+
+  const output: Record<string, string> = {};
+  for (let index = 0; index < matches.length; index += 1) {
+    const match = matches[index];
+    const key = match[1];
+    const valueStart = (match.index || 0) + match[0].length;
+    const valueEnd = index + 1 < matches.length ? matches[index + 1].index || candidate.length : candidate.length;
+    const value = cleanLooseJsonValue(candidate.slice(valueStart, valueEnd));
+    if (value) output[key] = value;
+  }
+
+  if (!output.title && output.seoTitle) output.title = output.seoTitle;
+  if (!output.bodyHtml && output.summary) output.bodyHtml = markdownLikeToHtml(output.summary);
+  if (!output.summary && output.bodyHtml) output.summary = stripHtml(output.bodyHtml).slice(0, 300);
+  if (!output.metaDescription && output.summary) output.metaDescription = output.summary.slice(0, 160);
+  if (!output.urlHandle && output.title) output.urlHandle = toHandle(output.title);
+  if (output.title || output.bodyHtml) return output;
+  return null;
+}
+
+function extractJsonCandidate(text: string) {
+  const cleaned = cleanText(text).replace(/^```(?:json|html|markdown|md)?\s*/i, "").replace(/```$/i, "").trim();
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start >= 0 && end > start) return cleaned.slice(start, end + 1);
+  return cleaned;
+}
+
+function cleanLooseJsonValue(segment: string) {
+  let value = segment.trim();
+  value = value.replace(/^\s*,/, "").replace(/,\s*$/, "").trim();
+  value = value.replace(/^\s*"/, "").replace(/"\s*,?\s*}?\s*$/, "").trim();
+  value = value.replace(/\\r\\n/g, "\n").replace(/\\n/g, "\n").replace(/\\t/g, "\t");
+  value = value.replace(/\\"/g, '"').replace(/\\\//g, "/");
+  value = value.replace(/^null$/i, "").replace(/^undefined$/i, "");
+  return value.trim();
+}
+
 function buildFallbackArticle(text: string): Record<string, unknown> | null {
   const cleaned = cleanText(text);
   if (!cleaned) return null;
   const withoutFence = cleaned.replace(/^```(?:html|markdown|md|json)?\s*/i, "").replace(/```$/i, "").trim();
-  if (looksLikeGeneratedJsonText(withoutFence)) return null;
+  const safeSource = looksLikeGeneratedJsonText(withoutFence) ? stripJsonSyntax(withoutFence) : withoutFence;
   const title =
-    withoutFence.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1] ||
-    withoutFence.match(/<h2[^>]*>([\s\S]*?)<\/h2>/i)?.[1] ||
-    withoutFence.match(/^#\s+(.+)$/m)?.[1] ||
-    withoutFence.split(/\r?\n/).find((line) => cleanText(line)) ||
+    safeSource.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1] ||
+    safeSource.match(/<h2[^>]*>([\s\S]*?)<\/h2>/i)?.[1] ||
+    safeSource.match(/^#\s+(.+)$/m)?.[1] ||
+    safeSource.split(/\r?\n/).find((line) => cleanText(line)) ||
     "Blog Article";
-  const bodyHtml = /<\/?(?:h1|h2|h3|p|ul|ol|li|table|thead|tbody|tr|th|td|strong|em|a)\b/i.test(withoutFence)
-    ? withoutFence.replace(/<h1\b([^>]*)>/gi, "<h2$1>").replace(/<\/h1>/gi, "</h2>")
-    : markdownLikeToHtml(withoutFence);
+  const bodyHtml = /<\/?(?:h1|h2|h3|p|ul|ol|li|table|thead|tbody|tr|th|td|strong|em|a)\b/i.test(safeSource)
+    ? safeSource.replace(/<h1\b([^>]*)>/gi, "<h2$1>").replace(/<\/h1>/gi, "</h2>")
+    : markdownLikeToHtml(safeSource);
+  const bodyText = stripHtml(bodyHtml);
   return {
-    title: stripHtml(title),
+    title: stripHtml(title).slice(0, 70) || "Blog Article",
     bodyHtml,
-    summary: stripHtml(withoutFence).slice(0, 300),
-    seoTitle: stripHtml(title),
-    metaDescription: stripHtml(withoutFence).slice(0, 160),
+    summary: bodyText.slice(0, 300),
+    seoTitle: stripHtml(title).slice(0, 70) || "Blog Article",
+    metaDescription: bodyText.slice(0, 160),
     urlHandle: toHandle(stripHtml(title)),
     tags: "",
   };
+}
+
+function stripJsonSyntax(value: string) {
+  return value
+    .replace(/^\s*{/, "")
+    .replace(/}\s*$/, "")
+    .replace(/"(?:title|bodyHtml|summary|seoTitle|metaDescription|urlHandle|tags)"\s*:/g, "\n")
+    .replace(/[{},]/g, " ")
+    .replace(/^\s*"|"\s*$/g, "")
+    .replace(/\\n/g, "\n")
+    .replace(/\\"/g, '"')
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function markdownLikeToHtml(text: string) {
@@ -283,21 +350,20 @@ function escapeHtml(value: string) {
 
 function looksLikeGeneratedJsonText(value: string) {
   const text = cleanText(value).replace(/^```json\s*/i, "").replace(/```$/i, "").trim();
-  return /^\{[\s\S]*"(?:title|bodyHtml|summary|seoTitle|metaDescription|urlHandle|tags)"\s*:/i.test(text);
+  return /^\{?[\s\S]*"(?:title|bodyHtml|summary|seoTitle|metaDescription|urlHandle|tags)"\s*:/i.test(text);
 }
 
 function unwrapGeneratedObject(input: Record<string, unknown>) {
   for (const key of ["bodyHtml", "summary", "metaDescription"] as const) {
     const value = cleanText(input[key]);
     if (!looksLikeGeneratedJsonText(value)) continue;
-    const parsed = parseJsonObject(value);
-    if (parsed && cleanText(parsed.title) && cleanText(parsed.bodyHtml)) {
+    const parsed = parseJsonObject(value) || parseLooseGeneratedArticle(value);
+    if (parsed && (cleanText(parsed.title) || cleanText(parsed.bodyHtml))) {
       return parsed;
     }
   }
   return input;
 }
-
 function tryParseJson(text: string): Record<string, unknown> | null {
   try {
     const parsed = JSON.parse(text);
