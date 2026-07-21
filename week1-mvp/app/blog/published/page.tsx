@@ -390,19 +390,6 @@ export default function BlogPublishedPage() {
         </button>
       </header>
 
-      <nav
-        aria-label="博客文章页面"
-        className="mb-4 flex min-h-11 items-end gap-7 overflow-x-auto border-b border-border-default px-0.5"
-      >
-        <BlogTab href="/blog" label="新建文章" />
-        <BlogTab href="/blog/drafts" label="草稿箱" count={draftCount} />
-        <BlogTab
-          href="/blog/published"
-          label="已发布"
-          count={articles.length}
-          active
-        />
-      </nav>
 
       <section className="mb-4 flex flex-col gap-3 rounded-md border border-border-subtle bg-bg-secondary p-3 shadow-sm xl:flex-row xl:items-center">
         <label className="relative min-w-0 flex-1 xl:max-w-[380px]">
