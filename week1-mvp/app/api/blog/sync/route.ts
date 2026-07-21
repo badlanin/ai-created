@@ -40,6 +40,15 @@ type ShopifyBlogsResponse = {
   errors?: Array<{ message?: string }>;
 };
 
+type ShopifyAccessScopesResponse = {
+  data?: {
+    currentAppInstallation?: {
+      accessScopes?: Array<{ handle?: string | null }> | null;
+    } | null;
+  };
+  errors?: Array<{ message?: string }>;
+};
+
 type ShopifyArticleMutationResponse = {
   data?: {
     articleCreate?: {
@@ -94,7 +103,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const blogs = await readShopifyBlogs(stored.shopDomain, stored.accessToken);
+    let blogs: ShopifyBlogNode[];
+    try {
+      blogs = await readShopifyBlogs(stored.shopDomain, stored.accessToken);
+    } catch (error) {
+      throw new Error(
+        await buildShopifyBlogAccessDiagnostic(
+          stored.shopDomain,
+          stored.accessToken,
+          error,
+        ),
+      );
+    }
     const blog = findShopifyBlog(blogs, cleanText(body.shopifyBlog || ""));
     if (!blog) {
       return NextResponse.json(
@@ -177,6 +197,63 @@ async function readShopifyBlogs(
   assertNoGraphqlErrors(json.errors);
   return json.data?.blogs?.nodes || [];
 }
+async function readShopifyAccessScopes(
+  shopDomain: string,
+  accessToken: string,
+): Promise<string[]> {
+  const json = await shopifyGraphql<ShopifyAccessScopesResponse>(
+    shopDomain,
+    accessToken,
+    `query BuqiqiAccessScopes {
+      currentAppInstallation {
+        accessScopes {
+          handle
+        }
+      }
+    }`,
+  );
+  assertNoGraphqlErrors(json.errors);
+  return (json.data?.currentAppInstallation?.accessScopes || [])
+    .map((scope) => cleanText(scope.handle || ""))
+    .filter(Boolean)
+    .sort();
+}
+
+async function buildShopifyBlogAccessDiagnostic(
+  shopDomain: string,
+  accessToken: string,
+  error: unknown,
+) {
+  const baseMessage = error instanceof Error ? error.message : String(error);
+  let scopes: string[] = [];
+  let scopesError = "";
+  try {
+    scopes = await readShopifyAccessScopes(shopDomain, accessToken);
+  } catch (scopeError) {
+    scopesError = scopeError instanceof Error ? scopeError.message : String(scopeError);
+  }
+
+  const hasReadBlogScope = scopes.some((scope) =>
+    ["read_content", "read_online_store_pages"].includes(scope),
+  );
+  const hasWriteBlogScope = scopes.some((scope) =>
+    ["write_content", "write_online_store_pages"].includes(scope),
+  );
+  const scopeText = scopes.length ? scopes.join(", ") : "未能读取当前 token scopes";
+  const missing: string[] = [];
+  if (!hasReadBlogScope) missing.push("read_content 或 read_online_store_pages");
+  if (!hasWriteBlogScope) missing.push("write_content 或 write_online_store_pages");
+
+  return [
+    baseMessage,
+    `当前 token scopes：${scopeText}`,
+    missing.length ? `缺少博客文章所需权限：${missing.join("；")}` : "当前 token 看起来包含博客读写 scope，若仍被拒绝，请确认该店铺已启用 Online Store/博客功能，且绑定的是同一个店铺的 Admin token。",
+    scopesError ? `读取 scopes 时也失败：${scopesError}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 
 async function createShopifyArticle(
   shopDomain: string,
