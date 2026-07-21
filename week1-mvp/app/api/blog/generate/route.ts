@@ -236,7 +236,8 @@ function parseJsonObject(text: string): Record<string, unknown> | null {
 function buildFallbackArticle(text: string): Record<string, unknown> | null {
   const cleaned = cleanText(text);
   if (!cleaned) return null;
-  const withoutFence = cleaned.replace(/^```(?:html|markdown|md)?\s*/i, "").replace(/```$/i, "").trim();
+  const withoutFence = cleaned.replace(/^```(?:html|markdown|md|json)?\s*/i, "").replace(/```$/i, "").trim();
+  if (looksLikeGeneratedJsonText(withoutFence)) return null;
   const title =
     withoutFence.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1] ||
     withoutFence.match(/<h2[^>]*>([\s\S]*?)<\/h2>/i)?.[1] ||
@@ -280,6 +281,23 @@ function escapeHtml(value: string) {
     .replace(/"/g, "&quot;");
 }
 
+function looksLikeGeneratedJsonText(value: string) {
+  const text = cleanText(value).replace(/^```json\s*/i, "").replace(/```$/i, "").trim();
+  return /^\{[\s\S]*"(?:title|bodyHtml|summary|seoTitle|metaDescription|urlHandle|tags)"\s*:/i.test(text);
+}
+
+function unwrapGeneratedObject(input: Record<string, unknown>) {
+  for (const key of ["bodyHtml", "summary", "metaDescription"] as const) {
+    const value = cleanText(input[key]);
+    if (!looksLikeGeneratedJsonText(value)) continue;
+    const parsed = parseJsonObject(value);
+    if (parsed && cleanText(parsed.title) && cleanText(parsed.bodyHtml)) {
+      return parsed;
+    }
+  }
+  return input;
+}
+
 function tryParseJson(text: string): Record<string, unknown> | null {
   try {
     const parsed = JSON.parse(text);
@@ -291,13 +309,17 @@ function tryParseJson(text: string): Record<string, unknown> | null {
 }
 
 function normalizeOutput(input: Record<string, unknown>): BlogGenerateOutput {
-  const title = limit(cleanText(input.title), 70);
-  const bodyHtml = sanitizeHtml(cleanText(input.bodyHtml));
-  const summary = limit(cleanText(input.summary), 300);
-  const seoTitle = limit(cleanText(input.seoTitle || title), 70);
-  const metaDescription = limit(cleanText(input.metaDescription || summary), 160);
-  const urlHandle = toHandle(cleanText(input.urlHandle || title));
-  const tags = cleanText(input.tags);
+  const source = unwrapGeneratedObject(input);
+  const title = limit(cleanText(source.title), 70);
+  const bodyHtml = sanitizeHtml(cleanText(source.bodyHtml));
+  const bodyText = stripHtml(bodyHtml);
+  const rawSummary = cleanText(source.summary);
+  const summary = limit(looksLikeGeneratedJsonText(rawSummary) ? bodyText : rawSummary || bodyText, 300);
+  const seoTitle = limit(cleanText(source.seoTitle || title), 70);
+  const rawMetaDescription = cleanText(source.metaDescription || "");
+  const metaDescription = limit(looksLikeGeneratedJsonText(rawMetaDescription) ? summary : rawMetaDescription || summary, 160);
+  const urlHandle = toHandle(cleanText(source.urlHandle || title));
+  const tags = looksLikeGeneratedJsonText(cleanText(source.tags)) ? "" : cleanText(source.tags);
 
   if (!title || !bodyHtml) {
     throw new Error("大模型返回内容缺少标题或正文，请重试。");
