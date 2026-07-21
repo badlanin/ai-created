@@ -115,12 +115,18 @@ export async function POST(req: NextRequest) {
         ),
       );
     }
-    const blog = findShopifyBlog(blogs, cleanText(body.shopifyBlog || ""));
+    const requestedBlog = cleanText(body.shopifyBlog || "");
+    const blog = findShopifyBlog(blogs, requestedBlog) || (blogs.length === 1 ? blogs[0] : null);
     if (!blog) {
+      const availableBlogs = blogs
+        .map((item) => [item.title, item.handle].filter(Boolean).join(" / "))
+        .filter(Boolean)
+        .join("、");
       return NextResponse.json(
         {
-          error:
-            "找不到对应的 Shopify 博客，请确认后台已存在 News 或 Blog，或在页面中选择正确博客。",
+          error: availableBlogs
+            ? `找不到对应的 Shopify 博客：${requestedBlog || "未选择"}。后台可用博客：${availableBlogs}。请重新选择正确博客。`
+            : "Shopify 后台没有返回可用博客，请先在 Shopify 后台创建博客。",
         },
         { status: 400 },
       );
@@ -383,11 +389,12 @@ function findShopifyBlog(blogs: ShopifyBlogNode[], value: string) {
   const normalized = normalizeMatchText(value);
   if (!normalized) return null;
   return (
-    blogs.find(
-      (blog) =>
-        normalizeMatchText(blog.handle || "") === normalized ||
-        normalizeMatchText(blog.title || "") === normalized,
-    ) || null
+    blogs.find((blog) => {
+      if (blog.id === value) return true;
+      const title = normalizeMatchText(blog.title || "");
+      const handle = normalizeMatchText(blog.handle || "");
+      return handle === normalized || title === normalized;
+    }) || null
   );
 }
 
@@ -461,5 +468,5 @@ function normalizeMatchText(value: string) {
     .toLowerCase()
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "");
+    .replace(/[^\p{L}\p{N}]+/gu, "");
 }

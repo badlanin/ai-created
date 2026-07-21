@@ -11,6 +11,7 @@ type PublishStatus = "draft" | "published";
 type ShopifyConnection = { shopDomain: string; isActive?: boolean };
 type ShopifyTxtCredentials = { shopDomain: string; clientId: string; clientSecret: string };
 type BlogSyncArticle = { id: string; title: string; handle: string; blogTitle: string; blogHandle: string; publicUrl: string };
+type ShopifyBlogOption = { id: string; title: string; handle: string };
 type BlogGeneratedDraft = { title: string; bodyHtml: string; summary: string; seoTitle: string; metaDescription: string; urlHandle: string; tags: string };
 
 const CONTROL_CLASS = "w-full rounded-sm border border-border-default bg-bg-secondary px-3 text-[12px] text-fg-primary outline-none transition-colors placeholder:text-fg-muted focus:border-brand-400 focus:ring-2 focus:ring-[rgba(99,102,241,0.12)]";
@@ -39,6 +40,8 @@ export default function BlogPage() {
   const [draftSaved, setDraftSaved] = useState(false);
   const [connection, setConnection] = useState<ShopifyConnection | null>(null);
   const [connectionLoaded, setConnectionLoaded] = useState(false);
+  const [shopifyBlogs, setShopifyBlogs] = useState<ShopifyBlogOption[]>([]);
+  const [shopifyBlogsLoaded, setShopifyBlogsLoaded] = useState(false);
   const [bindOpen, setBindOpen] = useState(false);
   const [bindFileName, setBindFileName] = useState("");
   const [bindFileText, setBindFileText] = useState("");
@@ -62,6 +65,15 @@ export default function BlogPage() {
 
   useEffect(() => { void loadShopifyConnection(); }, []);
 
+  useEffect(() => {
+    if (!connection?.shopDomain) {
+      setShopifyBlogs([]);
+      setShopifyBlogsLoaded(false);
+      return;
+    }
+    void loadShopifyBlogs(connection.shopDomain);
+  }, [connection?.shopDomain]);
+
   async function loadShopifyConnection() {
     try {
       const response = await fetchWithShopifyDevice("/api/shopify/connection");
@@ -78,6 +90,25 @@ export default function BlogPage() {
 
   function handleOptimizePrompt() { if (!prompt.trim()) return; setPrompt(`${prompt.trim()}\n\n输出要求：围绕搜索意图组织 H2/H3 结构，内容具体可信，包含实用建议，并自然关联可选商品。`); }
 
+  async function loadShopifyBlogs(shopDomain: string) {
+    setShopifyBlogsLoaded(false);
+    try {
+      const response = await fetchWithShopifyDevice(`/api/blog/blogs?shopDomain=${encodeURIComponent(shopDomain)}`);
+      const data = (await response.json()) as { blogs?: ShopifyBlogOption[]; error?: string };
+      if (!response.ok) throw new Error(data.error || response.statusText);
+      const blogs = Array.isArray(data.blogs) ? data.blogs : [];
+      setShopifyBlogs(blogs);
+      setShopifyBlog((current) => {
+        if (!blogs.length) return current;
+        if (current && blogs.some((blog) => blog.id === current || blog.handle === current || blog.title === current)) return current;
+        return blogs.length === 1 ? blogs[0].id : current;
+      });
+    } catch {
+      setShopifyBlogs([]);
+    } finally {
+      setShopifyBlogsLoaded(true);
+    }
+  }
   async function handleGenerate() {
     if ((!prompt.trim() && !markdownSource.trim()) || generating) return;
     setGenerating(true);
@@ -299,9 +330,11 @@ export default function BlogPage() {
             </Field>
             <Field label="博客" required>
               <select value={shopifyBlog} onChange={(e) => setShopifyBlog(e.target.value)} className={`${CONTROL_CLASS} h-9`}>
-                <option value="">请选择 Shopify 博客</option>
-                <option value="news">News</option>
-                <option value="blog">Blog</option>
+                <option value="">{shopifyBlogsLoaded ? "请选择 Shopify 博客" : "正在读取 Shopify 博客..."}</option>
+                {shopifyBlogs.map((blog) => (
+                  <option key={blog.id} value={blog.id}>{blog.title || blog.handle || "未命名博客"}</option>
+                ))}
+                {shopifyBlogsLoaded && !shopifyBlogs.length ? <option value="news">新闻</option> : null}
               </select>
             </Field>
             <Field label="标记">
