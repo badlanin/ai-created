@@ -43,6 +43,7 @@ export default function BlogPage() {
   const [bindFileName, setBindFileName] = useState("");
   const [bindFileText, setBindFileText] = useState("");
   const [bindError, setBindError] = useState("");
+  const [bindCredentials, setBindCredentials] = useState<ShopifyTxtCredentials | null>(null);
   const [binding, setBinding] = useState(false);
   const [clearingBinding, setClearingBinding] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -168,7 +169,16 @@ export default function BlogPage() {
   async function handleBindFile(file: File | undefined) {
     setBindError("");
     setBindFileName(file?.name || "");
-    setBindFileText(file ? await file.text() : "");
+    setBindFileText("");
+    setBindCredentials(null);
+    if (!file) return;
+    const text = await file.text();
+    setBindFileText(text);
+    try {
+      setBindCredentials(parseShopifyCredentials(text));
+    } catch (error) {
+      setBindError(error instanceof Error ? error.message : String(error));
+    }
   }
 
   async function handleClearShopifyBinding() {
@@ -190,8 +200,11 @@ export default function BlogPage() {
 
   async function handleExchangeToken() {
     setBindError("");
-    let credentials: ShopifyTxtCredentials;
-    try { credentials = parseShopifyCredentials(bindFileText); } catch (error) { setBindError(error instanceof Error ? error.message : String(error)); return; }
+    let credentials = bindCredentials;
+    if (!credentials) {
+      try { credentials = parseShopifyCredentials(bindFileText); } catch (error) { setBindError(error instanceof Error ? error.message : String(error)); return; }
+      setBindCredentials(credentials);
+    }
     setBinding(true);
     try {
       const tokenResponse = await fetchWithShopifyDevice("/api/shopify/client-credentials-token", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ useStored: false, shopDomain: credentials.shopDomain, clientId: credentials.clientId, clientSecret: credentials.clientSecret }) });
@@ -205,7 +218,7 @@ export default function BlogPage() {
       if (!saveResponse.ok) throw new Error(saveData.error || saveResponse.statusText);
       const active = saveData.connection as ShopifyConnection | null;
       setConnection(active?.shopDomain ? active : { shopDomain: credentials.shopDomain, isActive: true });
-      setBindOpen(false); setBindFileName(""); setBindFileText("");
+      setBindOpen(false); setBindFileName(""); setBindFileText(""); setBindCredentials(null);
     } catch (error) { setBindError(error instanceof Error ? error.message : "兑换 Token 失败"); } finally { setBinding(false); }
   }
 
@@ -314,7 +327,7 @@ export default function BlogPage() {
             </button>
           </Panel>
         </aside>
-      </section>      {bindOpen ? <ShopifyBindModal fileName={bindFileName} error={bindError} binding={binding} clearing={clearingBinding} canSubmit={Boolean(bindFileText)} boundShopDomain={connection?.shopDomain || ""} onFileChange={handleBindFile} onClear={handleClearShopifyBinding} onClose={() => { if (!binding && !clearingBinding) setBindOpen(false); }} onSubmit={handleExchangeToken} /> : null}
+      </section>      {bindOpen ? <ShopifyBindModal fileName={bindFileName} credentials={bindCredentials} error={bindError} binding={binding} clearing={clearingBinding} canSubmit={Boolean(bindCredentials)} boundShopDomain={connection?.shopDomain || ""} onFileChange={handleBindFile} onClear={handleClearShopifyBinding} onClose={() => { if (!binding && !clearingBinding) setBindOpen(false); }} onSubmit={handleExchangeToken} /> : null}
     </main>
   );
 }
@@ -429,11 +442,16 @@ function parseShopifyCredentials(text: string): ShopifyTxtCredentials {
   return credentials;
 }
 
-function ShopifyBindModal({ fileName, error, binding, clearing, canSubmit, boundShopDomain, onFileChange, onClear, onClose, onSubmit }: { fileName: string; error: string; binding: boolean; clearing: boolean; canSubmit: boolean; boundShopDomain: string; onFileChange: (file: File | undefined) => void; onClear: () => void; onClose: () => void; onSubmit: () => void }) {
+function ShopifyBindModal({ fileName, credentials, error, binding, clearing, canSubmit, boundShopDomain, onFileChange, onClear, onClose, onSubmit }: { fileName: string; credentials: ShopifyTxtCredentials | null; error: string; binding: boolean; clearing: boolean; canSubmit: boolean; boundShopDomain: string; onFileChange: (file: File | undefined) => void; onClear: () => void; onClose: () => void; onSubmit: () => void }) {
   const busy = binding || clearing;
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4"><div className="w-full max-w-[520px] rounded-lg bg-white p-5 shadow-xl"><div className="mb-3 flex items-start justify-between gap-4"><div><h2 className="text-[18px] font-bold text-fg-primary">添加 / 重新绑定 Shopify 店铺</h2><p className="mt-1 text-[12px] text-fg-muted">重新绑定会先清除同店铺旧 token，再保存新 token，避免云端继续读取旧权限。</p></div><button type="button" onClick={onClose} disabled={busy} className="rounded-sm p-1 text-fg-muted hover:bg-bg-tertiary"><X size={18} /></button></div>{boundShopDomain ? <div className="mb-4 rounded-sm border border-[#fde68a] bg-[var(--warn-bg)] px-3 py-2 text-[11px] leading-5 text-[#92400e]">当前已绑定：{boundShopDomain}。如云端仍读取旧权限，可先清除旧绑定再上传 TXT 重新兑换。</div> : null}<label className="mb-4 block rounded-md border border-dashed border-brand-300 bg-[var(--brand-50-bg)] p-4"><div className="mb-3 flex items-center gap-2 text-[13px] font-semibold text-fg-primary"><UploadCloud size={16} className="text-brand-500" />上传店铺凭据 TXT 文件</div><input type="file" accept=".txt,text/plain" disabled={busy} onChange={(event) => void onFileChange(event.target.files?.[0])} className="w-full rounded-sm bg-white text-[12px] text-fg-secondary file:mr-3 file:rounded-sm file:border file:border-border-subtle file:bg-bg-secondary file:px-3 file:py-1.5 file:text-[12px]" />{fileName ? <p className="mt-2 text-[10px] text-fg-muted">已选择：{fileName}</p> : null}</label><div className="mb-4 rounded-md bg-bg-tertiary p-4"><div className="mb-2 text-[12px] font-semibold text-fg-secondary">TXT 文件内容格式</div><pre className="rounded-sm bg-white p-3 text-[11px] leading-5 text-fg-secondary">{`SHOPIFY_SHOP_DOMAIN=your-store.myshopify.com\nSHOPIFY_CLIENT_ID=...\nSHOPIFY_CLIENT_SECRET=...`}</pre><p className="mt-2 text-[11px] text-fg-muted">Token 会保存到当前云端账号与浏览器设备对应的 Shopify 绑定中。</p></div>{error ? <div className="mb-4 whitespace-pre-wrap rounded-sm border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[12px] text-[#dc2626]">{error}</div> : null}<div className="flex items-center justify-between gap-2"><button type="button" onClick={onClear} disabled={!boundShopDomain || busy} className="flex h-9 items-center gap-2 rounded-sm border border-[#fecaca] bg-white px-4 text-[12px] font-medium text-[#dc2626] disabled:opacity-45">{clearing ? <Loader2 size={14} className="animate-spin" /> : null}{clearing ? "清除中..." : "清除旧绑定"}</button><div className="flex gap-2"><button type="button" onClick={onClose} disabled={busy} className="h-9 rounded-sm border border-border-subtle bg-white px-5 text-[12px] text-fg-secondary">取消</button><button type="button" onClick={onSubmit} disabled={!canSubmit || busy} className="flex h-9 items-center gap-2 rounded-sm bg-grad-brand px-5 text-[12px] font-semibold text-white disabled:opacity-45">{binding ? <Loader2 size={14} className="animate-spin" /> : null}{binding ? "重新绑定中..." : "清除并重新绑定"}</button></div></div></div></div>;
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4"><div className="w-full max-w-[520px] rounded-lg bg-white p-5 shadow-xl"><div className="mb-3 flex items-start justify-between gap-4"><div><h2 className="text-[18px] font-bold text-fg-primary">添加 / 重新绑定 Shopify 店铺</h2><p className="mt-1 text-[12px] text-fg-muted">上传后会立即解析 TXT。重新绑定只使用下方识别出的店铺与 Client ID 换 token。</p></div><button type="button" onClick={onClose} disabled={busy} className="rounded-sm p-1 text-fg-muted hover:bg-bg-tertiary"><X size={18} /></button></div>{boundShopDomain ? <div className="mb-4 rounded-sm border border-[#fde68a] bg-[var(--warn-bg)] px-3 py-2 text-[11px] leading-5 text-[#92400e]">当前已绑定：{boundShopDomain}。如云端仍读取旧权限，可先清除旧绑定再上传 TXT 重新兑换。</div> : null}<label className="mb-4 block rounded-md border border-dashed border-brand-300 bg-[var(--brand-50-bg)] p-4"><div className="mb-3 flex items-center gap-2 text-[13px] font-semibold text-fg-primary"><UploadCloud size={16} className="text-brand-500" />上传店铺凭据 TXT 文件</div><input type="file" accept=".txt,text/plain" disabled={busy} onChange={(event) => void onFileChange(event.target.files?.[0])} className="w-full rounded-sm bg-white text-[12px] text-fg-secondary file:mr-3 file:rounded-sm file:border file:border-border-subtle file:bg-bg-secondary file:px-3 file:py-1.5 file:text-[12px]" />{fileName ? <p className="mt-2 text-[10px] text-fg-muted">已选择：{fileName}</p> : null}</label>{credentials ? <div className="mb-4 rounded-sm border border-[#bbf7d0] bg-[var(--success-bg)] px-3 py-2 text-[11px] leading-5 text-[#047857]"><div className="font-semibold">TXT 已识别，将使用以下信息兑换 token：</div><div>店铺：{credentials.shopDomain}</div><div>Client ID：{maskCredential(credentials.clientId)}</div><div>Client Secret：已识别，不显示明文</div></div> : fileName && !error ? <div className="mb-4 rounded-sm border border-border-subtle bg-bg-tertiary px-3 py-2 text-[11px] text-fg-muted">正在解析 TXT...</div> : null}<div className="mb-4 rounded-md bg-bg-tertiary p-4"><div className="mb-2 text-[12px] font-semibold text-fg-secondary">TXT 文件内容格式</div><pre className="rounded-sm bg-white p-3 text-[11px] leading-5 text-fg-secondary">{`SHOPIFY_SHOP_DOMAIN=your-store.myshopify.com\nSHOPIFY_CLIENT_ID=...\nSHOPIFY_CLIENT_SECRET=...`}</pre><p className="mt-2 text-[11px] text-fg-muted">字段不完整时不会允许重新绑定；Token 会保存到当前云端账号与浏览器设备对应的 Shopify 绑定中。</p></div>{error ? <div className="mb-4 whitespace-pre-wrap rounded-sm border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[12px] text-[#dc2626]">{error}</div> : null}<div className="flex items-center justify-between gap-2"><button type="button" onClick={onClear} disabled={!boundShopDomain || busy} className="flex h-9 items-center gap-2 rounded-sm border border-[#fecaca] bg-white px-4 text-[12px] font-medium text-[#dc2626] disabled:opacity-45">{clearing ? <Loader2 size={14} className="animate-spin" /> : null}{clearing ? "清除中..." : "清除旧绑定"}</button><div className="flex gap-2"><button type="button" onClick={onClose} disabled={busy} className="h-9 rounded-sm border border-border-subtle bg-white px-5 text-[12px] text-fg-secondary">取消</button><button type="button" onClick={onSubmit} disabled={!canSubmit || busy} className="flex h-9 items-center gap-2 rounded-sm bg-grad-brand px-5 text-[12px] font-semibold text-white disabled:opacity-45">{binding ? <Loader2 size={14} className="animate-spin" /> : null}{binding ? "重新绑定中..." : "清除并重新绑定"}</button></div></div></div></div>;
 }
 
+function maskCredential(value: string) {
+  const text = String(value || "").trim();
+  if (text.length <= 8) return text ? "••••" : "";
+  return `${text.slice(0, 4)}••••${text.slice(-6)}`;
+}
 function Tab({ href, label, count, active = false }: { href: string; label: string; count?: string; active?: boolean }) { return <Link href={href} className={`relative pb-3 ${active ? "font-semibold text-brand-600" : "text-fg-secondary"}`}>{label}{count ? <span className="ml-1 text-[11px] text-fg-muted">{count}</span> : null}{active ? <span className="absolute bottom-[-1px] left-0 h-0.5 w-full rounded-full bg-brand-500" /> : null}</Link>; }
 function Panel({ className = "", children }: { className?: string; children: React.ReactNode }) { return <div className={`rounded-md border border-border-subtle bg-white shadow-sm ${className}`}>{children}</div>; }
 function PanelHeader({ icon, title, meta, action }: { icon: React.ReactNode; title: string; meta?: string; action?: React.ReactNode }) { return <div className="flex min-h-[56px] items-center justify-between gap-3 border-b border-border-subtle px-4 py-3"><div className="flex min-w-0 items-center gap-2"><span className="text-brand-500">{icon}</span><div className="min-w-0"><h2 className="text-[13px] font-semibold text-fg-primary">{title}</h2>{meta ? <p className="text-[9px] text-fg-muted">{meta}</p> : null}</div></div>{action ? <div className="shrink-0">{action}</div> : null}</div>; }
