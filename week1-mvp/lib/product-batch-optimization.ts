@@ -129,7 +129,7 @@ const PRODUCT_BATCH_REPAIR_SYSTEM_PROMPT = `
 1. 只返回合法 JSON，必须匹配 schema。
 2. 不新增未经输入支持的商品事实，不新增材质、认证、折扣、物流、售后、库存、SKU、价格或变体信息。
 3. 保持 URL handle、模板样式尽量不变；修复商品标题、标签和类别尺寸时只处理质量问题，不新增事实。
-4. 修复 title、descriptionHtml、seoTitle、seoTitlePhrases、metaDescription、metaDescriptionSentences、tags、FAQ、imageAltTexts 等自然语言字段，使每个句子或短语为英文且完整，不得以介词、连词、逗号、冒号、破折号或半截短语结尾。
+4. 修复 title、descriptionHtml、seoTitle、seoTitlePhrases、metaDescription、metaDescriptionSentences、tags、FAQ、imageAltTexts、categoryMetafields 等自然语言字段，使每个句子或短语为英文且完整，不得以介词、连词、逗号、冒号、破折号或半截短语结尾。
 5. 如果字符限制不够，必须改写成更短的完整句子，不得直接截断。
 6. categorySize 只能保留阿拉伯数字尺寸列表，例如 "2, 4, 6, 8"；不得输出中文数字、英文单词或说明文字。
 7. 只修复 targetFields 中列出的字段；forbiddenFields 中的字段必须逐字复制 currentSnapshot/currentProduct 原值，不得借修复机会改写。
@@ -2328,6 +2328,7 @@ function getIssueTargetField(field: string): ProductBatchTargetField {
   if (field.startsWith("seoTitle")) return "seoTitle";
   if (field.startsWith("metaDescription")) return "metaDescription";
   if (field.startsWith("categorySize")) return "categorySize";
+  if (field.startsWith("categoryMetafields")) return "categoryMetafields";
   if (field.startsWith("templateStyle")) return "templateStyle";
   if (field.startsWith("imageAltTexts")) return "imageAltTexts";
   if (field.startsWith("faq")) return "faq";
@@ -2361,6 +2362,22 @@ function validateProposalEnglish(
   proposed.imageAltTexts.forEach((item, index) => {
     addEnglishLanguageIssue(issues, `imageAltTexts[${index + 1}]`, item.altText);
   });
+
+  for (const def of PRODUCT_BATCH_CATEGORY_METAFIELD_DEFS) {
+    if (def.key === "size") continue;
+    addEnglishLanguageIssue(
+      issues,
+      `categoryMetafields.${def.key}`,
+      proposed.categoryMetafields?.[def.key] || "",
+    );
+    if (def.baseKey) {
+      addEnglishLanguageIssue(
+        issues,
+        `categoryMetafields.${def.baseKey}`,
+        proposed.categoryMetafields?.[def.baseKey] || "",
+      );
+    }
+  }
 
   return issues;
 }
@@ -2648,7 +2665,7 @@ function normalizeCategoryMetafields(
       });
     } else {
       result[key] =
-        cleanCategoryMetafieldValue(rawValue) ||
+        normalizeCategoryMetafieldEnglishValue(key, rawValue) ||
         inferProductBatchCategoryMetafieldValue(key, product, prompt);
       if (def.baseKey) {
         const rawBaseValue =
@@ -2656,7 +2673,7 @@ function normalizeCategoryMetafields(
           (def.shopifyBaseValueField ? source[def.shopifyBaseValueField] : undefined) ??
           current[def.baseKey] ??
           "";
-        result[def.baseKey] = cleanCategoryMetafieldValue(rawBaseValue);
+        result[def.baseKey] = normalizeCategoryMetafieldEnglishValue(key, rawBaseValue);
       }
     }
   }
@@ -2675,6 +2692,114 @@ function cleanCategoryMetafieldValue(value: unknown): string {
   return /^(null|undefined|none|n\/?a|not applicable)$/i.test(cleaned)
     ? ""
     : cleaned;
+}
+
+const CATEGORY_METAFIELD_ENGLISH_ALIASES: Partial<
+  Record<ProductBatchCategoryMetafieldKey, Array<[RegExp, string]>>
+> = {
+  fabric: [
+    [/欧根纱|organza/i, "Organza"],
+    [/缎面|缎|satin/i, "Satin"],
+    [/薄纱|网纱|tulle/i, "Tulle"],
+    [/雪纺|chiffon/i, "Chiffon"],
+    [/蕾丝|lace/i, "Lace"],
+    [/天鹅绒|丝绒|velvet/i, "Velvet"],
+    [/亮片|sequin/i, "Sequin"],
+    [/绉|crepe/i, "Crepe"],
+    [/真丝|桑蚕丝|silk/i, "Silk"],
+    [/塔夫绸|taffeta/i, "Taffeta"],
+    [/网布|mesh/i, "Mesh"],
+    [/聚酯|涤纶|polyester/i, "Polyester Blend"],
+  ],
+  ageGroup: [
+    [/成人|成年|adult/i, "Adult"],
+    [/儿童|童装|kids?|children|child/i, "Kids"],
+    [/青少年|少女|teen|junior/i, "Teen"],
+  ],
+  occasion: [
+    [/派对|聚会|party/i, "Party"],
+    [/舞会|prom/i, "Prom"],
+    [/婚礼|婚宴|wedding/i, "Wedding"],
+    [/新娘|婚纱|bridal/i, "Bridal"],
+    [/伴娘|bridesmaid/i, "Bridesmaid"],
+    [/正式|礼服|正装|formal/i, "Formal"],
+    [/晚宴|晚礼服|evening/i, "Evening"],
+    [/鸡尾酒|cocktail/i, "Cocktail"],
+    [/返校|homecoming/i, "Homecoming"],
+    [/毕业|graduation/i, "Graduation"],
+  ],
+  dressStyle: [
+    [/a[ -]?line|a字|A字/i, "A-Line"],
+    [/公主|princess/i, "Princess"],
+    [/鱼尾|mermaid/i, "Mermaid"],
+    [/蓬蓬裙|ball gown/i, "Ball Gown"],
+    [/直筒|sheath/i, "Sheath"],
+    [/高腰|empire/i, "Empire"],
+    [/修身喇叭|fit[ -]?and[ -]?flare/i, "Fit and Flare"],
+    [/紧身|bodycon/i, "Bodycon"],
+    [/小号裙|trumpet/i, "Trumpet"],
+  ],
+  neckline: [
+    [/甜心|sweetheart/i, "Sweetheart"],
+    [/v领|v[ -]?neck/i, "V-Neck"],
+    [/一字肩|off[ -]?the[ -]?shoulder|off shoulder/i, "Off-the-Shoulder"],
+    [/抹胸|strapless/i, "Strapless"],
+    [/挂脖|halter/i, "Halter"],
+    [/方领|square neck/i, "Square Neck"],
+    [/高领|high neck/i, "High Neck"],
+    [/圆领|crew neck/i, "Crew Neck"],
+    [/船领|bateau|boat neck/i, "Bateau Neck"],
+  ],
+  dressLengthType: [
+    [/及地|拖地|floor[ -]?length|floor/i, "Floor Length"],
+    [/踝长|maxi|ankle[ -]?length/i, "Maxi"],
+    [/茶长|tea[ -]?length/i, "Tea Length"],
+    [/中长|midi/i, "Midi"],
+    [/及膝|knee[ -]?length/i, "Knee Length"],
+    [/短款|迷你|mini|short dress/i, "Mini"],
+  ],
+  sleeveLengthType: [
+    [/无袖|sleeveless/i, "Sleeveless"],
+    [/长袖|long sleeve|long-sleeve/i, "Long Sleeve"],
+    [/短袖|short sleeve|short-sleeve/i, "Short Sleeve"],
+    [/盖袖|包肩|cap sleeve/i, "Cap Sleeve"],
+    [/吊带|细肩带|spaghetti strap/i, "Spaghetti Strap"],
+    [/七分袖|3\/4|three-quarter/i, "Three-Quarter Sleeve"],
+    [/五分袖|elbow sleeve/i, "Elbow Sleeve"],
+  ],
+  targetGender: [
+    [/女性|女士|女款|女$|female|women|woman|ladies|lady/i, "Female"],
+    [/男性|男士|男款|男$|male|men|man/i, "Male"],
+    [/中性|男女通用|unisex/i, "Unisex"],
+    [/女童|girls?/i, "Girls"],
+    [/男童|boys?/i, "Boys"],
+  ],
+};
+
+function normalizeCategoryMetafieldEnglishValue(
+  key: ProductBatchCategoryMetafieldKey,
+  value: unknown,
+): string {
+  const parts = Array.isArray(value)
+    ? value.map((item) => cleanCategoryMetafieldValue(item))
+    : splitCategoryMetafieldCandidateValue(cleanCategoryMetafieldValue(value));
+  const normalized = parts
+    .map((part) => normalizeCategoryMetafieldEnglishPart(key, part))
+    .filter(Boolean);
+  return joinCategoryMetafieldCandidateValues(normalized);
+}
+
+function normalizeCategoryMetafieldEnglishPart(
+  key: ProductBatchCategoryMetafieldKey,
+  value: string,
+): string {
+  const text = cleanCategoryMetafieldValue(value);
+  if (!text) return "";
+  if (!hasCjkText(text) && isLikelyEnglishText(text)) return text;
+  for (const [pattern, english] of CATEGORY_METAFIELD_ENGLISH_ALIASES[key] || []) {
+    if (pattern.test(text)) return english;
+  }
+  return "";
 }
 
 function inferProductBatchCategoryMetafieldValue(
@@ -2865,7 +2990,7 @@ function buildCategoryMetafieldPromptInstruction(
     excludedKeys: ["color"],
     backendCandidates: formatCategoryMetafieldCandidatesForPrompt(keys, candidates),
     rule:
-      "Only fill categoryMetafields keys listed in allowedKeys. Do not generate color here. Keep size on the existing categorySize logic. For fabric, ageGroup, occasion, dressStyle, neckline, dressLengthType, sleeveLengthType, and targetGender: first choose an exact or closest existingMetaobjectValues item when available and output that original display value. If no existing Metaobject fits, output a concise English display value based on product facts so Shopify sync can create the missing metaobject. When officialTaxonomyValues contains a suitable legal base value, also output the matching <key>BaseValue field, for example dressStyleBaseValue, copied verbatim from officialTaxonomyValues. Never output null, undefined, none, or an empty string for requested categoryMetafields keys. For keys not listed in allowedKeys, copy the current value or infer a concise value from the product facts.",
+      "Only fill categoryMetafields keys listed in allowedKeys. Do not generate color here. Keep size on the existing categorySize logic. For fabric, ageGroup, occasion, dressStyle, neckline, dressLengthType, sleeveLengthType, and targetGender: output concise English display values only. You may choose an exact or closest existingMetaobjectValues item only when that item is already English; never copy Chinese, Japanese, Korean, or other non-English display values. If the backend only has a non-English Metaobject value, translate or infer the English display value from product facts so Shopify sync can create the missing English metaobject. When officialTaxonomyValues contains a suitable legal base value, also output the matching <key>BaseValue field, for example dressStyleBaseValue, copied verbatim from officialTaxonomyValues only when it is English. Never output null, undefined, none, or an empty string for requested categoryMetafields keys. For keys not listed in allowedKeys, copy the current value only if it is English; otherwise infer a concise English value from the product facts.",
   };
 }
 
@@ -2993,10 +3118,9 @@ function resolveCategoryMetafieldsAgainstBackendCandidates(
     const value = cleanCategoryMetafieldValue(nextFields[key]);
     if (!value) continue;
 
-    const metaMatch = resolveCategoryMetafieldValueAgainstCandidate(
-      value,
-      candidate,
-      "metaobject",
+    const metaMatch = normalizeCategoryMetafieldEnglishValue(
+      key,
+      resolveCategoryMetafieldValueAgainstCandidate(value, candidate, "metaobject"),
     );
     if (metaMatch) {
       if (metaMatch !== value) {
@@ -3013,8 +3137,14 @@ function resolveCategoryMetafieldsAgainstBackendCandidates(
     if (!def.baseKey) continue;
     const baseValue = cleanCategoryMetafieldValue(nextFields[def.baseKey]);
     const baseMatch =
-      resolveCategoryMetafieldValueAgainstCandidate(baseValue, candidate, "taxonomy") ||
-      resolveCategoryMetafieldValueAgainstCandidate(value, candidate, "taxonomy");
+      normalizeCategoryMetafieldEnglishValue(
+        key,
+        resolveCategoryMetafieldValueAgainstCandidate(baseValue, candidate, "taxonomy"),
+      ) ||
+      normalizeCategoryMetafieldEnglishValue(
+        key,
+        resolveCategoryMetafieldValueAgainstCandidate(value, candidate, "taxonomy"),
+      );
 
     if (baseMatch) {
       if (baseMatch !== baseValue) {
@@ -3830,21 +3960,120 @@ function parseJsonObject(text: string): Record<string, unknown> {
     .replace(/^```(?:json)?/i, "")
     .replace(/```$/i, "")
     .trim();
-  try {
-    const parsed = JSON.parse(cleaned) as unknown;
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {
-    const match = cleaned.match(/\{[\s\S]*\}/);
-    if (match) {
-      const parsed = JSON.parse(match[0]) as unknown;
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>;
-      }
+  const candidates = [cleaned];
+  const embeddedObject = extractFirstJsonObject(cleaned);
+  if (embeddedObject && embeddedObject !== cleaned) candidates.push(embeddedObject);
+
+  for (const candidate of candidates) {
+    try {
+      return assertJsonObject(JSON.parse(candidate) as unknown);
+    } catch {}
+
+    const repaired = repairMissingJsonCommas(candidate);
+    if (repaired !== candidate) {
+      try {
+        return assertJsonObject(JSON.parse(repaired) as unknown);
+      } catch {}
     }
   }
   throw new Error(`模型返回的 JSON 无法解析：${truncate(text, 500)}`);
+}
+
+function assertJsonObject(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  throw new Error("Parsed JSON is not an object");
+}
+
+function extractFirstJsonObject(text: string): string | null {
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") {
+      if (depth === 0) start = i;
+      depth += 1;
+      continue;
+    }
+    if (ch === "}" && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && start >= 0) return text.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+function repairMissingJsonCommas(text: string) {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    out += ch;
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+        const nextIndex = findNextNonWhitespace(text, i + 1);
+        if (shouldInsertMissingComma(text, i, nextIndex)) out += ",";
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (ch === "}" || ch === "]" || isNumberTokenEnd(text, i)) {
+      const nextIndex = findNextNonWhitespace(text, i + 1);
+      if (shouldInsertMissingComma(text, i, nextIndex)) out += ",";
+    }
+  }
+  return out;
+}
+
+function isNumberTokenEnd(text: string, index: number) {
+  const ch = text[index];
+  if (!/[0-9]/.test(ch)) return false;
+  const next = text[index + 1];
+  return !next || !/[0-9.eE+-]/.test(next);
+}
+
+function findNextNonWhitespace(text: string, start: number) {
+  for (let i = start; i < text.length; i++) {
+    if (!/\s/.test(text[i])) return i;
+  }
+  return -1;
+}
+
+function shouldInsertMissingComma(text: string, currentIndex: number, nextIndex: number) {
+  if (nextIndex < 0) return false;
+  const between = text.slice(currentIndex + 1, nextIndex);
+  if (between.includes(",") || between.includes(":")) return false;
+  const next = text[nextIndex];
+  return next === "{" || next === "[" || next === '"' || next === "-" || /[0-9tfn]/.test(next);
 }
 
 function formatModelError(error: unknown) {

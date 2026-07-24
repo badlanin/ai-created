@@ -426,19 +426,30 @@ export async function POST(req: NextRequest) {
       scene_image_path: string | null;
       variant_idx: number;
       variant_total: number;
+      pose_id?: number;
+      pose_name?: string;
+      pose_text?: string;
+      pose_type?: string;
     };
     const resolvedExtraTextItems: ExtraTextItemResolved[] = [];
     for (const pair of extraTextPairs) {
       for (let v = 1; v <= pair.count; v++) {
         const scene = pair.scene_id ? extraScenes.get(pair.scene_id) : null;
-        resolvedExtraTextItems.push({
-          text: pair.text,
-          scene_id: scene?.id ?? null,
-          scene_name: scene?.name ?? null,
-          scene_image_path: scene?.image_path ?? null,
-          variant_idx: v,
-          variant_total: pair.count,
-        });
+        const textScenePoses = poses.length > 0 ? poses : [null];
+        for (const textScenePose of textScenePoses) {
+          resolvedExtraTextItems.push({
+            text: pair.text,
+            scene_id: scene?.id ?? null,
+            scene_name: scene?.name ?? null,
+            scene_image_path: scene?.image_path ?? null,
+            variant_idx: v,
+            variant_total: pair.count,
+            pose_id: textScenePose?.id,
+            pose_name: textScenePose?.name,
+            pose_text: textScenePose?.text,
+            pose_type: textScenePose?.type,
+          });
+        }
       }
     }
 
@@ -463,8 +474,8 @@ export async function POST(req: NextRequest) {
       return {
         label:
           it.variant_total > 1
-            ? `文字场景"${shortText}"${imageTag} · 变体 ${it.variant_idx}/${it.variant_total}`
-            : `文字场景"${shortText}"${imageTag}`,
+            ? `文字场景"${shortText}"${imageTag}${it.pose_name ? ` · ${it.pose_name}` : ""} · 变体 ${it.variant_idx}/${it.variant_total}`
+            : `文字场景"${shortText}"${imageTag}${it.pose_name ? ` · ${it.pose_name}` : ""}`,
       };
     });
     const allItems = [...solidItems, ...extraItems, ...extraTextItemsForJob];
@@ -742,6 +753,10 @@ async function batchPhotoItemHandler(
       scene_image_path?: string | null;
       variant_idx: number;
       variant_total: number;
+      pose_id?: number;
+      pose_name?: string;
+      pose_text?: string;
+      pose_type?: string;
     }>;
     // 老版兼容：万一从老 job 恢复出来的 params 还带这字段
     extra_pairs?: Array<{
@@ -861,17 +876,27 @@ async function batchPhotoItemHandler(
       it.variant_idx,
       it.variant_total,
     );
-    pose = {
-      id: 0,
-      name:
-        it.variant_total > 1
-          ? `文字场景 · 变体 ${it.variant_idx}/${it.variant_total}`
-          : "文字场景 · 自由互动",
-      text: sceneImagePath
-        ? `优先按场景参考图里的空间结构 / 墙面 / 家具 / 门 / 桌子 / 道具自然互动，同时用下方文字补充细节。挑 1-2 个物件发生动作（坐 / 倚 / 撑 / 拿 / 触摸 / 走过）。${cameraHint}`
-        : `按下方场景文字描述里出现的物件（家具 / 门 / 桌子 / 楼梯 / 栏杆 / 道具）自然互动，挑 1-2 个发生动作（坐 / 倚 / 撑 / 拿 / 触摸 / 走过）。${cameraHint}`,
-      type: "full",
-    };
+    if (it.pose_id && it.pose_name && it.pose_text && it.pose_type) {
+      selectedPoseSceneLocked = true;
+      pose = {
+        id: it.pose_id,
+        name: it.pose_name,
+        text: it.pose_text,
+        type: it.pose_type,
+      };
+    } else {
+      pose = {
+        id: 0,
+        name:
+          it.variant_total > 1
+            ? `文字场景 · 变体 ${it.variant_idx}/${it.variant_total}`
+            : "文字场景 · 自由互动",
+        text: sceneImagePath
+          ? `优先按场景参考图里的空间结构 / 墙面 / 家具 / 门 / 桌子 / 道具自然互动，同时用下方文字补充细节。挑 1-2 个物件发生动作（坐 / 倚 / 撑 / 拿 / 触摸 / 走过）。${cameraHint}`
+          : `按下方场景文字描述里出现的物件（家具 / 门 / 桌子 / 楼梯 / 栏杆 / 道具）自然互动，挑 1-2 个发生动作（坐 / 倚 / 撑 / 拿 / 触摸 / 走过）。${cameraHint}`,
+        type: "full",
+      };
+    }
     framingBlock = sceneImagePath
       ? `══════════════════════════════════════════════════════════
 🎬 SCENE — use the provided scene reference image + text

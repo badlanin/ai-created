@@ -757,11 +757,11 @@ function BatchPhotoTab({
     (sum, p) => sum + (p.count || 0),
     0,
   );
-  const validExtraTextCount = extraTextScenes.reduce(
-    (sum, t) => sum + (t.count || 0),
-    0,
-  );
   const selectedPoseCount = selectedPoseIds.size;
+  const textScenePoseMultiplier = selectedPoseCount > 0 ? selectedPoseCount : 1;
+  const validExtraTextCount =
+    extraTextScenes.reduce((sum, t) => sum + (t.count || 0), 0) *
+    textScenePoseMultiplier;
   const shouldGenerateSolidPoses = solidColorEnabled && selectedPoseCount > 0;
   const solidImageCount = shouldGenerateSolidPoses ? selectedPoseCount : 0;
   const effectiveSolidColorHex = solidColorEnabled
@@ -1385,7 +1385,9 @@ function BatchPhotoTab({
       setActiveJobCount((v) => v + 1);
       setViewMode("task");
       const sceneCount = validPairs.reduce((sum, p) => sum + p.count, 0);
-      const textSceneCount = validTextScenes.reduce((sum, t) => sum + t.count, 0);
+      const textSceneCount =
+        validTextScenes.reduce((sum, t) => sum + t.count, 0) *
+        textScenePoseMultiplier;
       const pureCount = solidImageCount;
       const totalCount = pureCount + sceneCount + textSceneCount;
       notifyHelpers.info(
