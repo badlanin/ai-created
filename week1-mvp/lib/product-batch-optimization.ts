@@ -411,6 +411,12 @@ const PRODUCT_BATCH_TARGET_ONLY_SYSTEM_APPENDIX =
 const PRODUCT_BATCH_TARGET_ONLY_REPAIR_SYSTEM_APPENDIX =
   "Output contract override: responseSchema contains only repairable targetFields plus rationale and warnings. Return exactly those schema fields. Do not include forbiddenFields; the backend will merge original values for omitted fields.";
 
+const PRODUCT_BATCH_LARGE_RESPONSE_TARGET_FIELDS = new Set<ProductBatchTargetField>([
+  "descriptionHtml",
+  "imageAltTexts",
+  "faq",
+]);
+
 function buildProductBatchResponseSchema(targetFields: ProductBatchTargetField[]) {
   const schemaFields = new Set<ProductBatchSchemaField>(
     PRODUCT_BATCH_ALWAYS_RESPONSE_FIELDS,
@@ -441,6 +447,14 @@ function buildProductBatchResponseSchema(targetFields: ProductBatchTargetField[]
       schemaFields.has(schemaField as ProductBatchSchemaField),
     ),
   };
+}
+
+function getCompactFallbackTargetFields(
+  targetFields: ProductBatchTargetField[],
+): ProductBatchTargetField[] {
+  return targetFields.filter(
+    (field) => !PRODUCT_BATCH_LARGE_RESPONSE_TARGET_FIELDS.has(field),
+  );
 }
 
 function getForbiddenTargetFields(
@@ -1857,6 +1871,7 @@ async function generateProductProposal(opts: {
 
   const rawText = response.text || "";
   let raw: Record<string, unknown>;
+  let qualityTargetFields = opts.targetFields;
   try {
     raw = parseJsonObject(rawText);
   } catch (err) {
@@ -1870,7 +1885,22 @@ async function generateProductProposal(opts: {
       error: err,
     });
     const suffix = debugPath ? `；完整返回已保存：${debugPath}` : "";
-    throw new Error(`${err instanceof Error ? err.message : String(err)}${suffix}`);
+    const compactFallback = await retryProductBatchCompactJson({
+      user: opts.user,
+      connection: opts.connection,
+      product: opts.product,
+      model: opts.model,
+      promptData,
+      targetFields: opts.targetFields,
+      originalError: err,
+      originalDebugPath: debugPath,
+      signal: opts.signal,
+    });
+    if (!compactFallback) {
+      throw new Error(`${err instanceof Error ? err.message : String(err)}${suffix}`);
+    }
+    raw = compactFallback.raw;
+    qualityTargetFields = compactFallback.targetFields;
   }
   const categoryResolutionWarnings: string[] = [];
   let proposed = constrainProposalToTargetFields(
@@ -1886,7 +1916,7 @@ async function generateProductProposal(opts: {
   );
   let qualityIssues = validateProposalQualityForTargetFields(
     proposed,
-    opts.targetFields,
+    qualityTargetFields,
   );
   let repairedForQuality = false;
   if (qualityIssues.length) {
@@ -1901,7 +1931,7 @@ async function generateProductProposal(opts: {
           model: opts.model,
           proposed,
           issues: qualityIssues,
-          targetFields: opts.targetFields,
+          targetFields: qualityTargetFields,
           signal: opts.signal,
         }),
         opts.prompt,
@@ -1915,7 +1945,7 @@ async function generateProductProposal(opts: {
     repairedForQuality = true;
     qualityIssues = validateProposalQualityForTargetFields(
       proposed,
-      opts.targetFields,
+      qualityTargetFields,
     );
   }
   assertProposalQuality(
@@ -1957,6 +1987,131 @@ async function generateProductProposal(opts: {
         : []),
     ].slice(0, 8),
   };
+}
+
+async function retryProductBatchCompactJson(opts: {
+  user: User;
+  connection: ShopifyToken;
+  product: ShopifyProductNode;
+  model: string;
+  promptData: Record<string, unknown>;
+  targetFields: ProductBatchTargetField[];
+  originalError: unknown;
+  originalDebugPath: string | null;
+  signal?: AbortSignal;
+}): Promise<{ raw: Record<string, unknown>; targetFields: ProductBatchTargetField[] } | null> {
+  const compactTargetFields = getCompactFallbackTargetFields(opts.targetFields);
+  const omittedTargetFields = opts.targetFields.filter(
+    (field) => !compactTargetFields.includes(field),
+  );
+  if (!omittedTargetFields.length) return null;
+
+  const compactPromptData = {
+    ...opts.promptData,
+    targetFields: compactTargetFields,
+    forbiddenFields: getForbiddenTargetFields(compactTargetFields),
+    omittedTargetFields,
+    previousJsonError: formatModelError(opts.originalError),
+    previousRawSavedAt: opts.originalDebugPath || "",
+    targetFieldInstruction:
+      "A previous response was invalid JSON, likely because it was too long. Return only compactTargetFields plus rationale and warnings. Omit omittedTargetFields and forbiddenFields; backend code will merge original values.",
+    finalInstruction:
+      "Return compact JSON only. Do not return descriptionHtml, imageAltTexts, faq, omittedTargetFields, or forbiddenFields unless they are listed in compactTargetFields.",
+  };
+  const responseSchema = buildProductBatchResponseSchema(compactTargetFields);
+  const client = buildGenaiClient();
+
+  try {
+    const response = await abortable(
+      retryWithBackoff(
+        async () => {
+          await acquireToken(opts.model);
+          return client.models.generateContent({
+            model: opts.model,
+            contents: [
+              {
+                role: "user",
+                parts: [
+                  {
+                    text:
+                      "The previous product optimization response was invalid JSON, likely due to excessive output length. Retry with compact JSON only. Return only fields in targetFields plus rationale and warnings; omit omittedTargetFields and forbiddenFields.\n\n" +
+                      JSON.stringify(compactPromptData, null, 2) +
+                      "\n\nFinal reminder: compact JSON only. Backend code will merge original values for omitted fields.",
+                  },
+                ],
+              },
+            ],
+            config: {
+              systemInstruction: `${PRODUCT_BATCH_SYSTEM_PROMPT}\n\n${PRODUCT_BATCH_TARGET_ONLY_SYSTEM_APPENDIX}`,
+              responseMimeType: "application/json",
+              responseSchema,
+              temperature: 0.1,
+            },
+          });
+        },
+        {
+          maxRetries: 2,
+          initialDelayMs: 1500,
+          maxDelayMs: 12_000,
+          onRetry: (err, attempt, delayMs) => {
+            console.warn(
+              `[product-batch] compact JSON fallback retry ${attempt} in ${Math.round(delayMs)}ms: ${formatModelError(err)}`,
+            );
+          },
+        },
+      ),
+      opts.signal,
+      "Aborted",
+    );
+    if (opts.signal?.aborted) {
+      throw new Error("Aborted");
+    }
+
+    recordUsage({
+      userId: opts.user.id,
+      model: opts.model,
+      feature: "other",
+      usageMetadata: response.usageMetadata as never,
+      success: true,
+      notes: {
+        kind: "product-batch-optimization-compact-fallback",
+        shopDomain: opts.connection.shopDomain,
+        productId: opts.product.id,
+        omittedTargetFields,
+      },
+    });
+
+    const raw = parseJsonObject(response.text || "");
+    raw.warnings = [
+      ...normalizeStringArray(raw.warnings),
+      `Initial model JSON was invalid or truncated. Compact fallback kept original values for: ${omittedTargetFields.join(", ")}.`,
+    ];
+    return { raw, targetFields: compactTargetFields };
+  } catch (err) {
+    recordUsage({
+      userId: opts.user.id,
+      model: opts.model,
+      feature: "other",
+      success: false,
+      error: formatModelError(err),
+      notes: {
+        kind: "product-batch-optimization-compact-fallback",
+        shopDomain: opts.connection.shopDomain,
+        productId: opts.product.id,
+        omittedTargetFields,
+      },
+    });
+    await writeProductBatchJsonFailure({
+      userId: opts.user.id,
+      model: opts.model,
+      shopDomain: opts.connection.shopDomain,
+      productId: opts.product.id,
+      productTitle: opts.product.title || "",
+      rawText: err instanceof Error ? err.message : String(err),
+      error: err,
+    });
+    return null;
+  }
 }
 
 async function repairProposalCompleteness(opts: {
