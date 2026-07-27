@@ -382,6 +382,67 @@ const PRODUCT_BATCH_TARGET_FIELDS: ProductBatchTargetField[] = [
   "faq",
 ];
 
+type ProductBatchSchemaField = keyof typeof PRODUCT_BATCH_OUTPUT_SCHEMA.properties;
+
+const PRODUCT_BATCH_ALWAYS_RESPONSE_FIELDS: ProductBatchSchemaField[] = [
+  "rationale",
+  "warnings",
+];
+
+const PRODUCT_BATCH_TARGET_RESPONSE_FIELDS: Record<
+  ProductBatchTargetField,
+  ProductBatchSchemaField[]
+> = {
+  title: ["title"],
+  descriptionHtml: ["descriptionHtml"],
+  seoTitle: ["seoTitle", "seoTitlePhrases"],
+  metaDescription: ["metaDescription", "metaDescriptionSentences"],
+  tags: ["tags"],
+  templateStyle: ["templateStyle"],
+  categorySize: ["categorySize"],
+  categoryMetafields: ["categoryMetafields"],
+  imageAltTexts: ["imageAltTexts"],
+  faq: ["faq"],
+};
+
+const PRODUCT_BATCH_TARGET_ONLY_SYSTEM_APPENDIX =
+  "Output contract override: responseSchema contains only targetFields plus rationale and warnings. Return exactly those schema fields. Do not include forbiddenFields; the backend will merge original values for omitted fields.";
+
+const PRODUCT_BATCH_TARGET_ONLY_REPAIR_SYSTEM_APPENDIX =
+  "Output contract override: responseSchema contains only repairable targetFields plus rationale and warnings. Return exactly those schema fields. Do not include forbiddenFields; the backend will merge original values for omitted fields.";
+
+function buildProductBatchResponseSchema(targetFields: ProductBatchTargetField[]) {
+  const schemaFields = new Set<ProductBatchSchemaField>(
+    PRODUCT_BATCH_ALWAYS_RESPONSE_FIELDS,
+  );
+  const targets = targetFields.length ? targetFields : PRODUCT_BATCH_TARGET_FIELDS;
+
+  for (const targetField of targets) {
+    for (const schemaField of PRODUCT_BATCH_TARGET_RESPONSE_FIELDS[targetField]) {
+      schemaFields.add(schemaField);
+    }
+  }
+
+  const properties: Record<
+    string,
+    (typeof PRODUCT_BATCH_OUTPUT_SCHEMA.properties)[ProductBatchSchemaField]
+  > = {};
+  for (const schemaField of PRODUCT_BATCH_OUTPUT_SCHEMA.required) {
+    if (schemaFields.has(schemaField as ProductBatchSchemaField)) {
+      properties[schemaField as ProductBatchSchemaField] =
+        PRODUCT_BATCH_OUTPUT_SCHEMA.properties[schemaField as ProductBatchSchemaField];
+    }
+  }
+
+  return {
+    ...PRODUCT_BATCH_OUTPUT_SCHEMA,
+    properties,
+    required: PRODUCT_BATCH_OUTPUT_SCHEMA.required.filter((schemaField) =>
+      schemaFields.has(schemaField as ProductBatchSchemaField),
+    ),
+  };
+}
+
 function getForbiddenTargetFields(
   targetFields: ProductBatchTargetField[],
 ): ProductBatchTargetField[] {
@@ -1690,7 +1751,7 @@ async function generateProductProposal(opts: {
     targetFields: opts.targetFields,
     forbiddenFields,
     targetFieldInstruction:
-      "Only optimize and change fields listed in targetFields. Fields listed in forbiddenFields must be copied exactly from currentSnapshot/currentProduct and must not be rewritten, translated, reordered, expanded, or polished.",
+      "Return only fields listed in targetFields, plus rationale and warnings. Do not return forbiddenFields; backend code will merge those omitted fields from currentSnapshot/currentProduct.",
     categoryMetafieldInstruction: buildCategoryMetafieldPromptInstruction(
       opts.prompt,
       categoryMetafieldCandidates,
@@ -1700,7 +1761,7 @@ async function generateProductProposal(opts: {
         userInstruction: "优化标题和 FAQ",
         targetFields: ["title", "faq"],
         correct:
-          "Rewrite only title and faq. Copy descriptionHtml, seoTitle, metaDescription, tags, templateStyle, categorySize, imageAltTexts, and handle from the original values.",
+          "Return only title, faq, rationale, and warnings. Omit descriptionHtml, seoTitle, metaDescription, tags, templateStyle, categorySize, imageAltTexts, and handle.",
         wrong:
           "Changing descriptionHtml, seoTitle, metaDescription, tags, imageAltTexts, or any other field not listed in targetFields.",
       },
@@ -1708,15 +1769,16 @@ async function generateProductProposal(opts: {
         userInstruction: "只优化图片 Alt",
         targetFields: ["imageAltTexts"],
         correct:
-          "Rewrite only imageAltTexts. Copy title, descriptionHtml, seoTitle, metaDescription, tags, templateStyle, categorySize, faq, and handle from the original values.",
+          "Return only imageAltTexts, rationale, and warnings. Omit title, descriptionHtml, seoTitle, metaDescription, tags, templateStyle, categorySize, faq, and handle.",
         wrong:
           "Improving title, SEO title, Meta description, description, tags, or FAQ because they look related.",
       },
     ],
     customInstructions: opts.prompt,
     finalInstruction:
-      "Return complete JSON for the schema, but only targetFields may differ from the original product. Repeat: forbiddenFields must be exact original-value placeholders.",
+      "Return JSON for only the fields present in responseSchema. Only targetFields may be generated; forbiddenFields must be omitted because backend code will merge their original values.",
   };
+  const responseSchema = buildProductBatchResponseSchema(opts.targetFields);
 
   const client = buildGenaiClient();
   let response: Awaited<ReturnType<typeof client.models.generateContent>>;
@@ -1733,17 +1795,17 @@ async function generateProductProposal(opts: {
                 parts: [
                   {
                     text:
-                      "Rewrite this Shopify product for SEO and GEO. Return only JSON that matches the schema. Obey targetFields and forbiddenFields strictly.\n\n" +
+                      "Rewrite this Shopify product for SEO and GEO. Return only JSON that matches the schema. Return only targetFields plus rationale and warnings; omit forbiddenFields.\n\n" +
                       JSON.stringify(promptData, null, 2) +
-                      "\n\nFinal reminder: only targetFields may change; forbiddenFields must stay exactly as currentSnapshot/currentProduct.",
+                      "\n\nFinal reminder: return only targetFields plus rationale and warnings. Do not include forbiddenFields; backend code will merge original values.",
                   },
                 ],
               },
             ],
             config: {
-              systemInstruction: PRODUCT_BATCH_SYSTEM_PROMPT,
+              systemInstruction: `${PRODUCT_BATCH_SYSTEM_PROMPT}\n\n${PRODUCT_BATCH_TARGET_ONLY_SYSTEM_APPENDIX}`,
               responseMimeType: "application/json",
-              responseSchema: PRODUCT_BATCH_OUTPUT_SCHEMA,
+              responseSchema,
               temperature: 0.15,
             },
           });
@@ -1948,9 +2010,10 @@ async function repairProposalCompleteness(opts: {
     targetFields: opts.targetFields,
     forbiddenFields,
     targetFieldInstruction:
-      "Repair only fields listed in targetFields. Fields listed in forbiddenFields must remain exact original-value placeholders from currentSnapshot/currentProduct.",
+      "Repair and return only fields listed in targetFields, plus rationale and warnings. Do not return forbiddenFields; backend code will merge those omitted fields from currentSnapshot/currentProduct.",
     customInstructions: opts.prompt,
   };
+  const responseSchema = buildProductBatchResponseSchema(opts.targetFields);
 
   const client = buildGenaiClient();
   try {
@@ -1966,17 +2029,17 @@ async function repairProposalCompleteness(opts: {
                 parts: [
                   {
                     text:
-                      "Repair the incomplete, non-English, or incorrectly formatted Shopify product optimization JSON. Return only the repaired JSON. Obey targetFields and forbiddenFields strictly.\n\n" +
+                      "Repair the incomplete, non-English, or incorrectly formatted Shopify product optimization JSON. Return only JSON that matches the schema. Return only targetFields plus rationale and warnings; omit forbiddenFields.\n\n" +
                       JSON.stringify(repairData, null, 2) +
-                      "\n\nFinal reminder: repair targetFields only; forbiddenFields must stay exactly as currentSnapshot/currentProduct.",
+                      "\n\nFinal reminder: return only repaired targetFields plus rationale and warnings. Do not include forbiddenFields; backend code will merge original values.",
                   },
                 ],
               },
             ],
             config: {
-              systemInstruction: PRODUCT_BATCH_REPAIR_SYSTEM_PROMPT,
+              systemInstruction: `${PRODUCT_BATCH_REPAIR_SYSTEM_PROMPT}\n\n${PRODUCT_BATCH_TARGET_ONLY_REPAIR_SYSTEM_APPENDIX}`,
               responseMimeType: "application/json",
-              responseSchema: PRODUCT_BATCH_OUTPUT_SCHEMA,
+              responseSchema,
               temperature: 0.05,
             },
           });
