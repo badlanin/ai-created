@@ -22,6 +22,7 @@ const APPLIED_TAG = "ai-seo-geo-applied";
 const MAX_PREVIEW_LIMIT = 50;
 const SHOPIFY_PRODUCT_FETCH_BATCH_SIZE = 10;
 const RUNS_DIR_NAME = "product-batch-optimization";
+const JSON_FAILURES_DIR_NAME = "json-failures";
 const PRODUCT_BATCH_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 
 type PreviewJobState = {
@@ -1793,7 +1794,22 @@ async function generateProductProposal(opts: {
   }
 
   const rawText = response.text || "";
-  const raw = parseJsonObject(rawText);
+  let raw: Record<string, unknown>;
+  try {
+    raw = parseJsonObject(rawText);
+  } catch (err) {
+    const debugPath = await writeProductBatchJsonFailure({
+      userId: opts.user.id,
+      model: opts.model,
+      shopDomain: opts.connection.shopDomain,
+      productId: opts.product.id,
+      productTitle: opts.product.title || "",
+      rawText,
+      error: err,
+    });
+    const suffix = debugPath ? `；完整返回已保存：${debugPath}` : "";
+    throw new Error(`${err instanceof Error ? err.message : String(err)}${suffix}`);
+  }
   const categoryResolutionWarnings: string[] = [];
   let proposed = constrainProposalToTargetFields(
     resolveCategoryMetafieldsAgainstBackendCandidates(
@@ -3963,20 +3979,27 @@ function parseJsonObject(text: string): Record<string, unknown> {
   const candidates = [cleaned];
   const embeddedObject = extractFirstJsonObject(cleaned);
   if (embeddedObject && embeddedObject !== cleaned) candidates.push(embeddedObject);
+  let lastParseError = "";
 
   for (const candidate of candidates) {
     try {
       return assertJsonObject(JSON.parse(candidate) as unknown);
-    } catch {}
+    } catch (err) {
+      lastParseError = err instanceof Error ? err.message : String(err);
+    }
 
     const repaired = repairMissingJsonCommas(candidate);
     if (repaired !== candidate) {
       try {
         return assertJsonObject(JSON.parse(repaired) as unknown);
-      } catch {}
+      } catch (err) {
+        lastParseError = err instanceof Error ? err.message : String(err);
+      }
     }
   }
-  throw new Error(`模型返回的 JSON 无法解析：${truncate(text, 500)}`);
+  throw new Error(
+    `模型返回的 JSON 无法解析${lastParseError ? `（${lastParseError}）` : ""}：${truncate(text, 500)}`,
+  );
 }
 
 function assertJsonObject(value: unknown): Record<string, unknown> {
@@ -4562,6 +4585,73 @@ function getRunDir(runId: string) {
 
 function getRunFilePath(runId: string) {
   return path.join(getRunDir(runId), "proposals.json");
+}
+
+async function writeProductBatchJsonFailure(opts: {
+  userId: number;
+  model: string;
+  shopDomain: string;
+  productId: string;
+  productTitle: string;
+  rawText: string;
+  error: unknown;
+}): Promise<string | null> {
+  try {
+    const dir = path.join(DATA_DIR_PATH, RUNS_DIR_NAME, JSON_FAILURES_DIR_NAME);
+    await fs.mkdir(dir, { recursive: true });
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const hash = crypto
+      .createHash("sha1")
+      .update(`${opts.shopDomain}:${opts.productId}:${opts.rawText}`)
+      .digest("hex")
+      .slice(0, 10);
+    const filename = [
+      stamp,
+      safeFilePart(opts.shopDomain),
+      safeFilePart(opts.productId),
+      hash,
+    ].join("-") + ".json";
+    const filePath = path.join(dir, filename);
+
+    await fs.writeFile(
+      filePath,
+      `${JSON.stringify(
+        {
+          createdAt: new Date().toISOString(),
+          userId: opts.userId,
+          model: opts.model,
+          shopDomain: opts.shopDomain,
+          productId: opts.productId,
+          productTitle: opts.productTitle,
+          error: opts.error instanceof Error ? opts.error.message : String(opts.error),
+          rawLength: opts.rawText.length,
+          rawText: opts.rawText,
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    return path
+      .join(RUNS_DIR_NAME, JSON_FAILURES_DIR_NAME, filename)
+      .replace(/\\/g, "/");
+  } catch (err) {
+    console.error(
+      "[product-batch] failed to write raw JSON failure:",
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
+}
+
+function safeFilePart(value: string) {
+  const cleaned = value
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  return cleaned || "unknown";
 }
 
 async function writeProductBatchRun(run: ProductBatchRunDocument) {
