@@ -434,11 +434,18 @@ const PRODUCT_BATCH_LARGE_RESPONSE_TARGET_FIELDS = new Set<ProductBatchTargetFie
   "faq",
 ]);
 
-function buildProductBatchResponseSchema(targetFields: ProductBatchTargetField[]) {
+function buildProductBatchResponseSchema(
+  targetFields: ProductBatchTargetField[],
+  options: { defaultToAllFields?: boolean } = {},
+) {
   const schemaFields = new Set<ProductBatchSchemaField>(
     PRODUCT_BATCH_ALWAYS_RESPONSE_FIELDS,
   );
-  const targets = targetFields.length ? targetFields : PRODUCT_BATCH_TARGET_FIELDS;
+  const targets = targetFields.length
+    ? targetFields
+    : options.defaultToAllFields === false
+      ? []
+      : PRODUCT_BATCH_TARGET_FIELDS;
 
   for (const targetField of targets) {
     for (const schemaField of PRODUCT_BATCH_TARGET_RESPONSE_FIELDS[targetField]) {
@@ -2045,8 +2052,11 @@ async function retryProductBatchCompactJson(opts: {
     finalInstruction:
       "Return compact JSON only. Do not return descriptionHtml, imageAltTexts, faq, omittedTargetFields, or forbiddenFields unless they are listed in compactTargetFields.",
   };
-  const responseSchema = buildProductBatchResponseSchema(compactTargetFields);
+  const responseSchema = buildProductBatchResponseSchema(compactTargetFields, {
+    defaultToAllFields: false,
+  });
   const client = buildGenaiClient();
+  let fallbackRawText = "";
 
   try {
     const response = await abortable(
@@ -2108,7 +2118,8 @@ async function retryProductBatchCompactJson(opts: {
       },
     });
 
-    const raw = parseJsonObject(response.text || "");
+    fallbackRawText = response.text || "";
+    const raw = parseJsonObject(fallbackRawText);
     raw.warnings = [
       ...normalizeStringArray(raw.warnings),
       `Initial model JSON was invalid or truncated. Compact fallback kept original values for: ${omittedTargetFields.join(", ")}.`,
@@ -2134,7 +2145,7 @@ async function retryProductBatchCompactJson(opts: {
       shopDomain: opts.connection.shopDomain,
       productId: opts.product.id,
       productTitle: opts.product.title || "",
-      rawText: err instanceof Error ? err.message : String(err),
+      rawText: fallbackRawText || (err instanceof Error ? err.message : String(err)),
       error: err,
     });
     return null;

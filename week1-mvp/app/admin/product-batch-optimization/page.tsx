@@ -65,6 +65,12 @@ type RunSummary = {
   lastApplyAt?: number | null;
 };
 
+type RunStoreView = {
+  key: string;
+  run: RunSummary;
+  store: RunStoreRef;
+};
+
 type FaqItem = {
   question: string;
   answer: string;
@@ -247,6 +253,7 @@ export default function ProductBatchOptimizationPage() {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [activeRun, setActiveRun] = useState<RunDocument | null>(null);
   const [openRunId, setOpenRunId] = useState<string | null>(null);
+  const [activeRunStoreKey, setActiveRunStoreKey] = useState<string | null>(null);
   const [selectedStoreKeys, setSelectedStoreKeys] = useState<Set<string>>(new Set());
   const [selectedProposalKeys, setSelectedProposalKeys] = useState<Set<string>>(
     new Set(),
@@ -333,52 +340,64 @@ export default function ProductBatchOptimizationPage() {
     return Array.from(map.values());
   }, [runs, previewFilterDate]);
 
-  const filteredRuns = useMemo(
+  const filteredRunViews = useMemo(
     () =>
-      runs.filter(
-        (run) =>
-          isRunOnDate(run.createdAt, previewFilterDate) &&
-          runMatchesStoreFilter(run, previewFilterStoreKey),
+      buildRunStoreViews(
+        runs.filter((run) => isRunOnDate(run.createdAt, previewFilterDate)),
+        previewFilterStoreKey,
       ),
     [runs, previewFilterDate, previewFilterStoreKey],
   );
-  const filteredPreviewRuns = useMemo(
-    () => filteredRuns.filter((run) => !isRunSubmitted(run)),
-    [filteredRuns],
+  const filteredPreviewRunViews = useMemo(
+    () => filteredRunViews.filter((view) => !isRunSubmitted(view.run)),
+    [filteredRunViews],
   );
-  const filteredSubmittedRuns = useMemo(
-    () => filteredRuns.filter((run) => isRunSubmitted(run)),
-    [filteredRuns],
+  const filteredSubmittedRunViews = useMemo(
+    () => filteredRunViews.filter((view) => isRunSubmitted(view.run)),
+    [filteredRunViews],
   );
   const previewRunTotal = useMemo(
-    () => runs.filter((run) => !isRunSubmitted(run)).length,
+    () =>
+      buildRunStoreViews(
+        runs.filter((run) => !isRunSubmitted(run)),
+        "__all__",
+      ).length,
     [runs],
   );
   const submittedRunTotal = useMemo(
-    () => runs.filter((run) => isRunSubmitted(run)).length,
+    () =>
+      buildRunStoreViews(
+        runs.filter((run) => isRunSubmitted(run)),
+        "__all__",
+      ).length,
     [runs],
   );
   const previewRunLabels = useMemo(
-    () => buildRunDisplayLabels(filteredPreviewRuns, previewFilterStoreKey),
-    [filteredPreviewRuns, previewFilterStoreKey],
+    () => buildRunStoreViewDisplayLabels(filteredPreviewRunViews),
+    [filteredPreviewRunViews],
   );
   const submittedRunLabels = useMemo(
-    () => buildRunDisplayLabels(filteredSubmittedRuns, previewFilterStoreKey),
-    [filteredSubmittedRuns, previewFilterStoreKey],
+    () => buildRunStoreViewDisplayLabels(filteredSubmittedRunViews),
+    [filteredSubmittedRunViews],
   );
   const dateFilteredRunCount = useMemo(
-    () => runs.filter((run) => isRunOnDate(run.createdAt, previewFilterDate)).length,
+    () =>
+      buildRunStoreViews(
+        runs.filter((run) => isRunOnDate(run.createdAt, previewFilterDate)),
+        "__all__",
+      ).length,
     [runs, previewFilterDate],
   );
 
   const filteredProposals = useMemo(() => {
     if (!activeRun || !isRunOnDate(activeRun.createdAt, previewFilterDate)) return [];
+    const storeKey =
+      activeRunStoreKey ||
+      (previewFilterStoreKey !== "__all__" ? previewFilterStoreKey : null);
     return activeRun.proposals.filter(
-      (proposal) =>
-        previewFilterStoreKey === "__all__" ||
-        proposal.store.key === previewFilterStoreKey,
+      (proposal) => !storeKey || proposal.store.key === storeKey,
     );
-  }, [activeRun, previewFilterDate, previewFilterStoreKey]);
+  }, [activeRun, activeRunStoreKey, previewFilterDate, previewFilterStoreKey]);
 
   useEffect(() => {
     function handleClick(event: MouseEvent) {
@@ -401,22 +420,28 @@ export default function ProductBatchOptimizationPage() {
 
   useEffect(() => {
     if (activeRun || loading || generating) return;
-    const firstPreviewRun = filteredPreviewRuns[0];
+    const firstPreviewRun = filteredPreviewRunViews[0];
     if (!firstPreviewRun) return;
-    void loadRun(firstPreviewRun.id);
+    void loadRun(firstPreviewRun.run.id, firstPreviewRun.store.key, firstPreviewRun.key);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeRun?.id, filteredPreviewRuns, loading, generating]);
+  }, [activeRun?.id, filteredPreviewRunViews, loading, generating]);
 
   useEffect(() => {
     if (!activeRun) return;
     const runStores = activeRun.stores || [];
+    if (
+      activeRunStoreKey &&
+      runStores.some((store) => store.key === activeRunStoreKey)
+    ) {
+      return;
+    }
     setPreviewFilterStoreKey((current) => {
       if (current !== "__all__" && runStores.some((store) => store.key === current)) {
         return current;
       }
       return runStores.length === 1 ? runStores[0].key : "__all__";
     });
-  }, [activeRun?.id]);
+  }, [activeRun?.id, activeRunStoreKey]);
 
   useEffect(() => {
     if (!previewJobId) return;
@@ -443,8 +468,13 @@ export default function ProductBatchOptimizationPage() {
               ),
             );
             if (disposed) return;
+            const firstStoreKey =
+              runData.run.proposals[0]?.store.key ||
+              runData.run.stores[0]?.key ||
+              "";
             setActiveRun(runData.run);
-            setOpenRunId(runData.run.id);
+            setActiveRunStoreKey(firstStoreKey || null);
+            setOpenRunId(createRunStoreViewKey(runData.run.id, firstStoreKey));
             setSelectedProposalKeys(
               new Set(runData.run.proposals.map((item) => proposalKey(item))),
             );
@@ -506,9 +536,18 @@ export default function ProductBatchOptimizationPage() {
         }
         return next;
       });
-      const firstPreviewRun = data.runs?.find((run) => !isRunSubmitted(run));
+      const firstPreviewRun = buildRunStoreViews(
+        (data.runs || []).filter(
+          (run) => !isRunSubmitted(run) && isRunOnDate(run.createdAt, previewFilterDate),
+        ),
+        previewFilterStoreKey,
+      )[0];
       if (selectFirst && !activeRun && firstPreviewRun) {
-        await loadRun(firstPreviewRun.id);
+        await loadRun(
+          firstPreviewRun.run.id,
+          firstPreviewRun.store.key,
+          firstPreviewRun.key,
+        );
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -517,7 +556,7 @@ export default function ProductBatchOptimizationPage() {
     }
   }
 
-  async function loadRun(id: string) {
+  async function loadRun(id: string, storeKey?: string | null, viewKey?: string) {
     setError(null);
     const data = await readJson<{ run: RunDocument }>(
       await fetchWithShopifyDevice(
@@ -525,19 +564,22 @@ export default function ProductBatchOptimizationPage() {
       ),
     );
     setActiveRun(data.run);
-    setOpenRunId(data.run.id);
+    setActiveRunStoreKey(storeKey || null);
+    setOpenRunId(viewKey || createRunStoreViewKey(data.run.id, storeKey || ""));
     setSelectedProposalKeys(
       new Set(data.run.proposals.map((item) => proposalKey(item))),
     );
     setExpandedProposalKey(null);
   }
 
-  async function toggleRun(id: string) {
-    if (activeRun?.id === id) {
-      setOpenRunId((current) => (current === id ? null : id));
+  async function toggleRun(view: RunStoreView) {
+    if (activeRun?.id === view.run.id) {
+      setActiveRunStoreKey(view.store.key);
+      setExpandedProposalKey(null);
+      setOpenRunId((current) => (current === view.key ? null : view.key));
       return;
     }
-    await loadRun(id);
+    await loadRun(view.run.id, view.store.key, view.key);
   }
 
   async function handlePreview(e: FormEvent) {
@@ -751,7 +793,7 @@ export default function ProductBatchOptimizationPage() {
     }
   }
 
-  async function handleReapplyRun(id: string) {
+  async function handleReapplyRun(id: string, storeKey?: string) {
     setError(null);
     setNotice(null);
     try {
@@ -765,7 +807,9 @@ export default function ProductBatchOptimizationPage() {
                 ),
               )
             ).run;
-      const keys = source.proposals.map((proposal) => proposalKey(proposal));
+      const keys = source.proposals
+        .filter((proposal) => !storeKey || proposal.store.key === storeKey)
+        .map((proposal) => proposalKey(proposal));
       if (!keys.length) {
         setError("这条提交记录里没有可重新提交的商品。");
         return;
@@ -783,7 +827,7 @@ export default function ProductBatchOptimizationPage() {
           body: JSON.stringify({
             runId: source.id,
             selectedProposalKeys: keys,
-            selectedStoreKeys: Array.from(selectedStoreKeys),
+            selectedStoreKeys: storeKey ? [storeKey] : Array.from(selectedStoreKeys),
             applyFaq: true,
             skipImageAlt: !source.targetFields?.includes("imageAltTexts"),
             setDraft: false,
@@ -891,6 +935,7 @@ export default function ProductBatchOptimizationPage() {
       if (activeRun?.id === id) {
         setActiveRun(null);
         setOpenRunId(null);
+        setActiveRunStoreKey(null);
         setSelectedProposalKeys(new Set());
       }
     } catch (e) {
@@ -909,20 +954,24 @@ export default function ProductBatchOptimizationPage() {
     if (next.size === 1) {
       const [onlyKey] = Array.from(next);
       setPreviewFilterStoreKey(onlyKey);
+      setActiveRunStoreKey(onlyKey);
     } else if (previewFilterStoreKey !== "__all__" && !next.has(previewFilterStoreKey)) {
       setPreviewFilterStoreKey("__all__");
+      setActiveRunStoreKey(null);
     }
   }
 
   function selectSingleStore(key: string) {
     setSelectedStoreKeys(new Set([key]));
     setPreviewFilterStoreKey(key);
+    setActiveRunStoreKey(key);
     setStoreMenuOpen(false);
   }
 
   function selectAllStores() {
     setSelectedStoreKeys(new Set(stores.map((store) => store.key)));
     setPreviewFilterStoreKey("__all__");
+    setActiveRunStoreKey(null);
   }
 
   function toggleProduct(key: string) {
@@ -948,9 +997,10 @@ export default function ProductBatchOptimizationPage() {
   function currentStoreProposalKeys() {
     if (!activeRun) return [];
     const currentStoreKey =
-      previewFilterStoreKey !== "__all__"
+      activeRunStoreKey ||
+      (previewFilterStoreKey !== "__all__"
         ? previewFilterStoreKey
-        : selectedStores[0]?.key || activeRun.storeKeys?.[0] || activeRun.stores?.[0]?.key || "";
+        : selectedStores[0]?.key || activeRun.storeKeys?.[0] || activeRun.stores?.[0]?.key || "");
     return activeRun.proposals
       .filter((proposal) => !currentStoreKey || proposal.store.key === currentStoreKey)
       .map((proposal) => proposalKey(proposal));
@@ -1364,6 +1414,7 @@ export default function ProductBatchOptimizationPage() {
       {activeRun && !isRunSubmitted(activeRun) ? (
         <ActiveRunPreviewControls
           activeRun={activeRun}
+          activeRunStoreLabel={getActiveRunStoreLabel(activeRun, activeRunStoreKey)}
           applying={applying}
           selectedProductCount={selectedProductCount}
           applyOptions={applyOptions}
@@ -1400,7 +1451,7 @@ export default function ProductBatchOptimizationPage() {
             </p>
           </div>
           <span className="text-xs text-fg-tertiary">
-            {filteredPreviewRuns.length}/{previewRunTotal} 条
+            {filteredPreviewRunViews.length}/{previewRunTotal} 条
           </span>
         </div>
 
@@ -1423,7 +1474,15 @@ export default function ProductBatchOptimizationPage() {
               </span>
               <select
                 value={previewFilterStoreKey}
-                onChange={(e) => setPreviewFilterStoreKey(e.target.value)}
+                onChange={(e) => {
+                  const nextStoreKey = e.target.value;
+                  setPreviewFilterStoreKey(nextStoreKey);
+                  setActiveRunStoreKey(
+                    nextStoreKey === "__all__" ? null : nextStoreKey,
+                  );
+                  setOpenRunId(null);
+                  setExpandedProposalKey(null);
+                }}
                 className="w-full rounded-md border border-border-subtle bg-bg-primary px-3 py-2 text-sm text-fg-primary outline-none focus:border-brand-400"
               >
                 <option value="__all__">
@@ -1440,15 +1499,23 @@ export default function ProductBatchOptimizationPage() {
         </div>
 
         <div className="space-y-2">
-          {filteredPreviewRuns.length ? (
-            filteredPreviewRuns.map((run) => {
-              const isActive = activeRun?.id === run.id;
-              const isOpen = openRunId === run.id;
+          {filteredPreviewRunViews.length ? (
+            filteredPreviewRunViews.map((view) => {
+              const run = view.run;
+              const isActive =
+                activeRun?.id === run.id && activeRunStoreKey === view.store.key;
+              const isOpen = openRunId === view.key;
+              const proposalCount =
+                activeRun?.id === run.id
+                  ? activeRun.proposals.filter(
+                      (proposal) => proposal.store.key === view.store.key,
+                    ).length
+                  : run.proposalCount;
               return (
-                <div key={run.id} className="space-y-3">
+                <div key={view.key} className="space-y-3">
                   <button
                     type="button"
-                    onClick={() => void toggleRun(run.id)}
+                    onClick={() => void toggleRun(view)}
                     className={`relative w-full rounded-lg border p-3 pb-9 text-left transition-colors ${
                       isActive
                         ? "border-brand-400 bg-[var(--brand-50-bg)]"
@@ -1458,7 +1525,7 @@ export default function ProductBatchOptimizationPage() {
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="truncate text-sm font-semibold text-fg-primary">
-                          {previewRunLabels.get(run.id) || runStoreLabel(run)}
+                          {previewRunLabels.get(view.key) || runStoreViewLabel(view)}
                         </div>
                         <div className="mt-1 text-xs text-fg-tertiary">
                           {formatTime(run.createdAt)}
@@ -1467,7 +1534,7 @@ export default function ProductBatchOptimizationPage() {
                           {run.query || "无查询条件"}
                         </div>
                       </div>
-                      <span className="chip chip-brand shrink-0">{run.proposalCount}</span>
+                      <span className="chip chip-brand shrink-0">{proposalCount}</span>
                     </div>
                     <span
                       role="button"
@@ -1523,20 +1590,28 @@ export default function ProductBatchOptimizationPage() {
               </p>
             </div>
             <span className="text-xs text-fg-tertiary">
-              {filteredSubmittedRuns.length}/{submittedRunTotal} 条
+              {filteredSubmittedRunViews.length}/{submittedRunTotal} 条
             </span>
           </div>
 
           <div className="space-y-2">
-            {filteredSubmittedRuns.length ? (
-              filteredSubmittedRuns.map((run) => {
-                const isActive = activeRun?.id === run.id;
-                const isOpen = openRunId === run.id;
+            {filteredSubmittedRunViews.length ? (
+              filteredSubmittedRunViews.map((view) => {
+                const run = view.run;
+                const isActive =
+                  activeRun?.id === run.id && activeRunStoreKey === view.store.key;
+                const isOpen = openRunId === view.key;
+                const proposalCount =
+                  activeRun?.id === run.id
+                    ? activeRun.proposals.filter(
+                        (proposal) => proposal.store.key === view.store.key,
+                      ).length
+                    : run.proposalCount;
                 return (
-                  <div key={run.id} className="space-y-3">
+                  <div key={view.key} className="space-y-3">
                     <button
                       type="button"
-                      onClick={() => void toggleRun(run.id)}
+                      onClick={() => void toggleRun(view)}
                       className={`relative w-full rounded-lg border p-3 pb-9 text-left transition-colors ${
                         isActive
                           ? "border-brand-400 bg-[var(--brand-50-bg)]"
@@ -1546,7 +1621,7 @@ export default function ProductBatchOptimizationPage() {
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <div className="truncate text-sm font-semibold text-fg-primary">
-                            {submittedRunLabels.get(run.id) || runStoreLabel(run)}
+                            {submittedRunLabels.get(view.key) || runStoreViewLabel(view)}
                           </div>
                           <div className="mt-1 text-xs text-fg-tertiary">
                             {formatTime(run.createdAt)}
@@ -1556,7 +1631,7 @@ export default function ProductBatchOptimizationPage() {
                             {run.query || "无查询条件"}
                           </div>
                         </div>
-                        <span className="chip chip-brand shrink-0">{run.proposalCount}</span>
+                        <span className="chip chip-brand shrink-0">{proposalCount}</span>
                       </div>
                       <span className="absolute bottom-2 right-2 inline-flex items-center gap-2">
                         <span
@@ -1564,13 +1639,13 @@ export default function ProductBatchOptimizationPage() {
                           tabIndex={0}
                           onClick={(event) => {
                             event.stopPropagation();
-                            if (!applying) void handleReapplyRun(run.id);
+                            if (!applying) void handleReapplyRun(run.id, view.store.key);
                           }}
                           onKeyDown={(event) => {
                             if (event.key !== "Enter" && event.key !== " ") return;
                             event.preventDefault();
                             event.stopPropagation();
-                            if (!applying) void handleReapplyRun(run.id);
+                            if (!applying) void handleReapplyRun(run.id, view.store.key);
                           }}
                           className="inline-flex items-center gap-1 rounded-md border border-[rgba(99,102,241,0.28)] bg-bg-primary px-2 py-1 text-xs text-brand-400 transition-colors hover:bg-[var(--brand-50-bg)]"
                         >
@@ -1822,6 +1897,7 @@ function readProductBatchPromptPresets(): ProductBatchPromptPreset[] {
 
 function ActiveRunPreviewControls({
   activeRun,
+  activeRunStoreLabel,
   applying,
   selectedProductCount,
   applyOptions,
@@ -1838,6 +1914,7 @@ function ActiveRunPreviewControls({
   onSetDraft,
 }: {
   activeRun: RunDocument;
+  activeRunStoreLabel: string;
   applying: boolean;
   selectedProductCount: number;
   applyOptions: { setDraft: boolean };
@@ -1858,10 +1935,10 @@ function ActiveRunPreviewControls({
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h3 className="text-sm font-semibold text-fg-primary">
-              {activeRun.proposalCount} 条优化预览
+              {currentStoreProposalCount} 条优化预览
             </h3>
             <p className="mt-1 text-xs text-fg-tertiary">
-              {runStoreLabel(activeRun)} · {formatTime(activeRun.createdAt)} ·{" "}
+              {activeRunStoreLabel} · {formatTime(activeRun.createdAt)} ·{" "}
               {activeRun.model}
             </p>
           </div>
@@ -2881,6 +2958,58 @@ function runDisplayStoreName(
     storeKey !== "__all__" ? stores.find((store) => store.key === storeKey) : null;
   const store = matchedStore || stores[0];
   return store?.name || store?.shopDomain || run.shopName || run.shopDomain || "未知店铺";
+}
+
+function buildRunStoreViews(runs: RunSummary[], storeKey: string): RunStoreView[] {
+  const views: RunStoreView[] = [];
+  for (const run of runs) {
+    const stores = runFilterStores(run);
+    const visibleStores =
+      storeKey === "__all__"
+        ? stores
+        : stores.filter((store) => store.key === storeKey);
+    for (const store of visibleStores) {
+      views.push({
+        key: createRunStoreViewKey(run.id, store.key),
+        run,
+        store,
+      });
+    }
+  }
+  return views;
+}
+
+function createRunStoreViewKey(runId: string, storeKey: string) {
+  return `${runId}::${storeKey || "__unknown__"}`;
+}
+
+function runStoreViewLabel(view: RunStoreView) {
+  return view.store.name || view.store.shopDomain || runStoreLabel(view.run);
+}
+
+function getActiveRunStoreLabel(run: RunDocument, storeKey: string | null) {
+  const store = storeKey
+    ? runFilterStores(run).find((item) => item.key === storeKey)
+    : null;
+  return store?.name || store?.shopDomain || runStoreLabel(run);
+}
+
+function buildRunStoreViewDisplayLabels(views: RunStoreView[]) {
+  const labels = new Map<string, string>();
+  const counts = new Map<string, number>();
+  const sortedViews = [...views].sort(
+    (a, b) =>
+      a.run.createdAt - b.run.createdAt ||
+      a.run.id.localeCompare(b.run.id) ||
+      a.store.key.localeCompare(b.store.key),
+  );
+  for (const view of sortedViews) {
+    const storeName = runStoreViewLabel(view);
+    const next = (counts.get(storeName) || 0) + 1;
+    counts.set(storeName, next);
+    labels.set(view.key, `${storeName}${next}`);
+  }
+  return labels;
 }
 
 function tokenCountdown(store: StoreSafe) {
