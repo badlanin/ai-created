@@ -1979,6 +1979,7 @@ export async function getShopifyCategoryMetafieldOptions(
   deviceId: string,
   categoryId: string,
   shopDomain?: string,
+  accessTokenOverride?: string,
 ): Promise<ShopifyCategoryMetafieldOptionsResult> {
   const cleanedCategoryId = cleanField(categoryId);
   if (
@@ -1994,7 +1995,12 @@ export async function getShopifyCategoryMetafieldOptions(
     };
   }
 
-  const stored = await getStoredShopifyAccessToken(userId, deviceId, shopDomain);
+  const stored = accessTokenOverride && shopDomain
+    ? {
+        shopDomain: normalizeShopDomain(shopDomain),
+        accessToken: accessTokenOverride,
+      }
+    : await getStoredShopifyAccessToken(userId, deviceId, shopDomain);
   if (!stored) throw new Error("尚未绑定 Shopify");
 
   const warnings: string[] = [];

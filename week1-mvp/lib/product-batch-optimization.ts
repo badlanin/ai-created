@@ -6,7 +6,6 @@ import type { User } from "./auth";
 import { DATA_DIR_PATH } from "./db";
 import { buildGenaiClient } from "./genai-client";
 import { assertWithinBudget } from "./pricing";
-import { acquireToken } from "./rate-limiter";
 import { retryWithBackoff } from "./retry";
 import { recordUsage } from "./usage";
 import {
@@ -24,6 +23,24 @@ const SHOPIFY_PRODUCT_FETCH_BATCH_SIZE = 10;
 const RUNS_DIR_NAME = "product-batch-optimization";
 const JSON_FAILURES_DIR_NAME = "json-failures";
 const PRODUCT_BATCH_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+const PRODUCT_BATCH_GENERATION_CONCURRENCY = clampInt(
+  Number(process.env.PRODUCT_BATCH_GENERATION_CONCURRENCY ?? "3"),
+  1,
+  8,
+);
+const PRODUCT_BATCH_AI_RATE_PER_MIN = clampInt(
+  Number(process.env.PRODUCT_BATCH_AI_RATE_PER_MIN ?? "12"),
+  1,
+  120,
+);
+const PRODUCT_BATCH_AI_RATE_BURST = clampInt(
+  Number(
+    process.env.PRODUCT_BATCH_AI_RATE_BURST ??
+      String(PRODUCT_BATCH_AI_RATE_PER_MIN),
+  ),
+  1,
+  PRODUCT_BATCH_AI_RATE_PER_MIN,
+);
 
 type PreviewJobState = {
   id: string;
@@ -1291,21 +1308,27 @@ export async function createProductBatchPreview(opts: {
         currentProduct: null,
       });
 
-      for (const product of products) {
-        if (isPreviewJobCancelled(previewJob)) {
-          stopped = true;
-          stopReason = previewJob?.reason || "已强制停止";
-          break;
-        }
-        updatePreviewProgress(previewJob, {
-          phase: "generating",
-          message: `正在生成 ${storeLabel} / ${product.title || product.id} 的优化预览...`,
-          currentStore: storeLabel,
-          currentProduct: product.title || product.id,
-        });
-        try {
-          proposals.push(
-            await generateProductProposal({
+      const batchProposals = new Array<ProductBatchProposal | null>(
+        products.length,
+      ).fill(null);
+
+      await runProductBatchWithConcurrency(
+        products,
+        PRODUCT_BATCH_GENERATION_CONCURRENCY,
+        async (product, productIndex) => {
+          if (isPreviewJobCancelled(previewJob)) {
+            stopped = true;
+            stopReason = previewJob?.reason || "已强制停止";
+            return;
+          }
+          updatePreviewProgress(previewJob, {
+            phase: "generating",
+            message: `正在生成 ${storeLabel} / ${product.title || product.id} 的优化预览...`,
+            currentStore: storeLabel,
+            currentProduct: product.title || product.id,
+          });
+          try {
+            const proposal = await generateProductProposal({
               user: opts.user,
               deviceId: opts.deviceId,
               connection: store,
@@ -1315,29 +1338,33 @@ export async function createProductBatchPreview(opts: {
               includeImages,
               model,
               signal: previewJob?.controller.signal,
-            }),
-          );
-        } catch (err) {
-          if (isPreviewJobCancelled(previewJob)) {
-            stopped = true;
-            stopReason = previewJob?.reason || "已强制停止";
-            break;
+            });
+            batchProposals[productIndex] = proposal;
+          } catch (err) {
+            if (isPreviewJobCancelled(previewJob)) {
+              stopped = true;
+              stopReason = previewJob?.reason || "已强制停止";
+              return;
+            }
+            failures.push({
+              productId: product.id,
+              title: `${storeLabel} / ${product.title || ""}`,
+              error: err instanceof Error ? err.message : String(err),
+            });
           }
-          failures.push({
-            productId: product.id,
-            title: `${storeLabel} / ${product.title || ""}`,
-            error: err instanceof Error ? err.message : String(err),
+          progressCompleted = Math.min(progressTotal, progressCompleted + 1);
+          updatePreviewProgress(previewJob, {
+            phase: "generating",
+            completed: progressCompleted,
+            percent: getProgressPercent(progressCompleted, progressTotal),
+            message: `已处理 ${progressCompleted}/${progressTotal} 个商品。`,
+            currentStore: storeLabel,
+            currentProduct: null,
           });
-        }
-        progressCompleted = Math.min(progressTotal, progressCompleted + 1);
-        updatePreviewProgress(previewJob, {
-          phase: "generating",
-          completed: progressCompleted,
-          percent: getProgressPercent(progressCompleted, progressTotal),
-          message: `已处理 ${progressCompleted}/${progressTotal} 个商品。`,
-          currentStore: storeLabel,
-          currentProduct: null,
-        });
+        },
+      );
+      for (const proposal of batchProposals) {
+        if (proposal) proposals.push(proposal);
       }
       storeProcessed += products.length;
       if (stopped) break;
@@ -1800,7 +1827,7 @@ async function generateProductProposal(opts: {
     response = await abortable(
       retryWithBackoff(
         async () => {
-          await acquireToken(opts.model);
+          await acquireProductBatchAiToken(opts.model, opts.signal);
           return client.models.generateContent({
             model: opts.model,
             contents: [
@@ -2025,7 +2052,7 @@ async function retryProductBatchCompactJson(opts: {
     const response = await abortable(
       retryWithBackoff(
         async () => {
-          await acquireToken(opts.model);
+          await acquireProductBatchAiToken(opts.model, opts.signal);
           return client.models.generateContent({
             model: opts.model,
             contents: [
@@ -2175,7 +2202,7 @@ async function repairProposalCompleteness(opts: {
     const response = await abortable(
       retryWithBackoff(
         async () => {
-          await acquireToken(opts.model);
+          await acquireProductBatchAiToken(opts.model, opts.signal);
           return client.models.generateContent({
             model: opts.model,
             contents: [
@@ -3254,6 +3281,7 @@ async function loadProductBatchCategoryMetafieldCandidates(opts: {
       opts.deviceId,
       categoryId,
       opts.connection.shopDomain,
+      opts.connection.accessToken,
     );
     return {
       candidates: buildProductBatchCategoryMetafieldCandidates(result, keys),
@@ -3954,6 +3982,78 @@ function waitWithAbort(ms: number, signal?: AbortSignal) {
     }, ms);
     signal.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+async function runProductBatchWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<void>,
+): Promise<void> {
+  if (!items.length) return;
+  const workerCount = Math.min(Math.max(1, concurrency), items.length);
+  let nextIndex = 0;
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (true) {
+        const index = nextIndex;
+        nextIndex += 1;
+        if (index >= items.length) return;
+        await worker(items[index], index);
+      }
+    }),
+  );
+}
+
+type ProductBatchAiBucket = {
+  tokens: number;
+  lastRefillAtMs: number;
+};
+
+const productBatchAiBuckets = new Map<string, ProductBatchAiBucket>();
+
+async function acquireProductBatchAiToken(
+  model: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const bucket = getProductBatchAiBucket(model);
+  while (true) {
+    if (signal?.aborted) throw abortReason(signal, "已强制停止");
+
+    refillProductBatchAiBucket(bucket);
+    if (bucket.tokens >= 1) {
+      bucket.tokens -= 1;
+      return;
+    }
+
+    const missing = 1 - bucket.tokens;
+    const waitMs =
+      Math.ceil((missing / PRODUCT_BATCH_AI_RATE_PER_MIN) * 60_000) + 30;
+    await waitWithAbort(waitMs, signal);
+  }
+}
+
+function getProductBatchAiBucket(model: string): ProductBatchAiBucket {
+  const key = model || "default";
+  let bucket = productBatchAiBuckets.get(key);
+  if (!bucket) {
+    bucket = {
+      tokens: PRODUCT_BATCH_AI_RATE_BURST,
+      lastRefillAtMs: Date.now(),
+    };
+    productBatchAiBuckets.set(key, bucket);
+  }
+  return bucket;
+}
+
+function refillProductBatchAiBucket(bucket: ProductBatchAiBucket): void {
+  const now = Date.now();
+  const elapsedMs = Math.max(0, now - bucket.lastRefillAtMs);
+  bucket.tokens = Math.min(
+    PRODUCT_BATCH_AI_RATE_BURST,
+    bucket.tokens + (elapsedMs / 60_000) * PRODUCT_BATCH_AI_RATE_PER_MIN,
+  );
+  bucket.lastRefillAtMs = now;
 }
 
 function getProductImages(product: ShopifyProductNode): ProductBatchImageSnapshot[] {
