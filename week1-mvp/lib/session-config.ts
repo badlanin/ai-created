@@ -22,6 +22,16 @@ export interface SessionData {
     deviceId: string;
     createdAt: number;
   };
+  newProductListingShopifyOAuth?: {
+    state: string;
+    shopDomain: string;
+    clientId: string;
+    clientSecret: string;
+    redirectUri: string;
+    userId: number;
+    deviceId: string;
+    createdAt: number;
+  };
 }
 
 const SESSION_SECRET =
