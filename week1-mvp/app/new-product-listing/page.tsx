@@ -6005,10 +6005,6 @@ function ProductFormPanel({
         );
         if (!rows.length) return null;
         const representative = rows[0];
-        const inventoryTotal = rows.reduce((sum, row) => {
-          const value = Number(row.inventory);
-          return sum + (Number.isFinite(value) ? value : 0);
-        }, 0);
         return {
           id: `${activeOptionGroup.id}-${normalized}`,
           label: value,
@@ -6016,7 +6012,7 @@ function ProductFormPanel({
           representative,
           selected: rows.every((row) => row.selected),
           price: representative.price,
-          inventory: inventoryTotal ? String(inventoryTotal) : representative.inventory,
+          inventory: representative.inventory,
           childCount: rows.length,
         };
       })
