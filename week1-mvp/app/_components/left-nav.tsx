@@ -196,12 +196,6 @@ export function LeftNav({
           manualRefresh
         />
         <CollapsedIcon
-          href="/amazon-info-collection"
-          label="亚马逊信息采集"
-          Icon={ShoppingBag}
-          active={isActive("/amazon-info-collection")}
-        />
-        <CollapsedIcon
           href="/blog"
           label="博客文章"
           Icon={FileText}
@@ -356,12 +350,6 @@ export function LeftNav({
             label="新产品上架"
             active={isActive("/new-product-listing")}
             manualRefresh
-          />
-          <NavItem
-            href="/amazon-info-collection"
-            Icon={ShoppingBag}
-            label="亚马逊信息采集"
-            active={isActive("/amazon-info-collection")}
           />
           <NavItem
             href="/blog"
