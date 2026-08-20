@@ -408,7 +408,7 @@ Built-In Bra: Yes.
 
 【七、元字段候选值】
 
-1. 颜色只能从以下值中选择：
+1.1 颜色只能从以下值中选择：
 
 Black
 Blushing Pink
@@ -460,7 +460,9 @@ Turquoise
 White
 Wisteria
 
-2. 织物只能从以下值中选择：
+1.2 尺寸:US2, US4, US6, US8, US10, US12, US14, US16 , US16W, US18W , US20W, US22W , US24W, US26W，Custom Size。
+
+1.3 织物只能从以下值中选择：
 
 Tulle
 Satin
@@ -471,7 +473,7 @@ Sequins
 Polyester
 Velvet
 
-3. 领口只能从以下值中选择：
+1.4 领口只能从以下值中选择：
 
 Strapless
 Sweetheart
@@ -485,14 +487,14 @@ High Neck
 Cowl
 Spaghetti Straps
 
-4. 裙子风格只能从以下值中选择：
+1.5 裙子风格只能从以下值中选择：
 
 A-Line
 Sheath/Column
 Trumpet/Mermaid
 Ball Gown
 
-5. 裙子/连衣裙长度类型只能从以下值中选择：
+1.6 裙子/连衣裙长度类型只能从以下值中选择：
 
 Ankle-Length
 Knee-Length
@@ -502,7 +504,7 @@ Floor-Length
 Court Train
 Short-Length
 
-6. 袖长类型只能从以下值中选择：
+1.7 袖长类型只能从以下值中选择：
 
 Sleeveless
 Cap Sleeves
@@ -513,10 +515,9 @@ Half Sleeves
 3/4 Sleeves
 Long Sleeves
 
-7. 目标性别固定为：
+1.8 目标性别固定为：
 
 Female
-1.9 尺寸:US2, US4, US6, US8, US10, US12, US14, US16 , US16W, US18W , US20W, US22W , US24W, US26W，Custom Size。
 
 
 【八、Shopify后台字段】
@@ -701,6 +702,7 @@ SKU:
 原产国家/地区: 中国
 协调制度（HS）编码: 610419
 颜色:
+尺寸: US2, US4, US6, US8, US10, US12, US14, US16, US16W, US18W, US20W, US22W, US24W, US26W, Custom Size
 织物:
 年龄段:
 穿着场合:
